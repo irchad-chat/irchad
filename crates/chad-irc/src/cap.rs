@@ -44,6 +44,8 @@ pub const WANTED: &[&str] = &[
 
 /// 512 minus CRLF; we send no tags on CAP lines.
 const MAX_LINE: usize = 510;
+/// ergo offers ~40. Bounds a hostile server's endless `CAP LS *` (D14).
+const MAX_AVAILABLE: usize = 256;
 
 #[derive(Debug, Default)]
 pub struct Negotiator {
@@ -136,6 +138,9 @@ impl Negotiator {
 
     fn offer(&mut self, list: &str) {
         for (k, v) in parse(list) {
+            if self.available.len() >= MAX_AVAILABLE && !self.available.contains_key(k) {
+                continue;
+            }
             self.available.insert(k.to_owned(), v.to_owned());
         }
     }
@@ -254,5 +259,14 @@ mod tests {
         let reqs = Negotiator::new().request(long.into_iter());
         assert!(reqs.len() > 1);
         assert!(reqs.iter().all(|m| m.to_line().unwrap().len() <= MAX_LINE));
+    }
+
+    #[test]
+    fn endless_ls_is_bounded() {
+        let mut n = Negotiator::new();
+        for i in 0..1000 {
+            feed(&mut n, &format!("CAP * LS * :junk{i}a junk{i}b"));
+        }
+        assert_eq!(n.available.len(), MAX_AVAILABLE);
     }
 }

@@ -16,6 +16,8 @@ type HmacSha256 = Hmac<Sha256>;
 const CHUNK: usize = 400;
 /// Guards against a hostile server pinning our CPU. ergo uses 4096.
 const MAX_ITERATIONS: u32 = 1 << 20;
+/// SCRAM server messages are ~100 bytes; a server streaming chunks forever is hostile.
+const MAX_PAYLOAD: usize = 8 << 10;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -121,6 +123,10 @@ impl Sasl {
                 let chunk = msg.param(0).unwrap_or("+");
                 if chunk != "+" {
                     self.buf.push_str(chunk);
+                }
+                if self.buf.len() > MAX_PAYLOAD {
+                    self.buf.clear();
+                    return Progress::Failed(Error::Protocol("oversized payload"));
                 }
                 if chunk.len() == CHUNK {
                     return Progress::Continue(Vec::new());
@@ -396,5 +402,11 @@ mod tests {
             Progress::Continue(vec![])
         );
         assert_eq!(s.buf.len(), 400);
+
+        // A server that never terminates the payload is cut off (D14).
+        let endless = (0..100)
+            .map(|_| s.handle(&Message::new("AUTHENTICATE", [b64.as_str()])))
+            .find(|p| matches!(p, Progress::Failed(_)));
+        assert!(endless.is_some() && s.buf.is_empty());
     }
 }

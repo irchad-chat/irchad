@@ -114,3 +114,58 @@ fn register_against_ergo() {
         "{r:?}"
     );
 }
+
+/// Over Caddy, so trust its CA: see `docs/notes/livekit-sdk.md` for `SSL_CERT_FILE`.
+#[tokio::test]
+#[ignore]
+async fn websocket_isupport_and_labels() {
+    use chad_irc::batch::Assembler;
+    use chad_irc::isupport::{Casemapping, Isupport};
+    use chad_irc::label::Labels;
+    use chad_irc::ws::Connection;
+
+    let url = std::env::var("IRCHAD_WS").unwrap_or("wss://localhost:8443/irc".into());
+    let mut ws = Connection::connect(&url)
+        .await
+        .expect("dev stack running, CA trusted?");
+    let mut caps = Negotiator::new();
+    let mut isupport = Isupport::new();
+    let mut batches = Assembler::new();
+    let mut labels = Labels::new();
+    ws.send(&Negotiator::start()).await.unwrap();
+    ws.send(&Message::new("NICK", ["livetest5"])).await.unwrap();
+    ws.send(&Message::new("USER", ["livetest5", "0", "*", "lt"]))
+        .await
+        .unwrap();
+
+    loop {
+        let m = ws.recv().await.unwrap().expect("server closed");
+        for out in caps.handle(&m) {
+            ws.send(&out).await.unwrap();
+        }
+        if caps.ready() {
+            ws.send(&caps.end()).await.unwrap();
+        }
+        isupport.handle(&m);
+        if m.command == "376" || m.command == "422" {
+            break;
+        }
+    }
+    assert!(caps.enabled("labeled-response"));
+    assert_eq!(isupport.casemapping(), Casemapping::Ascii);
+    assert_eq!(isupport.chathistory_limit(), Some(1000));
+
+    ws.send(&labels.tag(Message::new("PING", ["probe"]), "ping"))
+        .await
+        .unwrap();
+    loop {
+        let m = ws.recv().await.unwrap().expect("server closed");
+        if let Some(item) = batches.feed(m).unwrap()
+            && let Ok((token, _)) = labels.take(item)
+        {
+            assert_eq!(token, "ping");
+            break;
+        }
+    }
+    ws.close().await.unwrap();
+}
