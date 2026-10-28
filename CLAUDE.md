@@ -22,6 +22,9 @@ They are reference material only, so don't copy code from them blindly.
 - **Prefer state of the art over legacy.** That means PipeWire, xdg-desktop-portal, D-Bus, StatusNotifierItem, Secret Service, wgpu and rustls.
   Where X11 needs a fallback, it lives behind the same trait as the modern path, so it's never the primary path.
 - **ergo is the only supported IRCd.** Draft IRCv3 specs are fair game when ergo implements them.
+- **Never trust the server, even though it's ergo** (D14). Admins can modify or swap it.
+  Treat every server-sent byte as hostile: no panics, no unbounded buffers or CPU, no path or code injection.
+  "ergo wouldn't send that" is not a valid reason to skip a check.
 - **Don't degrade the IRC experience for plain IRC clients** on the same network.
   IrChad-only data goes in client tags (`+chad/...`) or metadata (`chad/...`) with readable fallbacks.
 - **No admin UI yet.** Admins use a normal IRC client. IrChad-specific server config is ergo channel/user metadata that ops set by hand.

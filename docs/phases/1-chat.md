@@ -15,8 +15,14 @@
       ergo only registers the current nick (`ACCOUNT_NAME_MUST_BE_NICK`), so send `NICK <username>` then `REGISTER * …`.
       `VERIFY` is unit-tested only: the dev stack has email verification off.
 - [ ] chad-core: after `REGISTER` succeeds the connection is logged in as `bob`, not `bob@<device>`. Reconnect with SASL so the device ID is in place (D11).
-- [ ] Batch reassembly (nested), labeled-response correlation (request → future), ISUPPORT, and casemapping.
+- [x] Batch reassembly (nested).
+      `chad_irc::batch::Assembler` (sans-IO). It returns plain lines or whole top-level batches, and a nested batch sits in its parent where it closed.
+      Lines tagged with an unknown batch pass through as plain messages. Call `clear()` on disconnect.
+      It caps open batches (64) and held bytes (32 MiB) per D14, and on `Overflow` the caller should disconnect.
+- [ ] Labeled-response correlation (request → future), ISUPPORT, and casemapping.
 - [ ] WebSocket transport (`text.ircv3.net`), keepalive, and reconnect with backoff.
+      Cap the incoming frame/line length (D14). `Message::parse` has no limit of its own.
+- [ ] Review `cap`, `sasl` and `register` against D14 (hostile server): unbounded `CAP LS` accumulation, oversized SCRAM iteration counts, and panics.
 
 ## chad-core
 

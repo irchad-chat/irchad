@@ -54,3 +54,9 @@ It's not in `chad-core`, because chadd would then transitively pull in `chad-med
 ## D13: Dev stack runs as a rootless podman/docker compose project named `irchad-ng` (2026-10-27)
 The old `../irchad` compose project is called `irchad`, and reusing that name would recreate its containers.
 Rootless containers can't bind :443, so Caddy publishes on `IRCHAD_HTTPS_PORT` (default 8443), and the dev origin is `https://chat.localhost:8443`.
+
+## D14: The server is untrusted input (2026-10-28)
+ergo is the only supported IRCd, but that's a protocol choice, not a trust boundary. The person running a network can patch ergo, proxy it, or point an invite at a hostile server.
+Treat everything from the server (IRC lines, discovery documents, chadd responses, LiveKit signalling) as attacker-controlled. A bad server must not be able to crash the client, run code, read local files, or exhaust memory or CPU.
+Bound every buffer the server can grow (open batches, multiline bodies, history pages, member lists), and fail closed with an error rather than a panic.
+This doesn't cover what a server can always do (drop, delay or forge plaintext messages). E2EE DMs (D8) are the answer there.

@@ -70,6 +70,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 - `chad-irc` is pure protocol with no I/O policy. It handles tag escaping, batch reassembly, labeled-response correlation, CAP 302 negotiation, ISUPPORT and casemapping.
   The capabilities we request are listed once, in `chad_irc::cap::WANTED`.
   It's fuzzed and unit-tested against real ergo transcripts.
+  It treats the server as hostile input (D14), so every buffer the server can grow is bounded.
 - `chad-media` owns the LiveKit `Room`, the PipeWire/WASAPI audio graph, the APM (AEC/NS/AGC), capture backends and decoded video frames.
   Video goes to the UI as GPU textures, using I420 → RGB in a wgpu shader rather than a CPU conversion.
 - Persistence is a SQLite cache (`rusqlite`) per network for scrollback and read state. History of record lives on ergo (`draft/chathistory`).
