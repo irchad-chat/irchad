@@ -29,7 +29,7 @@
 # network configuration
 network:
     # name of the network
-    name: ErgoTest
+    name: ChadDev # irchad:
 
 # server configuration
 server:

@@ -33,6 +33,7 @@ s = s[:start] + "        # irchad: no TLS listener; Caddy terminates TLS.\n\n" +
 sub('    proxy-allowed-from:\n', '    proxy-allowed-from:\n        - 10.89.77.0/24 # irchad: compose network (Caddy sets X-Forwarded-For)\n')
 sub('        # IPs/networks which are exempted from connection limits\n        exempted:\n            - "localhost"\n',
     '        # IPs/networks which are exempted from connection limits\n        exempted:\n            - "localhost"\n            # irchad: dev only. Rootless port forwarding makes every host\n            # connection appear to come from the compose network.\n            - "10.89.77.0/24"\n')
+sub('    name: ErgoTest\n', '    name: ChadDev # irchad:\n')
 # accounts
 sub('        always-on: "opt-in"', '        always-on: "opt-out" # irchad: D11')
 sub('        auto-away: "opt-in"', '        auto-away: "opt-out" # irchad: away when no device is connected')

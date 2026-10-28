@@ -1,6 +1,8 @@
 # Routing per docs/ARCHITECTURE.md. IRCHAD_HOST defaults to chat.localhost,
-# which gets a certificate from Caddy's internal CA.
-{$IRCHAD_HOST:chat.localhost} {
+# which gets a certificate from Caddy's internal CA. Plain `localhost` is
+# served too: glibc only resolves *.localhost with nss-myhostname, so native
+# tools may not find chat.localhost.
+{$IRCHAD_HOST:chat.localhost}, localhost {
 	tls internal
 
 	handle /.well-known/irchad.json {

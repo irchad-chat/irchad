@@ -18,6 +18,9 @@ chad-e2ee = { path = "crates/chad-e2ee" }
 
 anyhow = "1.0.104"
 axum = "0.8.9"
+livekit = { version = "0.9.7", default-features = false, features = ["native", "rustls-tls-native-roots"] }
+livekit-api = { version = "0.9.1", default-features = false, features = ["access-token"] }
+pipewire = "0.10.1"
 eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts"] }
 egui = "0.37.0"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -9,5 +9,16 @@ repository.workspace = true
 [dependencies]
 tracing.workspace = true
 
+[dev-dependencies]
+livekit.workspace = true
+livekit-api.workspace = true
+futures-util = "0.3"
+tokio.workspace = true
+anyhow.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+pipewire.workspace = true
+
 [lints]
 workspace = true
