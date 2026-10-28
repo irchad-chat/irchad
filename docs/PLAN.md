@@ -1,12 +1,12 @@
 # Plan
 
-**Current phase: 0 (Foundations)**
+**Current phase: 1 (Connect & chat)**
 
 Update the line above when a phase's "Done when" holds.
 
 | # | Phase | File | Status |
 |---|---|---|---|
-| 0 | Foundations: workspace, dev stack, CI, risk spikes | [phases/0-foundations.md](phases/0-foundations.md) | in progress |
+| 0 | Foundations: workspace, dev stack, CI, risk spikes | [phases/0-foundations.md](phases/0-foundations.md) | done (2026-10-28) |
 | 1 | Connect & chat: invite URLs, multi-network, text MVP | [phases/1-chat.md](phases/1-chat.md) | not started |
 | 2 | Voice | [phases/2-voice.md](phases/2-voice.md) | not started |
 | 3 | Screen share | [phases/3-screenshare.md](phases/3-screenshare.md) | not started |
