@@ -47,7 +47,7 @@ Hosting is self-hosted Gitea at `git.gentoo.party` (user `sam`), with **Gitea Ac
   - smooth scroll, plus jump-to-unread and keep-position on prepend (history backfill)
   - text selection across several messages, and IME input in the composer
   - test on Wayland and X11
-- [ ] **LiveKit Rust SDK:** → [notes/livekit-sdk.md](../notes/livekit-sdk.md). GO on Linux. Waiting on the Windows CI build of the example.
+- [x] **LiveKit Rust SDK:** → [notes/livekit-sdk.md](../notes/livekit-sdk.md). GO. Windows builds in CI (run 48).
   - join a room on the dev stack and publish a sine tone via `NativeAudioSource`
   - receive and play back via PipeWire
   - build on Windows

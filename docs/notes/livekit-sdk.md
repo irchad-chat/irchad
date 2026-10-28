@@ -31,7 +31,8 @@ RESULT pipewire playback: ok (491520 frames pulled by the graph)
 - **APM with our own I/O: reachable and working.** `livekit::webrtc::native::apm::AudioProcessingModule::new(aec, agc, hpf, ns)` exposes `process_reverse_stream` (far end: what we play), `process_stream` (near end: the mic) and `set_stream_delay_ms`, on i16 in 10 ms chunks.
   Fed a synthetic pure echo (far end delayed 20 ms at −6 dB), it removes **51.7 dB** after convergence. That's exactly the AEC-with-our-own-playback-mix setup the architecture wants.
   Note the `AudioSourceOptions { echo_cancellation, … }` on `NativeAudioSource` doesn't do this for us, because libwebrtc's own ADM isn't involved.
-- **Windows build:** CI builds the example on the `windows-latest` runner, since `cargo test` builds examples. The prebuilt download works there.
+- **Windows build:** CI builds the example on the `windows-latest` runner, since `cargo test` builds examples (green in run 48).
+  It needs `+crt-static`, because libwebrtc's prebuilt uses the static CRT (`/MT`). That's set in `.cargo/config.toml`.
   It's a build only: nothing runs it against a server on Windows yet.
 
 ## ⚠ PipeWire symbol clash (Linux)
@@ -52,6 +53,8 @@ Risks and alternatives, to settle in Phase 2:
 
 - `livekit` features: `default-features = false, features = ["native", "rustls-tls-native-roots"]`. Without `native` you get "no network transport registered" at connect.
 - webrtc-sys downloads a prebuilt libwebrtc (**444 MB extracted**) into `target/…/build/scratch-*/out/livekit_webrtc`. `Swatinem/rust-cache` caches `target/`, and the Gitea cache server works ("Cache saved successfully" on both runners in the first CI run).
+- **webrtc-sys needs clang ≥ 21** (libwebrtc ships a hermetic libc++), and its build script checks the version. CI installs clang 21 from apt.llvm.org and sets `CC`/`CXX`, because Ubuntu 24.04's clang is 18.
+- Don't set a global `RUSTFLAGS` in CI. It overrides the per-target rustflags in `.cargo/config.toml`.
 - The only extra dynamic dependency on Linux is `libpipewire-0.3.so.0` (from pipewire-rs). The CI Linux job installs `libpipewire-0.3-dev`, `libclang-dev` and `clang` for bindgen.
 - Media used UDP 50000–50100, published by compose with `--node-ip 127.0.0.1`. That's same-machine only, so set `LIVEKIT_NODE_IP` to test from another device.
 

@@ -63,7 +63,7 @@ docs/
 
 ## Commands
 
-- `cargo build`, `cargo clippy --all-targets`, `cargo fmt`, `cargo test` (CI runs clippy and tests with `-D warnings`)
+- `cargo build`, `cargo clippy --all-targets`, `cargo fmt`, `cargo test` (CI runs clippy with `-D warnings`). Building `chad-media` examples needs clang ≥ 21 (webrtc-sys) and PipeWire headers.
 - Run the client: `cargo run -p chad-desktop` (binary `irchad`)
 - Dev server stack: `docker compose -f deploy/compose.yaml up -d --build` (podman compose works).
   Then `python3 deploy/seed.py` creates the test accounts and channels. See `deploy/README.md`.
