@@ -13,6 +13,7 @@ curl -k https://chat.localhost:8443/.well-known/irchad.json
 | Origin | `https://chat.localhost:8443` (`IRCHAD_HTTPS_PORT`, `IRCHAD_HOST` in `deploy/.env`; see `.env.example`) |
 | Invite page | `https://chat.localhost:8443/invite` |
 | Raw IRC (debugging) | `127.0.0.1:6667`, plaintext |
+| Second network | `https://chat2.localhost:8443` (`IRCHAD_HOST2`): its own ergo (`ChadDev2`, raw IRC `127.0.0.1:6668`) and chadd, sharing Caddy (same CA root) and LiveKit. Seed with `python3 deploy/seed.py --port 6668` |
 | Accounts | `alice` / `alicepass`, `bob` / `bobpass` |
 | Channels | `#general`, `#random`, `#dev` (registered to alice) |
 | ergo oper | `admin` / `chadadmin` |

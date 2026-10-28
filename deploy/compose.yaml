@@ -15,6 +15,22 @@ services:
       - "127.0.0.1:6667:6667"
     networks: [chad]
 
+  # Second network for dual-network testing: same ergo.yaml, names overridden
+  # via ergo's ERGO__ env overrides. Shares LiveKit and Caddy (so one CA root).
+  ergo2:
+    image: ghcr.io/ergochat/ergo:v2.19.1
+    init: true
+    restart: unless-stopped
+    environment:
+      ERGO__NETWORK__NAME: ChadDev2
+      ERGO__SERVER__NAME: chat2.localhost
+    volumes:
+      - ergo2-data:/ircd
+      - ./ergo.yaml:/ircd/ircd.yaml:ro
+    ports:
+      - "127.0.0.1:6668:6667"
+    networks: [chad]
+
   livekit:
     image: docker.io/livekit/livekit-server:v1.13.11
     restart: unless-stopped
@@ -38,21 +54,35 @@ services:
       - ./chadd.toml:/etc/chadd/chadd.toml:ro
     networks: [chad]
 
+  chadd2:
+    build:
+      context: ..
+      dockerfile: deploy/chadd.Dockerfile
+    restart: unless-stopped
+    environment:
+      CHADD_ORIGIN: "https://${IRCHAD_HOST2:-chat2.localhost}:${IRCHAD_HTTPS_PORT:-8443}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    volumes:
+      - ./chadd2.toml:/etc/chadd/chadd.toml:ro
+    networks: [chad]
+
   caddy:
     image: docker.io/library/caddy:2.11.7-alpine
     restart: unless-stopped
     environment:
       IRCHAD_HOST: "${IRCHAD_HOST:-chat.localhost}"
+      IRCHAD_HOST2: "${IRCHAD_HOST2:-chat2.localhost}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
     ports:
       - "${IRCHAD_HTTPS_PORT:-8443}:443"
     networks: [chad]
-    depends_on: [ergo, livekit, chadd]
+    depends_on: [ergo, ergo2, livekit, chadd, chadd2]
 
 volumes:
   ergo-data:
+  ergo2-data:
   caddy-data:
 
 networks:

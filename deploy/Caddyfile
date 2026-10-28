@@ -2,20 +2,22 @@
 # which gets a certificate from Caddy's internal CA. Plain `localhost` is
 # served too: glibc only resolves *.localhost with nss-myhostname, so native
 # tools may not find chat.localhost.
-{$IRCHAD_HOST:chat.localhost}, localhost {
+
+# One network's routes; args: ergo host, chadd host.
+(network) {
 	tls internal
 
 	handle /.well-known/irchad.json {
-		reverse_proxy chadd:8080
+		reverse_proxy {args[1]}:8080
 	}
 	handle /invite* {
-		reverse_proxy chadd:8080
+		reverse_proxy {args[1]}:8080
 	}
 	handle /api/* {
-		reverse_proxy chadd:8080
+		reverse_proxy {args[1]}:8080
 	}
 	handle /irc {
-		reverse_proxy ergo:8097
+		reverse_proxy {args[0]}:8097
 	}
 	# The LiveKit SDK appends /rtc etc. to the URL, so strip our prefix.
 	handle_path /livekit/* {
@@ -24,4 +26,13 @@
 	handle {
 		respond 404
 	}
+}
+
+{$IRCHAD_HOST:chat.localhost}, localhost {
+	import network ergo chadd
+}
+
+# Second network for dual-network testing. Same internal CA, so same root.crt.
+{$IRCHAD_HOST2:chat2.localhost} {
+	import network ergo2 chadd2
 }

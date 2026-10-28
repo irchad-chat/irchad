@@ -1,0 +1,5 @@
+# chadd config for the second dev network (ergo2). CHADD_ORIGIN overrides `origin` (compose sets it).
+listen = "0.0.0.0:8080"
+origin = "https://chat2.localhost:8443"
+name = "Chad Dev Network 2"
+registration = "open"
