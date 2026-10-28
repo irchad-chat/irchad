@@ -3,7 +3,8 @@
 **Goal:** a Discord user pastes an invite URL, creates an account, and chats, without learning any IRC concept. The client supports multiple networks from day one.
 
 ## chad-irc
-- [ ] Message parse/serialize with tags (escaping), source and params. Write property tests and a fuzz target.
+- [x] Message parse/serialize with tags (escaping), source and params. Write property tests and a fuzz target.
+  Fuzz target is `crates/chad-irc/fuzz` (standalone). On stable: `RUSTC_BOOTSTRAP=1 cargo fuzz run message -s none` (no unsafe, so no ASan needed). 32.7M runs / 3 min clean on 2026-10-28. Deliberately not in CI: run it as a pre-release check (see Phase 5).
 - [ ] CAP 302 negotiation, including `cap-notify` for runtime changes. Request every capability in `ARCHITECTURE.md` that ergo advertises.
 - [ ] SASL SCRAM-SHA-256 with PLAIN fallback, and `REGISTER` (draft/account-registration) including the verify step.
 - [ ] Batch reassembly (nested), labeled-response correlation (request → future), ISUPPORT, and casemapping.
