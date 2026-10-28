@@ -67,7 +67,10 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 - `chad-core` owns all state: networks, buffers, members, unread markers, voice state.
   It runs on a tokio runtime and exposes `Command` in and `Event` out channels.
   egui keeps a projected view model, and core calls `ctx.request_repaint()` (via a callback) on change.
+  Inside, there's one task per network: `conn` does the I/O, registration and reconnects, and `net::Net` is the sans-IO state machine, unit-tested from IRC lines.
+  The only things kept locally are the per-network SQLite cache (whose `meta` holds the origin, account and cached discovery) and the password, behind `secrets::SecretStore`.
 - `chad-irc` is pure protocol with no I/O policy. It handles tag escaping, batch reassembly, labeled-response correlation, CAP 302 negotiation, ISUPPORT and casemapping.
+  Everything is sans-IO except `chad_irc::ws`, the WebSocket transport (one connection, keepalive, frame cap). Reconnect policy lives in `chad-core`.
   The capabilities we request are listed once, in `chad_irc::cap::WANTED`.
   It's fuzzed and unit-tested against real ergo transcripts.
   It treats the server as hostile input (D14), so every buffer the server can grow is bounded.
