@@ -1,0 +1,12 @@
+# Built from the workspace root (compose sets context: ..).
+FROM docker.io/library/rust:1-slim-trixie AS build
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked -p chadd && cp target/release/chadd /chadd
+
+FROM docker.io/library/debian:trixie-slim
+COPY --from=build /chadd /usr/local/bin/chadd
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/chadd", "/etc/chadd/chadd.toml"]

@@ -1,0 +1,25 @@
+# Routing per docs/ARCHITECTURE.md. IRCHAD_HOST defaults to chat.localhost,
+# which gets a certificate from Caddy's internal CA.
+{$IRCHAD_HOST:chat.localhost} {
+	tls internal
+
+	handle /.well-known/irchad.json {
+		reverse_proxy chadd:8080
+	}
+	handle /invite* {
+		reverse_proxy chadd:8080
+	}
+	handle /api/* {
+		reverse_proxy chadd:8080
+	}
+	handle /irc {
+		reverse_proxy ergo:8097
+	}
+	# The LiveKit SDK appends /rtc etc. to the URL, so strip our prefix.
+	handle_path /livekit/* {
+		reverse_proxy livekit:7880
+	}
+	handle {
+		respond 404
+	}
+}

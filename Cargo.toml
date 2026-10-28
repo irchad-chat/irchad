@@ -1,0 +1,39 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "GPL-3.0-or-later"
+repository = "https://git.gentoo.party/sam/irchad-ng"
+
+[workspace.dependencies]
+chad-proto = { path = "crates/chad-proto" }
+chad-irc = { path = "crates/chad-irc" }
+chad-core = { path = "crates/chad-core" }
+chad-media = { path = "crates/chad-media" }
+chad-e2ee = { path = "crates/chad-e2ee" }
+
+anyhow = "1.0.104"
+axum = "0.8.9"
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "wayland", "x11", "accesskit", "default_fonts"] }
+egui = "0.37.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["full"] }
+toml = "1.1.8"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = { version = "2.5.8", features = ["serde"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev.package."*"]
+opt-level = 2

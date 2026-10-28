@@ -1,0 +1,30 @@
+# IrChad dev LiveKit config. DEV ONLY: the API key/secret below are public.
+port: 7880
+log_level: info
+
+rtc:
+  # ICE over TCP fallback, and the UDP range for media. Both are published by
+  # compose. Media goes direct to these ports, not through Caddy.
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  # node_ip is the address advertised in ICE candidates. compose passes
+  # --node-ip from LIVEKIT_NODE_IP (default 127.0.0.1: same-machine testing only).
+  # Set it to your LAN IP to test from another device.
+  use_external_ip: false
+
+# Must match chadd's [livekit] config. The secret must be at least 32 chars.
+keys:
+  devkey: chad-dev-livekit-secret-0123456789abcdef
+
+# Embedded TURN is off in dev. In production, enable it for clients behind
+# UDP-hostile networks. TURN/TLS can share Caddy's certificate, or TURN/UDP can
+# run on its own port:
+#
+# turn:
+#   enabled: true
+#   domain: chat.example.com
+#   udp_port: 3478        # publish 3478/udp
+#   tls_port: 5349        # publish 5349/tcp; needs cert_file/key_file
+#   relay_range_start: 30000
+#   relay_range_end: 30100   # publish this UDP range too

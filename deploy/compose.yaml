@@ -1,0 +1,63 @@
+# IrChad dev stack: docker compose -f deploy/compose.yaml up
+# (podman compose works too). See deploy/README.md.
+name: irchad-ng
+
+services:
+  ergo:
+    image: ghcr.io/ergochat/ergo:v2.19.1
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ergo-data:/ircd
+      - ./ergo.yaml:/ircd/ircd.yaml:ro
+    ports:
+      # Raw IRC for debugging, host loopback only.
+      - "127.0.0.1:6667:6667"
+    networks: [chad]
+
+  livekit:
+    image: docker.io/livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881/tcp"
+      - "50000-50100:50000-50100/udp"
+    networks: [chad]
+
+  chadd:
+    build:
+      context: ..
+      dockerfile: deploy/chadd.Dockerfile
+    restart: unless-stopped
+    environment:
+      CHADD_ORIGIN: "https://${IRCHAD_HOST:-chat.localhost}:${IRCHAD_HTTPS_PORT:-8443}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    volumes:
+      - ./chadd.toml:/etc/chadd/chadd.toml:ro
+    networks: [chad]
+
+  caddy:
+    image: docker.io/library/caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      IRCHAD_HOST: "${IRCHAD_HOST:-chat.localhost}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports:
+      - "${IRCHAD_HTTPS_PORT:-8443}:443"
+    networks: [chad]
+    depends_on: [ergo, livekit, chadd]
+
+volumes:
+  ergo-data:
+  caddy-data:
+
+networks:
+  chad:
+    ipam:
+      config:
+        # ergo.yaml trusts X-Forwarded-For from this subnet.
+        - subnet: 10.89.77.0/24

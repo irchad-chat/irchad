@@ -1,0 +1,5 @@
+# chadd dev config. CHADD_ORIGIN overrides `origin` (compose sets it).
+listen = "0.0.0.0:8080"
+origin = "https://chat.localhost:8443"
+name = "Chad Dev Network"
+registration = "open"

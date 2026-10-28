@@ -1,0 +1,124 @@
+# Architecture
+
+## System
+
+```
+                 https://chat.example.com  (Caddy, :443, auto TLS)
+                 ├── /.well-known/irchad.json  → chadd   discovery
+                 ├── /invite/*                 → chadd   invite landing page
+                 ├── /api/*                    → chadd   auth, LiveKit tokens, (later) uploads
+                 ├── /irc                      → ergo    IRC over WebSocket
+                 └── /livekit                  → livekit signalling (media: UDP direct / TURN)
+
+client ──wss──▶ ergo        text, presence, history, metadata, E2EE DM transport
+client ──https─▶ chadd      discovery, session token, LiveKit join token
+client ──webrtc─▶ livekit   voice / screen share
+chadd  ──http─▶ ergo API    credential check
+```
+
+A network is one origin. Everything about it comes from the discovery document, so the client stores nothing but the origin and the user's credentials.
+
+## Invites and discovery
+
+The whole point of chadd is that a single URL gets a user onto someone else's network.
+
+- **The invite URL** is `https://chat.example.com/invite[/<code>]`.
+  Opening it in a browser gives a chadd-served landing page with an "Open in IrChad" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download link.
+- **Pasting** either form into the client's "Join a network" box works the same.
+  A bare `chat.example.com` also works, defaulting to https.
+- **Scheme handler:** on Linux it's `x-scheme-handler/irchad` in the `.desktop` file, and on Windows it's a registry key.
+  A second launch forwards the URL to the running instance (D-Bus on Linux, a named pipe on Windows).
+- **Discovery:** `GET <origin>/.well-known/irchad.json`:
+
+```json
+{
+  "version": 1,
+  "name": "Chad Network",
+  "icon": "https://chat.example.com/icon.png",
+  "irc":     { "websocket": "wss://chat.example.com/irc" },
+  "chadd":   { "api": "https://chat.example.com/api" },
+  "livekit": { "url": "wss://chat.example.com/livekit" },
+  "registration": "open"
+}
+```
+
+- v1 invite codes carry **no authority**. They may only hint at a landing channel (`?channel=#general`).
+  Code-gated registration is parked in Phase 7, so don't build it early.
+- The discovery types live in the small shared `chad-proto` crate (D12), so client and server can't drift.
+
+## Accounts and auth
+
+- Users never see NickServ. Registration uses `draft/account-registration` (`REGISTER`), and login uses SASL (SCRAM-SHA-256 preferred, PLAIN fallback).
+  Account name = nick, enforced by ergo config.
+- ergo **always-on** clients plus multiclient give bouncer behavior for free: channels stay joined, and history is kept while offline.
+  Always-on is the default (`accounts.multiclient.always-on: opt-out`, D11). The client logs in as `account@<device>`, treats the server's channel list as authoritative, and fills gaps with `CHATHISTORY AFTER` and `TARGETS`.
+- Credentials are stored per network in the OS secret store.
+- **chadd session:** the client POSTs the account and password to `chadd /api/login`. chadd checks them against ergo's HTTP API and returns a short-lived signed session token.
+  Endpoint to verify in Phase 0: the old Go chadd called `/v1/account_details`, but `/v1/check_auth` is the likely right one.
+
+## Client crates
+
+```
+chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──▶ ergo
+        ▲                            │    └────▶ chad-e2ee
+        └───────events / snapshots───┘    └────▶ chad-media ──▶ livekit
+```
+
+- `chad-core` owns all state: networks, buffers, members, unread markers, voice state.
+  It runs on a tokio runtime and exposes `Command` in and `Event` out channels.
+  egui keeps a projected view model, and core calls `ctx.request_repaint()` (via a callback) on change.
+- `chad-irc` is pure protocol with no I/O policy. It handles tag escaping, batch reassembly, labeled-response correlation, CAP 302 negotiation, ISUPPORT and casemapping.
+  It's fuzzed and unit-tested against real ergo transcripts.
+- `chad-media` owns the LiveKit `Room`, the PipeWire/WASAPI audio graph, the APM (AEC/NS/AGC), capture backends and decoded video frames.
+  Video goes to the UI as GPU textures, using I420 → RGB in a wgpu shader rather than a CPU conversion.
+- Persistence is a SQLite cache (`rusqlite`) per network for scrollback and read state. History of record lives on ergo (`draft/chathistory`).
+  Decrypted E2EE plaintext is the exception and lives only locally (see Phase 4).
+
+## IRC conventions
+
+| Concept | IRC mapping |
+|---|---|
+| "Server" in the sidebar rail | Network (one origin) |
+| Text channel | IRC channel. Auto-join everything in `LIST` on first login, and after that always-on keeps it. |
+| Voice room | Every channel has one, named `<casefolded channel>`. Ops disable it by setting channel metadata `chad/voice=off`. |
+| Who's in voice | User metadata `chad/voice=<#channel>`, set by the client. ergo clears it on disconnect. LiveKit is the authority once you're inside a room. |
+| Display name / avatar | Metadata `display-name`, `avatar` (de-facto keys) |
+| Typing | `+typing` |
+| Replies / reactions | `+draft/reply`, `+draft/react` |
+| Edit | Not in IRCv3. Parked. |
+| Delete | `draft/message-redaction` (`REDACT`) |
+| Unread | `draft/read-marker` (`MARKREAD`), synced across devices |
+| Encrypted DM | PRIVMSG with `+chad/e2e` ciphertext tag + human-readable fallback body (Phase 4) |
+| Mobile push | `draft/webpush` (ergo ≥ 2.15, experimental) |
+
+Relevant ergo versions: webpush landed in 2.15, metadata in 2.17, and 2.19 fixed a channel-metadata visibility leak. **Require ergo ≥ 2.19.**
+
+## Linux platform matrix
+
+Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query the portal's `version`/`AvailableSourceTypes`).
+
+| Concern | Wayland | X11 |
+|---|---|---|
+| Window / GPU | eframe + wgpu (Vulkan) | same |
+| Screen capture | ScreenCast portal → PipeWire, DMA-BUF | ScreenCast portal if the backend supports X11 (e.g. KDE). Otherwise `x11rb` XComposite/XShm + XDamage. |
+| Screen-share audio | PipeWire: capture an app's node, exclude our own playback | same (PipeWire is display-server independent) |
+| Push-to-talk | GlobalShortcuts portal (KDE, GNOME ≥ 48, Hyprland). Fallback: PTT works only while focused, and the UI says so. | XInput2 raw key events via `x11rb` (no grab, sees press and release) |
+| Mic / speakers | PipeWire native: node names, default tracking, hotplug | same |
+| Notifications | `org.freedesktop.Notifications` (portal inside Flatpak) | same |
+| Tray | StatusNotifierItem (`ksni`), no XEmbed | same |
+| Secrets | Secret Service via `oo7` | same |
+| Single instance / URL forwarding | D-Bus well-known name (`zbus`) | same |
+| Idle → away | `ext-idle-notify-v1` | XScreenSaver extension |
+
+Windows equivalents: WGC capture, WASAPI (process loopback for app audio), `RegisterHotKey` / raw input for PTT, toast notifications, Credential Manager, and a named pipe for single instance.
+
+## Media
+
+- One LiveKit room per voice channel. The participant identity is the ergo account name, and the token comes from chadd.
+- Voice is Opus with DTX and RED. AEC, NS and AGC come from libwebrtc's APM, fed with our own playback mix as the far-end reference.
+  Optional RNNoise (`nnnoiseless`) runs before the APM.
+- Screen share uses a single layer with no simulcast. Codec preference:
+  - H.264 via VAAPI on AMD/Intel.
+  - AV1 or H.265 via NVENC on Nvidia.
+  - Software VP9/AV1 fallback.
+- The SDK picks the hardware encoder automatically, and `LIVEKIT_PREFERRED_HW_ENCODER=nvenc|vaapi` overrides that. Presets: 720p30, 1080p60, source.
