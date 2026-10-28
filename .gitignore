@@ -3,3 +3,4 @@
 .env
 /deploy/data/
 /deploy/.env
+/root.crt

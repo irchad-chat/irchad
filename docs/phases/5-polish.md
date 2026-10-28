@@ -20,5 +20,10 @@
 - [ ] Pre-release checklist: run every `cargo fuzz` target (e.g. `crates/chad-irc/fuzz`) for a while before tagging. Fuzzing stays out of CI.
 - [ ] Operator docs: "host your own network in 15 minutes" (compose, DNS, ports for LiveKit UDP/TURN, ergo admin basics).
 
+## Deferred from Phase 1
+- [ ] The client works in two networks at once.
+- [ ] Verify on GNOME Wayland and KDE Wayland: notification popups, SNI tray (GNOME needs the AppIndicator extension), and IME (GNOME usually means ibus).
+- [ ] `irchad://` links from a browser, and single-instance forwarding, on Linux and Windows.
+
 ## Done when
 - A non-technical tester installs from a release, joins via an invite link, and uses chat, voice and screen share without help.

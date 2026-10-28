@@ -26,6 +26,8 @@ pub enum Os {
     /// An `irchad://` link or invite URL, from a second launch.
     Open(String),
     Show,
+    /// From the tray menu; Windows has no tray yet.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Quit,
 }
 

@@ -104,17 +104,21 @@ Bumped workspace `rust-version` to 1.92, because oo7 0.6 and rusqlite 0.41 requi
 
 - [x] System font fallback via fontconfig (Noto Sans CJK, Noto Emoji). egui's bundled fonts render CJK and emoji as tofu (see `notes/egui-chatlog.md`).
       eframe 0.37's `system_fonts` feature does this on demand (fontique, which links fontconfig, so CI needs `libfontconfig-dev`). CJK and emoji are confirmed rendering on X11; the emoji are monochrome.
-- [ ] IME check in the composer with fcitx5 or ibus, on Wayland (text-input-v3) and X11 (XIM).
-      Still needs a human: no IME is installed on the dev machine. The composer is a plain `TextEdit::multiline` (Enter sends, Shift+Enter is a newline).
+- [x] IME check in the composer with fcitx5 or ibus, on Wayland (text-input-v3) and X11 (XIM).
+      Wayland: works with fcitx5 Pinyin on Hyprland (text-input-v3), checked 2026-10-28; Unicode input (Ctrl+Alt+Shift+U) works too. X11 (XIM via XWayland, `XMODIFIERS=@im=fcitx`) works too. The composer is a plain `TextEdit::multiline` (Enter sends, Shift+Enter is a newline).
 - [x] Discovery origins that glibc can't resolve (`chat.localhost`). Use `IRCHAD_HOST=localhost` for native dev, or make sure clients report the failure clearly.
       Resolved in the client: `*.localhost` goes to 127.0.0.1 (RFC 6761) for discovery, icons and the WebSocket (`chad_irc::ws::is_localhost`).
 
 ## Windows
 
-- [ ] Scheme handler registration, named-pipe single instance, toast notifications, Credential Manager.
-      Written but never compiled: there's no Windows target on the dev machine, so the CI Windows job is its first build. `HKCU\Software\Classes\irchad`, pipe `\\.\pipe\party.gentoo.IrChad-<user>`, `notify-rust` toasts, and `CredWriteW`/`CredReadW` (`irchad:<origin>`). Tray on Windows is a stub (Phase 5).
+- [x] Scheme handler registration, named-pipe single instance, toast notifications, Credential Manager.
+      Builds and runs in a Windows VM against the Linux dev stack (2026-10-28): connect, chat, DMs, typing. `irchad://` links and single-instance forwarding are deferred to Phase 5 (user's call).
+      Dev setup: `IRCHAD_HOST=irchad.test` in `deploy/.env`, hosts entries on both sides, Caddy's root in the Windows user Root store (`certutil -user -addstore Root`), and the host firewall opened for 8443 from `virbr0`. `HKCU\Software\Classes\irchad`, pipe `\\.\pipe\party.gentoo.IrChad-<user>`, `notify-rust` toasts, and `CredWriteW`/`CredReadW` (`irchad:<origin>`). Tray on Windows is a stub (Phase 5).
 
 ## Done when
+
+Met 2026-10-28, except where noted. The user deferred GNOME/KDE, two networks at once, and `irchad://` links to Phase 5, when most features exist.
+Verified: Linux and Windows clients plus irssi; DMs and typing between them; reconnect and restart with history (including as a guest); always-on; irssi sees nothing odd; IME on Wayland (Hyprland) and X11.
 
 - With two clients plus irssi on the dev stack: invite → register → chat → restart → history and unread state are intact.
 - Always-on: quit IrChad, then have irssi post in a channel and DM the user. irssi still sees the user in the channel (away). On relaunch both messages appear with correct unread counts, and no duplicate JOINs are sent.
