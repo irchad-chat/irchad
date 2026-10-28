@@ -5,7 +5,12 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::SystemSecrets;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::SystemSecrets;
+
+#[cfg(not(any(target_os = "linux", windows)))]
 mod unsupported;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 pub use unsupported::SystemSecrets;

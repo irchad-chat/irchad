@@ -421,6 +421,17 @@ fn dms_presence_and_ctcp() {
     // Server notices aren't conversations.
     feed(&mut n, ":s NOTICE bob :*** server stuff");
     assert!(buffer(&events(&mut n), "s").is_none());
+
+    out(&mut n);
+    n.command(NetCommand::CloseDm {
+        nick: "Alice".into(),
+    });
+    assert!(
+        events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::BufferRemoved { target, .. } if target == "alice"))
+    );
+    assert_eq!(out(&mut n), ["MONITOR - Alice"]);
 }
 
 #[test]
@@ -496,6 +507,22 @@ fn reactions_redactions_typing() {
     );
     let m = messages(&events(&mut n));
     assert_eq!(m.last().unwrap().reactions[0].nicks, ["bob", "carol"]);
+
+    n.command(NetCommand::Unreact {
+        target: "#c".into(),
+        msgid: "m1".into(),
+        emoji: "👍".into(),
+    });
+    assert_eq!(
+        out(&mut n),
+        ["@+draft/unreact=👍;+draft/reply=m1 TAGMSG #c"]
+    );
+    feed(
+        &mut n,
+        "@+draft/unreact=👍;+draft/reply=m1 :carol!u@h TAGMSG #c",
+    );
+    let m = messages(&events(&mut n));
+    assert_eq!(m.last().unwrap().reactions[0].nicks, ["bob"]);
 
     feed(&mut n, ":alice!u@h REDACT #c m1");
     let m = messages(&events(&mut n));

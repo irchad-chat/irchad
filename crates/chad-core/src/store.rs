@@ -248,7 +248,19 @@ impl Store {
         );
     }
 
-    pub fn react(&self, msgid: &str, nick: &str, emoji: &str) {
+    pub fn react(&self, msgid: &str, nick: &str, emoji: &str, add: bool) {
+        if !add {
+            ok(
+                "remove reaction",
+                self.db
+                    .execute(
+                        "DELETE FROM reactions WHERE msgid = ?1 AND nick = ?2 AND emoji = ?3",
+                        [msgid, nick, emoji],
+                    )
+                    .map(drop),
+            );
+            return;
+        }
         let count: i64 = ok(
             "count reactions",
             self.db.query_row(
@@ -405,8 +417,8 @@ mod tests {
         assert_eq!(s.oldest("#a"), Some(("m1".into(), 10)));
         assert_eq!(s.latest_time(), Some(30));
 
-        s.react("m1", "me", "👍");
-        s.react("m1", "carol", "👍");
+        s.react("m1", "me", "👍", true);
+        s.react("m1", "carol", "👍", true);
         s.redact("m3");
         let r = s.recent("#a", 2);
         assert_eq!(r.len(), 2);
@@ -428,7 +440,7 @@ mod tests {
                 s.insert("#a", &msg(&format!("m{i}"), i.into(), "bob", "x"));
             }
         });
-        s.react("m0", "bob", "x");
+        s.react("m0", "bob", "x", true);
         drop(s);
         let s = Store::open(&path).unwrap();
         assert_eq!(s.recent("#a", KEEP + 10).len(), KEEP as usize);

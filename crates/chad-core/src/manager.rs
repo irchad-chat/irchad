@@ -51,10 +51,12 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
     let device = device_id(&cfg.data_dir);
     let params = |account: String, password, db_path| Params {
         account,
+        guest: false,
         password,
         device: device.clone(),
         register: None,
         joining: None,
+        save_password: false,
         db_path,
         secrets: cfg.secrets.clone(),
     };
@@ -74,8 +76,17 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                 continue;
             }
         };
-        let (Some(origin), Some(account)) = (store.meta("origin"), store.meta("account")) else {
+        let Some(origin) = store.meta("origin") else {
             continue; // a join that never finished
+        };
+        if let Some(nick) = store.meta("guest") {
+            let mut p = params(nick, None, path);
+            p.guest = true;
+            nets.insert(origin.clone(), spawn(origin, store, p, &sink));
+            continue;
+        }
+        let Some(account) = store.meta("account") else {
+            continue;
         };
         let password = match cfg.secrets.load(&origin).await {
             Ok(Some((a, pw))) if a == account => Some(pw),
@@ -107,6 +118,21 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                     sink.send([Event::JoinFailed { invite, error }]);
                     continue;
                 }
+                let (account, password, register) = match auth {
+                    Auth::Login { account, password } => (account, Some(password), None),
+                    Auth::Register {
+                        account,
+                        password,
+                        email,
+                    } => (account, Some(password), Some(email)),
+                    Auth::Guest { nick } => (nick, None, None),
+                };
+                let account = account.trim().to_owned();
+                if !valid_nick(&account) {
+                    let error = "Names can't have spaces or start with # or :.".into();
+                    sink.send([Event::JoinFailed { invite, error }]);
+                    continue;
+                }
                 let path = dir.join(file_name(&inv.origin));
                 let store = match Store::open(&path) {
                     Ok(s) => s,
@@ -117,15 +143,9 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                         continue;
                     }
                 };
-                let (account, password, register) = match auth {
-                    Auth::Login { account, password } => (account, password, None),
-                    Auth::Register {
-                        account,
-                        password,
-                        email,
-                    } => (account, password, Some(email)),
-                };
-                let mut p = params(account.trim().to_owned(), Some(password), path);
+                let guest = password.is_none();
+                let mut p = params(account, password, path);
+                p.guest = guest;
                 p.register = register;
                 p.joining = Some(invite);
                 let tx = spawn_with(inv.origin.clone(), store, p, &sink, inv.channel);
@@ -165,6 +185,7 @@ fn spawn_with(
     };
     let mut net = Net::new(store, info);
     net.invite_channel = invite_channel;
+    net.guest = p.guest;
     if let Some(d) = net
         .store
         .meta("discovery")
@@ -179,6 +200,13 @@ fn spawn_with(
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(conn::run(net, p, rx, sink.clone()));
     tx
+}
+
+/// Enough to keep the name a single IRC parameter; the server judges the rest.
+fn valid_nick(nick: &str) -> bool {
+    !nick.is_empty()
+        && !nick.starts_with(['#', ':'])
+        && !nick.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 fn file_name(origin: &str) -> PathBuf {
@@ -229,5 +257,13 @@ mod tests {
         let id = device_id(dir.path());
         assert_eq!(id.len(), 16);
         assert_eq!(device_id(dir.path()), id);
+    }
+
+    #[test]
+    fn nicks() {
+        assert!(valid_nick("carol") && valid_nick("[x]_y"));
+        for bad in ["", "a b", "#chan", ":x", "a\rb"] {
+            assert!(!valid_nick(bad), "{bad:?}");
+        }
     }
 }

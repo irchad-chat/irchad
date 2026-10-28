@@ -1,7 +1,7 @@
 use crate::secrets::{Fut, SecretStore};
 
-/// shortcut: no Windows Credential Manager yet, so nothing is saved and every
-/// restart asks for the password again. Phase 1's Windows item replaces this.
+/// shortcut: no keyring on this OS (macOS), so nothing is saved and every
+/// restart asks for the password again. Add the Keychain if macOS ever matters.
 #[derive(Default)]
 pub struct SystemSecrets;
 

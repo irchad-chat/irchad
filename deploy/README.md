@@ -20,7 +20,7 @@ curl -k https://chat.localhost:8443/.well-known/irchad.json
 | LiveKit | key `devkey`, secret in `livekit.yaml`. Media on UDP 50000-50100 + TCP 7881, advertised as `LIVEKIT_NODE_IP` (default 127.0.0.1) |
 
 `.localhost` names resolve to loopback in curl and browsers, but glibc only resolves them with `nss-myhostname`.
-If a tool can't resolve `chat.localhost`, add it to `/etc/hosts`.
+IrChad itself maps `*.localhost` to 127.0.0.1 (RFC 6761), for both discovery and the WebSocket. If another tool can't resolve `chat.localhost`, add it to `/etc/hosts`.
 
 Caddy's internal CA root is in the `caddy-data` volume (`/data/caddy/pki/authorities/local/root.crt`) if you want to trust it.
 

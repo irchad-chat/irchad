@@ -132,3 +132,55 @@ async fn register_chat_restart_history() {
     })
     .await;
 }
+
+#[tokio::test]
+#[ignore]
+async fn guest_join_collision_restart() {
+    let origin = std::env::var("IRCHAD_ORIGIN").unwrap_or("localhost:8443".into());
+    let dir = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let config = |d: &std::path::Path| Config {
+        data_dir: d.to_owned(),
+        secrets: Arc::new(MemorySecrets::default()),
+        notify: Arc::new(|| {}),
+    };
+    let nick = format!("g{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
+    let join = || Command::Join {
+        invite: format!("https://{origin}/invite?channel=%23dev"),
+        auth: Auth::Guest { nick: nick.clone() },
+    };
+    let dev = |e: &Event| {
+        matches!(e, Event::Buffer { buffer, .. } if buffer.target == "#dev").then_some(())
+    };
+
+    let (core, mut rx) = chad_core::start(config(dir.path()));
+    core.send(join());
+    assert_eq!(until(&mut rx, connected).await, nick);
+    until(&mut rx, dev).await;
+
+    // Same nick from another install: it takes the next free one.
+    let (core2, mut rx2) = chad_core::start(config(other.path()));
+    core2.send(join());
+    assert_eq!(until(&mut rx2, connected).await, format!("{nick}1"));
+    drop(core2);
+    drop(core);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Restart: no password needed, and #dev is rejoined.
+    let (core, mut rx) = chad_core::start(config(dir.path()));
+    assert_eq!(until(&mut rx, connected).await, nick);
+    until(&mut rx, dev).await; // our JOIN came back
+    core.send(Command::Net {
+        network: format!("https://{origin}"),
+        cmd: NetCommand::Members {
+            channel: "#dev".into(),
+        },
+    });
+    until(&mut rx, |e| match e {
+        Event::Members {
+            channel, members, ..
+        } if channel == "#dev" => members.iter().any(|m| m.nick == nick).then_some(()),
+        _ => None,
+    })
+    .await;
+}

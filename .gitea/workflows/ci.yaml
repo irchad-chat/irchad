@@ -29,7 +29,7 @@ jobs:
           SUDO=$(command -v sudo || true)
           $SUDO apt-get update
           $SUDO apt-get install -y --no-install-recommends \
-            libpipewire-0.3-dev pkg-config wget gnupg lsb-release software-properties-common
+            libpipewire-0.3-dev libfontconfig-dev pkg-config wget gnupg lsb-release software-properties-common
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           $SUDO bash /tmp/llvm.sh 21
           $SUDO apt-get install -y --no-install-recommends libclang-21-dev

@@ -36,6 +36,12 @@ pub enum Error {
     Message(#[from] crate::message::Error),
 }
 
+/// `localhost` and `*.localhost` (RFC 6761), which always mean this machine.
+pub fn is_localhost(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    h == "localhost" || h.ends_with(".localhost")
+}
+
 pub struct Connection {
     ws: WebSocketStream<MaybeTlsStream<TcpStream>>,
     pinged: bool,
@@ -52,10 +58,22 @@ impl Connection {
         let config = WebSocketConfig::default()
             .max_message_size(Some(MAX_FRAME))
             .max_frame_size(Some(MAX_FRAME));
-        let (ws, _) = tokio_tungstenite::connect_async_tls_with_config(
+        let uri = req.uri();
+        let host = uri.host().unwrap_or_default().trim_matches(['[', ']']);
+        let port = uri.port_u16().unwrap_or(443);
+        // RFC 6761: `*.localhost` is loopback, but glibc only knows that with
+        // nss-myhostname, and the dev origin is `chat.localhost`.
+        let tcp = if is_localhost(host) {
+            TcpStream::connect(("127.0.0.1", port)).await
+        } else {
+            TcpStream::connect((host, port)).await
+        }
+        .map_err(tungstenite::Error::Io)?;
+        tcp.set_nodelay(true).map_err(tungstenite::Error::Io)?;
+        let (ws, _) = tokio_tungstenite::client_async_tls_with_config(
             req,
+            tcp,
             Some(config),
-            false,
             Some(Connector::Rustls(tls_config())),
         )
         .await?;
@@ -151,6 +169,21 @@ impl Backoff {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn localhost_names() {
+        for h in [
+            "localhost",
+            "chat.localhost",
+            "Chat.LocalHost.",
+            "a.b.localhost",
+        ] {
+            assert!(is_localhost(h), "{h}");
+        }
+        for h in ["localhost.com", "notlocalhost", "example.com", ""] {
+            assert!(!is_localhost(h), "{h}");
+        }
+    }
 
     #[test]
     fn backoff_grows_caps_and_resets() {

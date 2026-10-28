@@ -12,10 +12,23 @@ path = "src/main.rs"
 
 [dependencies]
 chad-core.workspace = true
-eframe.workspace = true
+eframe = { workspace = true, features = ["persistence", "system_fonts"] }
 egui.workspace = true
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+jiff = "0.2.38"
+notify-rust = "4.18.2"
+serde.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = "0.3.7"
+zbus = "5"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_Foundation"] }

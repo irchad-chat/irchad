@@ -53,6 +53,7 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
 - ergo **always-on** clients plus multiclient give bouncer behavior for free: channels stay joined, and history is kept while offline.
   Always-on is the default (`accounts.multiclient.always-on: opt-out`, D11). The client logs in as `account@<device>`, treats the server's channel list as authoritative, and fills gaps with `CHATHISTORY AFTER` and `TARGETS`.
 - Credentials are stored per network in the OS secret store.
+- **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs.
 - **chadd session:** the client POSTs the account and password to `chadd /api/login`. chadd checks them against ergo's HTTP API and returns a short-lived signed session token.
   Endpoint to verify in Phase 0: the old Go chadd called `/v1/account_details`, but `/v1/check_auth` is the likely right one.
 
@@ -112,7 +113,9 @@ Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query
 | Notifications | `org.freedesktop.Notifications` (portal inside Flatpak) | same |
 | Tray | StatusNotifierItem (`ksni`), no XEmbed | same |
 | Secrets | Secret Service via `oo7` | same |
-| Single instance / URL forwarding | D-Bus well-known name (`zbus`) | same |
+| Single instance / URL forwarding | D-Bus name `party.gentoo.IrChad` serving `org.freedesktop.Application` (`Open`/`Activate`) (`zbus`) | same |
+| `irchad://` scheme | user `.desktop` file with `x-scheme-handler/irchad`, written at startup unless a packaged one exists | same |
+| Fallback fonts (CJK, emoji) | eframe `system_fonts` (fontique → fontconfig), on demand | same |
 | Idle → away | `ext-idle-notify-v1` | XScreenSaver extension |
 
 Windows equivalents: WGC capture, WASAPI (process loopback for app audio), `RegisterHotKey` / raw input for PTT, toast notifications, Credential Manager, and a named pipe for single instance.

@@ -21,6 +21,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
 
+pub use discovery::fetch_icon;
 pub use manager::start;
 
 pub struct Config {
@@ -72,6 +73,11 @@ pub enum Auth {
         password: String,
         email: Option<String>,
     },
+    /// No account: no SASL, nothing in the secret store, and no always-on, so
+    /// channels are rejoined on reconnect and anything said while away is missed.
+    Guest {
+        nick: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +89,12 @@ pub enum NetCommand {
         reply_to: Option<String>,
     },
     React {
+        target: String,
+        msgid: String,
+        emoji: String,
+    },
+    /// Take back your own reaction.
+    Unreact {
         target: String,
         msgid: String,
         emoji: String,
@@ -124,9 +136,18 @@ pub enum NetCommand {
     OpenDm {
         nick: String,
     },
+    /// Hide a DM and forget its local history; a new message reopens it.
+    CloseDm {
+        nick: String,
+    },
     /// The code from the sign-up email.
     Verify {
         code: String,
+    },
+    /// Try again with this password after `ConnState::Failed` (a missing or
+    /// changed password, say). It's saved once a login works.
+    SignIn {
+        password: String,
     },
 }
 

@@ -6,6 +6,14 @@ pub struct SystemSecrets;
 
 const APP: (&str, &str) = ("application", "irchad");
 
+/// A locked keyring (the usual state after login without PAM unlock) refuses
+/// reads and writes; unlocking shows the desktop's own password prompt.
+async fn open() -> Result<oo7::Keyring, String> {
+    let keyring = oo7::Keyring::new().await.map_err(plain)?;
+    keyring.unlock().await.map_err(plain)?;
+    Ok(keyring)
+}
+
 fn plain(e: oo7::Error) -> String {
     tracing::warn!("secret store: {e}");
     "Couldn't use the system keyring. Is a Secret Service (GNOME Keyring, KWallet) running?".into()
@@ -14,7 +22,7 @@ fn plain(e: oo7::Error) -> String {
 impl SecretStore for SystemSecrets {
     fn save<'a>(&'a self, origin: &'a str, account: &'a str, password: &'a str) -> Fut<'a, ()> {
         Box::pin(async move {
-            let keyring = oo7::Keyring::new().await.map_err(plain)?;
+            let keyring = open().await?;
             let attrs = [APP, ("origin", origin), ("account", account)];
             // One item per origin, whatever the account was before.
             keyring
@@ -35,7 +43,7 @@ impl SecretStore for SystemSecrets {
 
     fn load<'a>(&'a self, origin: &'a str) -> Fut<'a, Option<(String, String)>> {
         Box::pin(async move {
-            let keyring = oo7::Keyring::new().await.map_err(plain)?;
+            let keyring = open().await?;
             let items = keyring
                 .search_items(&[APP, ("origin", origin)])
                 .await
@@ -52,7 +60,7 @@ impl SecretStore for SystemSecrets {
 
     fn delete<'a>(&'a self, origin: &'a str) -> Fut<'a, ()> {
         Box::pin(async move {
-            let keyring = oo7::Keyring::new().await.map_err(plain)?;
+            let keyring = open().await?;
             keyring
                 .delete(&[APP, ("origin", origin)])
                 .await

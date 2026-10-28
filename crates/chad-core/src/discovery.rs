@@ -3,9 +3,11 @@
 use std::time::Duration;
 
 use chad_proto::discovery::{Discovery, VERSION, WELL_KNOWN_PATH};
+use url::Url;
 
 /// The real document is ~300 bytes.
 const MAX_BODY: usize = 64 << 10;
+const MAX_ICON: usize = 1 << 20;
 
 pub async fn fetch(origin: &str) -> Result<Discovery, String> {
     let host = origin.trim_start_matches("https://");
@@ -13,26 +15,46 @@ pub async fn fetch(origin: &str) -> Result<Discovery, String> {
         tracing::warn!("discovery {origin}: {e:?}");
         format!("Couldn't reach {host}. Check the address and your connection.")
     };
-    let client = reqwest::Client::builder()
+    let url = format!("{origin}{WELL_KNOWN_PATH}");
+    match get(&url, MAX_BODY).await {
+        Ok(Some(body)) => parse(&body).ok_or_else(|| not_irchad(host)),
+        Ok(None) => Err(not_irchad(host)),
+        Err(e) => Err(unreachable(e)),
+    }
+}
+
+/// The discovery document's `icon`, at most 1 MiB. Decoding is the UI's job.
+pub async fn fetch_icon(url: &Url) -> Result<Vec<u8>, String> {
+    match get(url.as_str(), MAX_ICON).await {
+        Ok(Some(body)) => Ok(body),
+        Ok(None) => Err("icon too big".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// `Ok(None)` when the body is over `max`.
+async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
+    let mut client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(3))
-        .https_only(true)
-        .build()
-        .map_err(unreachable)?;
-    let mut resp = client
-        .get(format!("{origin}{WELL_KNOWN_PATH}"))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(unreachable)?;
+        .https_only(true);
+    // glibc can't resolve `chat.localhost` without nss-myhostname (RFC 6761).
+    if let Some(host) = Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        && chad_irc::ws::is_localhost(&host)
+    {
+        client = client.resolve(&host, ([127, 0, 0, 1], 0).into());
+    }
+    let mut resp = client.build()?.get(url).send().await?.error_for_status()?;
     let mut body = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(unreachable)? {
-        if body.len() + chunk.len() > MAX_BODY {
-            return Err(not_irchad(host));
+    while let Some(chunk) = resp.chunk().await? {
+        if body.len() + chunk.len() > max {
+            return Ok(None);
         }
         body.extend_from_slice(&chunk);
     }
-    parse(&body).ok_or_else(|| not_irchad(host))
+    Ok(Some(body))
 }
 
 fn not_irchad(host: &str) -> String {

@@ -60,3 +60,8 @@ ergo is the only supported IRCd, but that's a protocol choice, not a trust bound
 Treat everything from the server (IRC lines, discovery documents, chadd responses, LiveKit signalling) as attacker-controlled. A bad server must not be able to crash the client, run code, read local files, or exhaust memory or CPU.
 Bound every buffer the server can grow (open batches, multiline bodies, history pages, member lists), and fail closed with an error rather than a panic.
 This doesn't cover what a server can always do (drop, delay or forge plaintext messages). E2EE DMs (D8) are the answer there.
+
+## D15: Guests can join without an account (2026-10-28)
+A chad can join with only a nickname, the way any IRC client can, when the server allows it (ergo's `require-sasl: false`, the default).
+Guests get text chat only: no always-on (it needs an account), no chadd session (so no voice or uploads), and no E2EE DMs (keys are published per account).
+The client keeps their channel list locally and re-`JOIN`s it on reconnect. Nothing goes in the secret store.

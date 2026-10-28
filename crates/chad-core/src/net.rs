@@ -69,6 +69,8 @@ pub struct Net {
     pub isupport: Isupport,
     /// `?channel=` from the invite, joined once synced.
     pub invite_channel: Option<String>,
+    /// No account, so never always-on: rejoin our channels ourselves.
+    pub guest: bool,
     pub out: Vec<Message>,
     pub events: Vec<Event>,
     cm: Casemapping,
@@ -93,6 +95,7 @@ impl Net {
             caps: Negotiator::new(),
             isupport: Isupport::new(),
             invite_channel: None,
+            guest: false,
             out: Vec::new(),
             events: Vec::new(),
             cm: Casemapping::Ascii,
@@ -164,7 +167,8 @@ impl Net {
         self.synced = false;
         self.joined.clear();
         self.set_state(ConnState::Connected);
-        if self.caps.enabled("draft/persistence") {
+        self.persistent = !self.guest;
+        if !self.guest && self.caps.enabled("draft/persistence") {
             self.out.push(Message::new("PERSISTENCE", ["GET"]));
         }
         // ergo sends the reattach burst (our JOINs) before reading this, so the reply
@@ -219,7 +223,20 @@ impl Net {
                     self.fetch_new(&key);
                 }
             }
-            NetCommand::Verify { .. } => {}
+            NetCommand::CloseDm { nick } => {
+                let key = self.fold(&nick);
+                if self
+                    .buffers
+                    .get(&key)
+                    .is_some_and(|b| b.kind == BufferKind::Dm)
+                {
+                    self.remove_buffer(&key);
+                    if self.connected && self.isupport.get("MONITOR").is_some() {
+                        self.out.push(Message::new("MONITOR", ["-", nick.as_str()]));
+                    }
+                }
+            }
+            NetCommand::Verify { .. } | NetCommand::SignIn { .. } => {}
             _ if offline => self.error("You're offline right now."),
             NetCommand::React {
                 target,
@@ -228,6 +245,15 @@ impl Net {
             } => self.out.push(
                 Message::new("TAGMSG", [target])
                     .with_tag("+draft/react", truncate(&emoji, 64))
+                    .with_tag("+draft/reply", msgid),
+            ),
+            NetCommand::Unreact {
+                target,
+                msgid,
+                emoji,
+            } => self.out.push(
+                Message::new("TAGMSG", [target])
+                    .with_tag("+draft/unreact", truncate(&emoji, 64))
                     .with_tag("+draft/reply", msgid),
             ),
             NetCommand::Redact { target, msgid } => {
@@ -579,8 +605,8 @@ impl Net {
                 let Some(target) = self.buffer_target(&m) else {
                     return;
                 };
-                if let (Some(emoji), Some(msgid)) = (m.tag("+draft/react"), m.tag("+draft/reply")) {
-                    self.store.react(msgid, &from, truncate(emoji, 64));
+                if let (Some((emoji, add)), Some(msgid)) = (reaction(&m), m.tag("+draft/reply")) {
+                    self.store.react(msgid, &from, truncate(emoji, 64), add);
                     self.refresh(msgid);
                 } else if let Some(state) = m.tag("+typing").filter(|_| !me) {
                     let state = match state {
@@ -894,12 +920,10 @@ impl Net {
             } else if let Item::Message(m) = item {
                 match m.command.as_str() {
                     "TAGMSG" => {
-                        if let (Some(e), Some(id), Some(n)) = (
-                            m.tag("+draft/react"),
-                            m.tag("+draft/reply"),
-                            m.source_nick(),
-                        ) {
-                            self.store.react(id, n, truncate(e, 64));
+                        if let (Some((e, add)), Some(id), Some(n)) =
+                            (reaction(&m), m.tag("+draft/reply"), m.source_nick())
+                        {
+                            self.store.react(id, n, truncate(e, 64), add);
                             touched.push(id.to_owned());
                         }
                     }
@@ -1209,6 +1233,12 @@ fn pack<'a>(names: impl Iterator<Item = &'a str>, max: usize) -> Vec<String> {
 }
 
 /// `nick` as a whole word, ignoring ASCII case.
+/// A TAGMSG's reaction emoji, and whether it adds (`react`) or removes (`unreact`).
+fn reaction(m: &Message) -> Option<(&str, bool)> {
+    (m.tag("+draft/react").map(|e| (e, true)))
+        .or_else(|| m.tag("+draft/unreact").map(|e| (e, false)))
+}
+
 fn mentions(text: &str, nick: &str) -> bool {
     if nick.is_empty() {
         return false;

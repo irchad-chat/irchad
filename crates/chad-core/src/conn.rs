@@ -24,7 +24,9 @@ pub enum ToNet {
 }
 
 pub struct Params {
+    /// The nick, for a guest.
     pub account: String,
+    pub guest: bool,
     pub password: Option<String>,
     pub device: String,
     /// `Some(email)` while signing up.
@@ -32,6 +34,8 @@ pub struct Params {
     /// Set until the first login on a new network succeeds; a failure before
     /// then removes the network again.
     pub joining: Option<String>,
+    /// Save the password after the next login (it came from `SignIn`).
+    pub save_password: bool,
     pub db_path: PathBuf,
     pub secrets: Arc<dyn SecretStore>,
 }
@@ -50,13 +54,23 @@ enum End {
 pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<ToNet>, sink: Sink) {
     let mut backoff = Backoff::new();
     loop {
-        let end = match p.password.clone() {
+        let password = if p.guest {
+            Some(String::new())
+        } else {
+            p.password.clone()
+        };
+        let end = match password {
             Some(password) => {
                 session(&mut net, &mut p, &password, &mut rx, &sink, &mut backoff).await
             }
             None => End::Fatal("Sign in to this network again.".into()),
         };
         net.detach();
+        // A guest has no password to fix, so after the first join only retrying helps.
+        let end = match end {
+            End::Fatal(e) if p.guest && p.joining.is_none() => End::Lost(e),
+            end => end,
+        };
         match end {
             End::Registered => {
                 p.register = None;
@@ -87,9 +101,16 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 }
                 net.set_state(ConnState::Failed { error });
                 sink.send(net.events.drain(..));
-                // Stay listed with the cache readable until removed or re-joined.
+                // Stay listed with the cache readable until removed, or
+                // until the user signs in again.
                 loop {
                     match rx.recv().await {
+                        Some(ToNet::Cmd(NetCommand::SignIn { password })) => {
+                            p.password = Some(password);
+                            p.save_password = true;
+                            backoff.reset();
+                            break;
+                        }
                         Some(ToNet::Cmd(c)) => offline(&mut net, c, &sink),
                         Some(ToNet::Remove) => return remove(net, &p, &sink).await,
                         None => return,
@@ -116,7 +137,9 @@ async fn remove(net: Net, p: &Params, sink: &Sink) {
         path.push(ext);
         let _ = std::fs::remove_file(path);
     }
-    if let Err(e) = p.secrets.delete(&network).await {
+    if !p.guest
+        && let Err(e) = p.secrets.delete(&network).await
+    {
         tracing::warn!("forgetting the password for {network}: {e}");
     }
     sink.send([Event::NetworkRemoved { network }]);
@@ -183,6 +206,7 @@ async fn session(
     }
 
     let mut auth_started = false;
+    let mut nick_tries = 0;
     let mut sasl: Option<Sasl> = None;
     let nick = loop {
         let m = tokio::select! {
@@ -208,7 +232,9 @@ async fn session(
 
         if net.caps.ready() && !auth_started {
             auth_started = true;
-            if let Some(email) = &p.register {
+            if p.guest {
+                out.push(net.caps.end());
+            } else if let Some(email) = &p.register {
                 if !net.caps.enabled("draft/account-registration") {
                     return End::Fatal(format!("{} isn't taking sign-ups.", d.name));
                 }
@@ -260,8 +286,21 @@ async fn session(
         }
         match m.command.as_str() {
             "001" => net.info.nick = m.param(0).unwrap_or(&account).to_owned(),
-            "376" | "422" => break net.info.nick.clone(),
+            "376" | "422" => {
+                if p.guest && p.joining.take().is_some() {
+                    net.store.set_meta("origin", &net.info.network.clone());
+                    net.store.set_meta("guest", &account);
+                }
+                break net.info.nick.clone();
+            }
+            // Guests take the next free `nick1`..`nick9`.
+            "433" if p.guest && nick_tries < 9 => {
+                nick_tries += 1;
+                out.push(Message::new("NICK", [format!("{account}{nick_tries}")]));
+            }
+            "433" if p.guest => return End::Fatal("That nickname is taken.".into()),
             "433" => return End::Fatal("That username is taken.".into()),
+            "432" => return End::Fatal("That name isn't allowed here.".into()),
             "ERROR" => return End::Lost(m.params.last().cloned().unwrap_or_default()),
             _ => {}
         }
@@ -310,14 +349,18 @@ async fn session(
     }
 }
 
-/// First login on a new network: now it's worth keeping.
+/// First login on a new network: now it's worth keeping. After a `SignIn`,
+/// the password that worked is saved again.
 async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
-    if p.joining.take().is_none() {
+    let first = p.joining.take().is_some();
+    if !first && !std::mem::take(&mut p.save_password) {
         return;
     }
     let origin = net.info.network.clone();
-    net.store.set_meta("origin", &origin);
-    net.store.set_meta("account", &p.account);
+    if first {
+        net.store.set_meta("origin", &origin);
+        net.store.set_meta("account", &p.account);
+    }
     if let Err(e) = p.secrets.save(&origin, &p.account, password).await {
         net.error(format!("{e} You'll need to sign in again next time."));
         sink.send(net.events.drain(..));
