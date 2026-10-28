@@ -68,6 +68,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
   It runs on a tokio runtime and exposes `Command` in and `Event` out channels.
   egui keeps a projected view model, and core calls `ctx.request_repaint()` (via a callback) on change.
 - `chad-irc` is pure protocol with no I/O policy. It handles tag escaping, batch reassembly, labeled-response correlation, CAP 302 negotiation, ISUPPORT and casemapping.
+  The capabilities we request are listed once, in `chad_irc::cap::WANTED`.
   It's fuzzed and unit-tested against real ergo transcripts.
 - `chad-media` owns the LiveKit `Room`, the PipeWire/WASAPI audio graph, the APM (AEC/NS/AGC), capture backends and decoded video frames.
   Video goes to the UI as GPU textures, using I420 → RGB in a wgpu shader rather than a CPU conversion.
