@@ -42,7 +42,7 @@ Hosting is self-hosted Gitea at `git.gentoo.party` (user `sam`), with **Gitea Ac
 
 ## Spikes (each writes `docs/notes/<topic>.md` with a go/no-go)
 
-- [ ] **egui chat log:** → [notes/egui-chatlog.md](../notes/egui-chatlog.md). Perf and keep-position are GO. Selection and IME are waiting on the human check below.
+- [x] **egui chat log:** → [notes/egui-chatlog.md](../notes/egui-chatlog.md). GO. The IME check is deferred to Phase 1.
   - 50k messages with variable heights (wrapped text, an inline image, a code block)
   - smooth scroll, plus jump-to-unread and keep-position on prepend (history backfill)
   - text selection across several messages, and IME input in the composer
@@ -62,7 +62,7 @@ Hosting is self-hosted Gitea at `git.gentoo.party` (user `sam`), with **Gitea Ac
 - [x] glibc on this machine doesn't resolve `*.localhost`, so Caddy also serves plain `localhost`. Phase 1: the client must handle a discovery origin it can't resolve. Simplest is to use `IRCHAD_HOST=localhost` for native dev.
 - [x] ergo's per-IP connection throttle hits dev tooling (every host connection comes from the compose subnet), so the subnet is exempted in dev.
 - [x] libwebrtc's weak PipeWire stubs shadow libpipewire (see `notes/livekit-sdk.md`). The workaround is proven, and Phase 2 picks the long-term fix.
-- [ ] Human check on Wayland and X11: cross-message selection, IME and scroll feel in `chatlog_spike` (see `notes/egui-chatlog.md`).
+- [x] Hand check of `chatlog_spike`: selection, scrolling and sending all work after fixing the jump-to-bottom bug. IME is deferred (no IME installed). CJK and emoji fonts are a Phase 1 task.
 - [ ] Phase 2: decide on the metadata rate limit for `chad/voice` (10 SETs per 2 min by default, see `notes/ergo-caps.md`).
 
 ## Done when

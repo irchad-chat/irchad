@@ -177,6 +177,8 @@ struct ChatLog {
     rows_laid_out: usize,
     /// Scroll offset of the last pass.
     last_top: f32,
+    /// Viewport height of the last pass.
+    view_height: f32,
     /// (top row id, px of it hidden above the viewport) just before a prepend;
     /// checked on the next pass to measure keep-position drift.
     prepend_anchor: Option<(u64, f32)>,
@@ -251,6 +253,14 @@ impl ChatLog {
         self.msgs.binary_search_by_key(&id, |m| m.id).ok()
     }
 
+    /// A real offset, not f32::MAX: egui uses an out-of-range offset as-is for
+    /// one pass, which paints the whole log off-screen.
+    fn scroll_to_bottom(&mut self) {
+        self.rebuild_prefix();
+        let total = *self.prefix.last().unwrap();
+        self.pending_offset = Some((total - self.view_height).max(0.0));
+    }
+
     fn scroll_to_index(&mut self, i: usize, margin: f32) {
         self.rebuild_prefix();
         self.pending_offset = Some((self.prefix[i] - margin).max(0.0));
@@ -279,7 +289,10 @@ impl ChatLog {
             let first = self
                 .prefix
                 .partition_point(|&y| y <= viewport.min.y)
-                .saturating_sub(1);
+                .saturating_sub(1)
+                // An offset past the end would otherwise land on prefix[n],
+                // one past the last row.
+                .min(self.msgs.len() - 1);
             let mut y = self.prefix[first];
             let mut i = first;
             let mut changed = false;
@@ -329,6 +342,7 @@ impl ChatLog {
             self.max_prepend_drift = self.max_prepend_drift.max(drift);
         }
         self.last_top = viewport.min.y;
+        self.view_height = viewport.height();
         let at_bottom = viewport.max.y >= out.content_size.y - 2.0;
         if compensate != 0.0 && !at_bottom {
             self.pending_offset = Some(viewport.min.y + compensate);
@@ -442,6 +456,7 @@ impl Spike {
             backfill_started: None,
             rows_laid_out: 0,
             last_top: 0.0,
+            view_height: 0.0,
             prepend_anchor: None,
             max_prepend_drift: 0.0,
             msgs,
@@ -472,7 +487,7 @@ impl Spike {
         msg.body = Body::Text(text);
         self.next_id += 1;
         self.log.push(msg);
-        self.log.pending_offset = Some(f32::MAX);
+        self.log.scroll_to_bottom();
         self.composer.clear();
     }
 
@@ -550,7 +565,7 @@ impl eframe::App for Spike {
                     self.log.scroll_to_index(i, 40.0);
                 }
                 if ui.button("Jump to bottom").clicked() {
-                    self.log.pending_offset = Some(f32::MAX);
+                    self.log.scroll_to_bottom();
                 }
                 ui.separator();
                 ui.label(format!(

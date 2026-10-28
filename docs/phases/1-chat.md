@@ -39,6 +39,12 @@
 - [ ] Settings for theme (dark default), font size and notification rules. Persisted per user.
 - [ ] Error UX in plain words: no raw numerics. "That username is taken", not `433`.
 
+### Carried over from Phase 0
+
+- [ ] System font fallback via fontconfig (Noto Sans CJK, Noto Emoji). egui's bundled fonts render CJK and emoji as tofu (see `notes/egui-chatlog.md`).
+- [ ] IME check in the composer with fcitx5 or ibus, on Wayland (text-input-v3) and X11 (XIM).
+- [ ] Discovery origins that glibc can't resolve (`chat.localhost`). Use `IRCHAD_HOST=localhost` for native dev, or make sure clients report the failure clearly.
+
 ## Windows
 - [ ] Scheme handler registration, named-pipe single instance, toast notifications, Credential Manager.
 

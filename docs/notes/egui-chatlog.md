@@ -1,6 +1,6 @@
 # Spike: egui chat log
 
-**Verdict: GO on performance and keep-position.** Cross-message selection and IME still need a hands-on check (see the end).
+**Verdict: GO.** Performance, keep-position and cross-message selection are confirmed by hand on Hyprland (2026-10-28). The IME check moved to Phase 1, because no IME was installed to test with.
 Code: `crates/chad-desktop/examples/chatlog_spike.rs` (egui/eframe 0.37, wgpu).
 
 ```sh
@@ -47,14 +47,23 @@ Drift is measured as the top row's id and how far it's scrolled past, compared j
 
 These have to be checked on both Wayland and X11. The spike has everything needed to try them.
 
-- [ ] **Text selection across messages.** egui's `LabelSelectionState` supports drag-selecting across multiple `Label`s in one pass, and every row body here is a `Label`.
+- [x] **Text selection across messages.** Works (confirmed by hand). egui's `LabelSelectionState` supports drag-selecting across multiple `Label`s in one pass, and every row body here is a `Label`.
   Expected limitation: when a selection's anchor row scrolls out of view it isn't laid out any more, so the selection may drop.
   If that matters, Phase 1 needs either app-level selection state (a msgid range) or keeping the anchor row alive while dragging.
-- [ ] **IME in the composer** (`TextEdit::multiline`), with fcitx5 or ibus on Wayland (text-input-v3) and X11 (XIM).
+- [ ] **IME in the composer** (deferred to Phase 1; needs fcitx5 or ibus installed) (`TextEdit::multiline`), with fcitx5 or ibus on Wayland (text-input-v3) and X11 (XIM).
   Check the preedit position and that commit works.
 - [ ] Wheel and touchpad scrolling feel, since the bench drives the offset directly.
 
+## Bugs found by hand (fixed)
+
+- Jump-to-bottom (and sending) used `vertical_scroll_offset(f32::MAX)`. egui applies an out-of-range offset as-is for one pass, so the log is painted entirely off-screen.
+  Nothing repaints afterwards, so it stays blank until the next input, and in one path it also indexed one past the last row and panicked.
+  Fix: scroll to the real bottom (`total - viewport height`), and clamp the first-row lookup.
+
 ## Notes for Phase 1
+
+- **Fonts:** egui's bundled fonts have no CJK or emoji, so they render as tofu (□). Load system fallbacks through fontconfig, e.g. Noto Sans CJK and Noto Emoji.
+  egui can't render color emoji (no COLR/CBDT support), so use the monochrome `Noto Emoji` for now, and look at color emoji in Phase 5.
 
 - egui 0.37's API is `App::ui(&mut self, ui: &mut Ui, …)` with `Panel::top/bottom/left` (no separate `TopBottomPanel`/`SidePanel`), and panels take a `&mut Ui`.
 - Real inline images will come from `egui::Image` with a known size from metadata, such as image dimensions in a tag or from a HEAD request.
