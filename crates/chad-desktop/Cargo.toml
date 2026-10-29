@@ -36,3 +36,7 @@ zbus = "5"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.37.0", features = ["eframe", "wgpu"] }
+tempfile = "3.27.0"

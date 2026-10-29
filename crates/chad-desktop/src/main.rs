@@ -5,6 +5,8 @@ mod icons;
 mod platform;
 mod screen;
 mod settings;
+#[cfg(all(test, target_os = "linux"))]
+mod shots;
 mod voice;
 
 use std::path::PathBuf;

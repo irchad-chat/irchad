@@ -68,6 +68,8 @@ docs/
 
 - `cargo build`, `cargo clippy --all-targets`, `cargo fmt`, `cargo test` (CI runs clippy with `-D warnings`). Building `chad-media` examples needs clang ≥ 21 (webrtc-sys) and PipeWire headers.
 - Run the client: `cargo run -p chad-desktop` (binary `irchad`)
+- Screenshots of the UI (to check visual changes): `cargo test -p chad-desktop shots -- --nocapture` renders the real `App` headless and writes `target/shots/*.png`.
+  To add a scenario, put a test in `crates/chad-desktop/src/shots.rs` that drives the UI through accesskit (`get_by_label(..).click()`) and then calls `shot("name")`.
 - Dev server stack: `docker compose -f deploy/compose.yaml up -d --build` (podman compose works).
   Then `python3 deploy/seed.py` creates the test accounts and channels. See `deploy/README.md`.
 - Dev origin: `https://chat.localhost:8443` (Caddy internal CA, so pass `curl -k`). Raw IRC: `127.0.0.1:6667`.

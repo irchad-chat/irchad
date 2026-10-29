@@ -233,6 +233,12 @@ impl Tray {
         }
     }
 
+    /// No icon, so tests don't put one in the real tray.
+    #[cfg(test)]
+    pub fn none() -> Self {
+        Self(None)
+    }
+
     pub fn set(&self, unread: bool, mentions: u32) {
         if let Some(h) = self.0.clone() {
             tokio::spawn(async move {
