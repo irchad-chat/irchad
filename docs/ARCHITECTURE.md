@@ -109,7 +109,7 @@ Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query
 | Concern | Wayland | X11 |
 |---|---|---|
 | Window / GPU | eframe + wgpu (Vulkan) | same |
-| Screen capture | ScreenCast portal → PipeWire, DMA-BUF | ScreenCast portal if the backend supports X11 (e.g. KDE). Otherwise `x11rb` XComposite/XShm + XDamage. |
+| Screen capture | ScreenCast portal (`ashpd`, restore token) → our own PipeWire stream: linear DMA-BUF first, SHM fallback, cursor as metadata drawn by us | ScreenCast portal if the desktop serves it on X11 (e.g. KDE), offered in our picker. Otherwise libwebrtc's own X11 capturers (XShm + XDamage for screens, XComposite for windows) behind our picker (D21). |
 | Screen-share audio | PipeWire: capture an app's node, exclude our own playback | same (PipeWire is display-server independent) |
 | Push-to-talk | GlobalShortcuts portal (KDE, GNOME ≥ 48, Hyprland). Fallback: PTT works only while focused, and the UI says so. | XInput2 raw key events via `x11rb` (no grab, sees press and release) |
 | Mic / speakers | PipeWire native: node names, default tracking, hotplug | same |
@@ -121,7 +121,7 @@ Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query
 | Fallback fonts (CJK, emoji) | eframe `system_fonts` (fontique → fontconfig), on demand | same |
 | Idle → away | `ext-idle-notify-v1` | XScreenSaver extension |
 
-Windows equivalents: WGC capture, WASAPI (process loopback for app audio), `GetAsyncKeyState` polling for PTT (raw input later), toast notifications, Credential Manager, and a named pipe for single instance.
+Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback for app audio), `GetAsyncKeyState` polling for PTT (raw input later), toast notifications, Credential Manager, and a named pipe for single instance.
 
 ## Media
 
@@ -131,8 +131,14 @@ Windows equivalents: WGC capture, WASAPI (process loopback for app audio), `GetA
 - Audio path: the backend (PipeWire streams `irchad-mic` / `irchad-voice` with role Communication on Linux, cpal elsewhere) moves 10 ms frames through lock-free rings.
   A DSP thread runs RNNoise → APM → VAD/PTT gate → `NativeAudioSource`. Each remote track decodes into its own ring, and the playback callback mixes them with per-user volume.
   Device choice is a PipeWire `target.object`. Without one, WirePlumber follows the default and handles unplug.
-- Screen share uses a single layer with no simulcast. Codec preference:
+- Screen share uses a single layer with no simulcast. Codec preference, by the PCI vendor of the first render node (D23):
   - H.264 via VAAPI on AMD/Intel.
-  - AV1 or H.265 via NVENC on Nvidia.
-  - Software VP9/AV1 fallback.
-- The SDK picks the hardware encoder automatically, and `LIVEKIT_PREFERRED_HW_ENCODER=nvenc|vaapi` overrides that. Presets: 720p30, 1080p60, source.
+  - AV1 via NVENC on Nvidia.
+  - Software VP9 otherwise (and on Windows for now).
+  The SDK falls back to software if the asked-for encoder isn't there, and 5 s in we log the encoder libwebrtc actually picked. Presets: 720p30, 1080p60, source, plus a bitrate cap.
+  The content hint maps to libwebrtc's degradation preference: "Text" keeps resolution, "Motion" keeps the frame rate.
+- Capture backends implement `ScreenSource` and hand BGRA/RGBA frames to one sink, which converts to I420 (libyuv), scales to the preset and feeds a `NativeVideoSource`.
+  App audio (PipeWire app stream node, or WASAPI process loopback) goes out as a second, stereo `ScreenshareAudio` track.
+- Viewers subscribe to tracks themselves (`auto_subscribe` off): microphones always, a screen share and its audio only while it's on screen.
+  A viewer sets its LiveKit participant attribute `watching=<identity>`, and the sharer counts those for "N watching" (D22).
+  Decoded frames go to the UI as I420 planes, and a wgpu paint callback converts them to RGB in a shader.

@@ -8,12 +8,17 @@
 mod engine;
 mod platform;
 mod room;
+mod screen;
 
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
 pub use room::Call;
+pub use screen::{
+    AudioApp, ContentHint, Preset, ScreenFrame, ScreenSettings, ShareSource, SourceId, Target,
+    Targets,
+};
 
 /// Everything runs at 48 kHz mono, 10 ms frames.
 pub(crate) const RATE: u32 = 48_000;
@@ -87,6 +92,10 @@ pub struct Participant {
     pub speaking: bool,
     pub muted: bool,
     pub local: bool,
+    /// Has a screen share up.
+    pub sharing: bool,
+    /// How many others watch that share.
+    pub watchers: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -194,6 +203,63 @@ impl Voice {
     /// Joins a LiveKit room, leaving any other call.
     pub async fn join(&self, url: &str, token: &str) -> Result<Call, String> {
         room::join(self, url, token).await
+    }
+
+    /// What [`Voice::share`] can capture here.
+    pub async fn share_targets(&self) -> Targets {
+        platform::targets().await
+    }
+
+    /// Apps playing audio right now, for [`Voice::share`].
+    pub fn audio_apps(&self) -> Vec<AudioApp> {
+        self.backend.apps()
+    }
+
+    /// Shares a screen or window (and an [`AudioApp::id`]'s audio) into the
+    /// call, replacing any share. Returns the portal's new restore token.
+    pub async fn share(
+        &self,
+        target: Target,
+        app: Option<String>,
+        settings: ScreenSettings,
+    ) -> Result<Option<String>, String> {
+        screen::start(self, target, app, settings).await
+    }
+
+    pub fn stop_share(&self) {
+        self.end(None);
+    }
+
+    pub fn sharing(&self) -> bool {
+        self.shared.sharing()
+    }
+
+    /// The capture behind share `id` ended by itself.
+    pub(crate) fn end_share(&self, id: u64) {
+        self.end(Some(id));
+    }
+
+    fn end(&self, id: Option<u64>) {
+        if let Some(share) = self.shared.take_share(id) {
+            self.backend.capture_app(None);
+            drop(share);
+            (self.shared.notify)();
+        }
+    }
+
+    /// Subscribes to `identity`'s screen share (and its audio), or stops
+    /// watching. Only watch while the video is on screen: it costs bandwidth.
+    pub fn watch(&self, identity: Option<String>) {
+        room::watch(&self.shared, identity);
+    }
+
+    pub fn watching(&self) -> Option<String> {
+        engine::lock(&self.shared.watching).clone()
+    }
+
+    /// The latest frame of the share being watched.
+    pub fn screen(&self) -> Option<Arc<ScreenFrame>> {
+        engine::lock(&self.shared.screen).clone()
     }
 
     fn running(&self) -> bool {

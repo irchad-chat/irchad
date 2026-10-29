@@ -3,6 +3,7 @@ mod chatlog;
 mod format;
 mod icons;
 mod platform;
+mod screen;
 mod settings;
 mod voice;
 

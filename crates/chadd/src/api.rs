@@ -175,8 +175,13 @@ pub async fn voice_token(
             can_publish: Some(true),
             can_subscribe: Some(true),
             can_publish_data: Some(false),
-            // Phase 3 adds screen share.
-            can_publish_sources: vec!["microphone".into()],
+            can_publish_sources: vec![
+                "microphone".into(),
+                "screen_share".into(),
+                "screen_share_audio".into(),
+            ],
+            // The `watching` attribute behind "N watching" (D22).
+            can_update_own_metadata: Some(true),
             ..Default::default()
         })
         .to_jwt()

@@ -10,17 +10,23 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use livekit::options::{AudioEncoding, TrackPublishOptions};
 use livekit::prelude::*;
-use livekit::track::{LocalAudioTrack, LocalTrack, RemoteTrack, TrackSource};
+use livekit::track::{LocalAudioTrack, LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource};
 use livekit::webrtc::audio_source::{
     AudioSourceOptions, RtcAudioSource, native::NativeAudioSource,
 };
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use livekit::webrtc::stats::RtcStats;
+use livekit::webrtc::video_frame::VideoBuffer;
+use livekit::webrtc::video_stream::native::NativeVideoStream;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::engine::{CUE_LEN, Cue, Mic, Shared, lock};
+use crate::screen::{MAX_DIM, ScreenFrame};
 use crate::{CallState, Participant, Quality, RATE, Voice};
+
+/// Participant attribute naming whose screen share someone watches.
+const WATCHING: &str = "watching";
 
 /// D14: the SFU decides who's in the room.
 const MAX_PARTICIPANTS: usize = 500;
@@ -55,6 +61,10 @@ impl Drop for Call {
         self.task.abort();
         let shared = &self.voice.shared;
         if shared.current(self.generation) {
+            self.voice.stop_share();
+            *lock(&shared.room) = None;
+            *lock(&shared.watching) = None;
+            *lock(&shared.screen) = None;
             *lock(&shared.mic) = None;
             shared.set_call(self.generation, None);
             shared.play_cue(Cue::Leave);
@@ -76,12 +86,13 @@ impl Drop for Call {
 }
 
 pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String> {
-    let (room, mut events) = Room::connect(url, token, RoomOptions::default())
-        .await
-        .map_err(|e| {
-            tracing::warn!("LiveKit connect: {e}");
-            "Couldn't connect to voice.".to_owned()
-        })?;
+    // Screen shares cost bandwidth, so we subscribe to tracks ourselves.
+    let mut options = RoomOptions::default();
+    options.auto_subscribe = false;
+    let (room, mut events) = Room::connect(url, token, options).await.map_err(|e| {
+        tracing::warn!("LiveKit connect: {e}");
+        "Couldn't connect to voice.".to_owned()
+    })?;
     let room = Arc::new(room);
     // Our own APM does the processing (D: we own audio I/O), and the DSP thread
     // paces us, so the source needs no queue.
@@ -119,6 +130,14 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
 
     let generation = shared.generation.fetch_add(1, Relaxed) + 1;
     *lock(&shared.mic) = Some(Mic { source, track });
+    *lock(&shared.room) = Some(room.clone());
+    *lock(&shared.watching) = None;
+    for p in room.remote_participants().values() {
+        let identity = short(&p.identity().to_string());
+        for publication in p.track_publications().values() {
+            subscribe(&shared, publication, &identity);
+        }
+    }
     shared.mute_track();
     shared.set_call(
         generation,
@@ -165,12 +184,33 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                         }
                     }
                 }
+                RoomEvent::TrackSubscribed {
+                    track: RemoteTrack::Video(t),
+                    publication,
+                    ..
+                } => {
+                    let h = tokio::spawn(view(t, shared.clone()));
+                    if let Some(old) = streams.insert(publication.sid().to_string(), h) {
+                        old.abort();
+                    }
+                }
+                RoomEvent::TrackPublished {
+                    publication,
+                    participant,
+                } => subscribe(
+                    &shared,
+                    &publication,
+                    &short(&participant.identity().to_string()),
+                ),
                 RoomEvent::TrackUnsubscribed { publication, .. } => {
                     let sid = publication.sid().to_string();
                     if let Some(h) = streams.remove(&sid) {
                         h.abort();
                     }
                     shared.remove_source(&sid);
+                    if publication.source() == TrackSource::Screenshare {
+                        *lock(&shared.screen) = None;
+                    }
                 }
                 RoomEvent::ParticipantConnected(_) => shared.play_cue(Cue::Join),
                 RoomEvent::ParticipantDisconnected(_) => shared.play_cue(Cue::Leave),
@@ -208,31 +248,121 @@ async fn play(track: RemoteAudioTrack, mut tx: rtrb::Producer<i16>) {
     }
 }
 
+/// Microphones always; a screen share and its audio only while watched.
+fn subscribe(shared: &Shared, publication: &RemoteTrackPublication, identity: &str) {
+    let want = match publication.source() {
+        TrackSource::Microphone => true,
+        TrackSource::Screenshare | TrackSource::ScreenshareAudio => {
+            lock(&shared.watching).as_deref() == Some(identity)
+        }
+        _ => false,
+    };
+    if want != publication.is_subscribed() {
+        publication.set_subscribed(want);
+    }
+}
+
+pub fn watch(shared: &Shared, identity: Option<String>) {
+    let identity = identity.map(|i| short(&i));
+    {
+        let mut w = lock(&shared.watching);
+        if *w == identity {
+            return;
+        }
+        w.clone_from(&identity);
+    }
+    *lock(&shared.screen) = None;
+    let Some(room) = lock(&shared.room).clone() else {
+        return;
+    };
+    for p in room.remote_participants().values() {
+        let id = short(&p.identity().to_string());
+        for publication in p.track_publications().values() {
+            subscribe(shared, publication, &id);
+        }
+    }
+    // Tells the sharer how many watch (D22).
+    tokio::spawn(async move {
+        let attrs = HashMap::from([(WATCHING.to_owned(), identity.unwrap_or_default())]);
+        if let Err(e) = room.local_participant().set_attributes(attrs).await {
+            tracing::debug!("setting the watching attribute: {e}");
+        }
+    });
+    (shared.notify)();
+}
+
+/// Decodes the watched share into [`ScreenFrame`]s for the UI.
+async fn view(track: RemoteVideoTrack, shared: Arc<Shared>) {
+    let mut stream = NativeVideoStream::new(track.rtc_track());
+    let mut seq = 0;
+    while let Some(frame) = stream.next().await {
+        let b = frame.buffer.to_i420();
+        let (width, height) = (b.width(), b.height());
+        // D14: whatever a peer encodes, we hold at most one bounded frame.
+        if !(1..=MAX_DIM).contains(&width) || !(1..=MAX_DIM).contains(&height) {
+            continue;
+        }
+        let (sy, su, sv) = b.strides();
+        let (y, u, v) = b.data();
+        seq += 1;
+        *lock(&shared.screen) = Some(Arc::new(ScreenFrame {
+            width,
+            height,
+            y: y.to_vec(),
+            u: u.to_vec(),
+            v: v.to_vec(),
+            strides: [sy, su, sv],
+            seq,
+        }));
+        (shared.notify)();
+    }
+}
+
 /// Rebuilds the participant list from the room.
 fn snapshot(shared: &Shared, generation: u64, room: &Room) {
     if !shared.current(generation) {
         return;
     }
     let local = room.local_participant();
+    let local_id = short(&local.identity().to_string());
+    let remotes = room.remote_participants();
+    let mut watchers: HashMap<String, u32> = HashMap::new();
+    let ours = lock(&shared.watching).clone();
+    for w in remotes
+        .values()
+        .take(MAX_PARTICIPANTS)
+        .filter_map(|p| p.attributes().get(WATCHING).map(|w| short(w)))
+        .chain(ours)
+    {
+        *watchers.entry(w).or_default() += 1;
+    }
     let mut participants = vec![Participant {
-        identity: short(&local.identity().to_string()),
         speaking: local.is_speaking() && !shared.muted(),
         muted: shared.muted(),
         local: true,
+        sharing: shared.sharing(),
+        watchers: watchers.get(&local_id).copied().unwrap_or(0),
+        identity: local_id,
     }];
-    let mut remote: Vec<Participant> = room
-        .remote_participants()
+    let mut remote: Vec<Participant> = remotes
         .values()
         .take(MAX_PARTICIPANTS)
-        .map(|p| Participant {
-            identity: short(&p.identity().to_string()),
-            speaking: p.is_speaking(),
-            muted: p
-                .track_publications()
-                .values()
-                .filter(|t| t.source() == TrackSource::Microphone)
-                .all(|t| t.is_muted()),
-            local: false,
+        .map(|p| {
+            let identity = short(&p.identity().to_string());
+            let pubs = p.track_publications();
+            Participant {
+                speaking: p.is_speaking(),
+                muted: pubs
+                    .values()
+                    .filter(|t| t.source() == TrackSource::Microphone)
+                    .all(|t| t.is_muted()),
+                local: false,
+                sharing: pubs
+                    .values()
+                    .any(|t| t.source() == TrackSource::Screenshare),
+                watchers: watchers.get(&identity).copied().unwrap_or(0),
+                identity,
+            }
         })
         .collect();
     remote.sort_by(|a, b| a.identity.cmp(&b.identity));

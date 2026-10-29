@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use chad_media::AudioSettings;
+use chad_media::{AudioSettings, ScreenSettings};
 use egui::{FontId, ThemePreference};
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +20,10 @@ pub struct Settings {
     pub ptt: PttBind,
     /// Voice volume per account, 0.0..=2.0.
     pub volumes: HashMap<String, f32>,
+    pub screen: ScreenSettings,
+    /// The ScreenCast portal's token for the last thing shared, so it doesn't
+    /// ask again.
+    pub restore_token: Option<String>,
 }
 
 impl Default for Settings {
@@ -31,6 +35,8 @@ impl Default for Settings {
             audio: AudioSettings::default(),
             ptt: PttBind::default(),
             volumes: HashMap::new(),
+            screen: ScreenSettings::default(),
+            restore_token: None,
         }
     }
 }

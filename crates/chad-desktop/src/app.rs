@@ -22,6 +22,7 @@ use url::Url;
 use crate::chatlog::{self, Action, ChatLog};
 use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
+use crate::screen::{self, DialogOutcome, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
 use crate::{format, icons};
@@ -59,6 +60,16 @@ pub struct App {
     /// Listening for push-to-talk, while that's the input mode.
     ptt: Option<Ptt>,
     binding_ptt: bool,
+    share_dialog: Option<ShareDialog>,
+    stage: Stage,
+}
+
+/// How a watched screen share is shown (what is watched lives in `Voice`).
+#[derive(Default)]
+struct Stage {
+    /// In its own window rather than over the chat.
+    popped: bool,
+    fullscreen: bool,
 }
 
 struct Network {
@@ -188,6 +199,7 @@ impl App {
             .and_then(|s| eframe::get_value(s, settings::KEY))
             .unwrap_or_default();
         icons::install(&cc.egui_ctx);
+        screen::install(cc);
         settings.apply(&cc.egui_ctx);
         voice.set_settings(settings.audio.clone());
         for (id, v) in &settings.volumes {
@@ -215,6 +227,8 @@ impl App {
             call: None,
             ptt: None,
             binding_ptt: false,
+            share_dialog: None,
+            stage: Stage::default(),
         };
         app.restart_ptt(&cc.egui_ctx);
         if let Some(url) = open {
@@ -645,8 +659,13 @@ impl App {
                     voice::panel(ui, &self.voice, &state, &name, self.ptt.as_ref())
                 })
                 .inner;
-            if let Some(voice::PanelAction::Leave) = action {
-                self.send(&net, NetCommand::LeaveVoice);
+            match action {
+                Some(voice::PanelAction::Leave) => self.send(&net, NetCommand::LeaveVoice),
+                Some(voice::PanelAction::Share) => {
+                    self.share_dialog = Some(ShareDialog::new(&self.voice, ui.ctx()));
+                }
+                Some(voice::PanelAction::StopShare) => self.voice.stop_share(),
+                None => {}
             }
         }
         ui.add_space(6.0);
@@ -696,6 +715,7 @@ impl App {
         let mut part = None;
         let mut close = None;
         let mut join_voice = None;
+        let mut watch = None;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -796,14 +816,16 @@ impl App {
                         }
                         let live = in_call
                             && matches!(&self.call, Some((_, VoiceState::Connected { .. })));
-                        if live || !b.voice.is_empty() {
-                            voice::members(
+                        if (live || !b.voice.is_empty())
+                            && let Some(who) = voice::members(
                                 ui,
                                 &self.voice,
                                 live,
                                 &b.voice,
                                 &mut self.settings.volumes,
-                            );
+                            )
+                        {
+                            watch = Some(who);
                         }
                     }
                     if let Some((k, text)) = &mut self.adding
@@ -849,6 +871,13 @@ impl App {
             });
         if let Some(k) = pick {
             self.nets[ni].select(&k);
+            // Back to the chat; a popped-out share keeps playing.
+            if !self.stage.popped {
+                self.voice.watch(None);
+            }
+        }
+        if let Some(who) = watch {
+            self.voice.watch(Some(who));
         }
         if let Some(channel) = part {
             self.send(&network, NetCommand::Part { channel });
@@ -1117,7 +1146,57 @@ impl App {
         });
     }
 
+    /// The watched screen share; `ctx` is the window it's in.
+    fn stage_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let action = screen::stage(ui, &self.voice, self.stage.popped, self.stage.fullscreen);
+        match action {
+            Some(StageAction::Close) => {
+                if self.stage.fullscreen {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+                }
+                self.voice.watch(None);
+            }
+            Some(StageAction::PopOut) => self.stage.popped = true,
+            Some(StageAction::PopIn) => self.stage.popped = false,
+            Some(StageAction::Fullscreen(on)) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+                self.stage.fullscreen = on;
+            }
+            None => {}
+        }
+    }
+
+    /// The share in its own window. Closing the window stops watching.
+    fn popout(&mut self, ctx: &egui::Context) {
+        let id = egui::ViewportId::from_hash_of("screen-share");
+        let title = format!("{}'s screen", self.voice.watching().unwrap_or_default());
+        let builder = egui::ViewportBuilder::default()
+            .with_title(title)
+            .with_app_id(platform::APP_ID)
+            .with_inner_size([1280.0, 760.0]);
+        ctx.show_viewport_immediate(id, builder, |ui, _| {
+            let vctx = ui.ctx().clone();
+            egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &vctx));
+            if vctx.input(|i| i.viewport().close_requested()) {
+                self.voice.watch(None);
+            }
+        });
+    }
+
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if let Some(d) = &mut self.share_dialog {
+            let s = &mut self.settings;
+            match d.show(ctx, &self.voice, &mut s.screen, &mut s.restore_token) {
+                DialogOutcome::Open => {}
+                DialogOutcome::Closed => self.share_dialog = None,
+                DialogOutcome::Shared(token) => {
+                    if token.is_some() {
+                        s.restore_token = token;
+                    }
+                    self.share_dialog = None;
+                }
+            }
+        }
         if let Some(j) = &mut self.join {
             let mut submit = false;
             let mut cancel = false;
@@ -1420,6 +1499,21 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
 
+        let watching = self.voice.watching().is_some();
+        if !watching && (self.stage.popped || self.stage.fullscreen) {
+            if self.stage.fullscreen && !self.stage.popped {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            }
+            self.stage = Stage::default();
+        }
+        if watching && self.stage.popped {
+            self.popout(&ctx);
+        } else if watching && self.stage.fullscreen {
+            egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &ctx));
+            self.dialogs(&ctx);
+            return;
+        }
+
         egui::Panel::left("rail")
             .exact_size(68.0)
             .resizable(false)
@@ -1445,6 +1539,7 @@ impl eframe::App for App {
                 .show(ui, |ui| self.members(ui, ni, bi));
         }
         egui::CentralPanel::default().show(ui, |ui| match (ni, bi) {
+            _ if watching && !self.stage.popped => self.stage_ui(ui, &ctx),
             (None, _) => self.welcome(ui),
             (Some(_), None) => {
                 ui.centered_and_justified(|ui| {

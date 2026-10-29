@@ -46,6 +46,8 @@ impl chad_core::Media for Glue {
 
 pub enum PanelAction {
     Leave,
+    Share,
+    StopShare,
 }
 
 /// Bottom of the channel list while in a call (on any network).
@@ -98,6 +100,21 @@ pub fn panel(
                 .color(ui.visuals().warn_fg_color),
         );
     }
+    if voice.sharing() {
+        let watchers = call
+            .as_ref()
+            .and_then(|c| c.participants.iter().find(|p| p.local))
+            .map_or(0, |p| p.watchers);
+        ui.label(
+            RichText::new(format!(
+                "{} Sharing your screen · {} {watchers} watching",
+                icons::SCREENCAST,
+                icons::EYE
+            ))
+            .small()
+            .color(SPEAKING),
+        );
+    }
     ui.horizontal(|ui| {
         let (muted, deaf) = (voice.muted(), voice.deafened());
         let mic = if muted {
@@ -129,6 +146,25 @@ pub fn panel(
         if r.clicked() {
             voice.set_deafened(!deaf);
         }
+        let sharing = voice.sharing();
+        let connected = matches!(state, VoiceState::Connected { .. });
+        let r = ui
+            .add_enabled(
+                connected,
+                egui::Button::selectable(sharing, RichText::new(icons::SCREENCAST).size(16.0)),
+            )
+            .on_hover_text(if sharing {
+                "Stop sharing"
+            } else {
+                "Share your screen"
+            });
+        if r.clicked() {
+            action = Some(if sharing {
+                PanelAction::StopShare
+            } else {
+                PanelAction::Share
+            });
+        }
         let leave = egui::Button::new(
             RichText::new(icons::PHONE_DISCONNECT)
                 .size(16.0)
@@ -144,15 +180,17 @@ pub fn panel(
 }
 
 /// Who's in a channel's voice room, under its row in the sidebar. In our own
-/// call the live list (speaking, muted) replaces the metadata one. Volume
-/// changes land in `volumes`, which persist with the settings.
+/// call the live list (speaking, muted, sharing) replaces the metadata one.
+/// Volume changes land in `volumes`, which persist with the settings. Returns
+/// whose screen share was clicked, to watch.
 pub fn members(
     ui: &mut egui::Ui,
     voice: &Voice,
     in_call: bool,
     nicks: &[String],
     volumes: &mut HashMap<String, f32>,
-) {
+) -> Option<String> {
+    let mut watch = None;
     let dark = ui.visuals().dark_mode;
     let row = |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool| {
         ui.horizontal(|ui| {
@@ -180,6 +218,25 @@ pub fn members(
         Some(call) => {
             for p in &call.participants {
                 let r = row(ui, &p.identity, p.speaking, p.muted);
+                if p.sharing {
+                    let live = egui::Button::new(
+                        RichText::new("LIVE").small().strong().color(Color32::WHITE),
+                    )
+                    .fill(DANGER)
+                    .small();
+                    let at = egui::Rect::from_min_size(
+                        egui::pos2(ui.max_rect().right() - 40.0, r.rect.top()),
+                        vec2(36.0, r.rect.height()),
+                    );
+                    let tip = if p.local {
+                        "You're sharing your screen"
+                    } else {
+                        "Watch"
+                    };
+                    if ui.put(at, live).on_hover_text(tip).clicked() && !p.local {
+                        watch = Some(p.identity.clone());
+                    }
+                }
                 if p.local {
                     continue;
                 }
@@ -203,6 +260,7 @@ pub fn members(
             }
         }
     }
+    watch
 }
 
 /// The audio part of the settings window. True when something changed.

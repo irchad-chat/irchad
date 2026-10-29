@@ -23,6 +23,8 @@ enum Cmd {
 pub struct Cpal {
     tx: Mutex<Sender<Cmd>>,
     devices: Mutex<(Option<Instant>, Devices)>,
+    #[cfg(windows)]
+    app: Mutex<Option<super::loopback::Capture>>,
 }
 
 impl Cpal {
@@ -59,6 +61,8 @@ impl Cpal {
         Self {
             tx: Mutex::new(tx),
             devices: Mutex::new((None, Devices::default())),
+            #[cfg(windows)]
+            app: Mutex::default(),
         }
     }
 }
@@ -103,6 +107,16 @@ impl Backend for Cpal {
             d.0 = Some(Instant::now());
         }
         d.1.clone()
+    }
+
+    #[cfg(windows)]
+    fn apps(&self) -> Vec<crate::screen::AudioApp> {
+        super::loopback::apps()
+    }
+
+    #[cfg(windows)]
+    fn capture_app(&self, app: Option<(String, crate::screen::AppSink)>) {
+        *lock(&self.app) = app.and_then(|(id, sink)| super::loopback::start(&id, sink));
     }
 }
 

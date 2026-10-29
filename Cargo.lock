@@ -310,6 +310,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "serde",
+ "serde_repr",
  "tokio",
  "zbus",
 ]
@@ -945,8 +946,10 @@ name = "chad-media"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ashpd",
  "cpal",
  "futures-util",
+ "libc",
  "livekit",
  "livekit-api",
  "nnnoiseless",
@@ -956,6 +959,8 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

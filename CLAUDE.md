@@ -41,8 +41,8 @@ They are reference material only, so don't copy code from them blindly.
 | IRC | own `chad-irc` crate over WebSocket (`tokio-tungstenite` + rustls, subprotocol `text.ircv3.net`) |
 | Media | `livekit` Rust SDK (libwebrtc); LiveKit server self-hosted |
 | Linux audio | PipeWire native (`pipewire` crate) |
-| Linux capture | xdg-desktop-portal ScreenCast via `ashpd` → PipeWire (DMA-BUF); X11 fallback via `x11rb` |
-| Windows capture | Windows.Graphics.Capture + WASAPI process loopback |
+| Linux capture | xdg-desktop-portal ScreenCast via `ashpd` → PipeWire (DMA-BUF); X11 fallback via libwebrtc's own capturers (D21) |
+| Windows capture | Windows.Graphics.Capture (libwebrtc's) + WASAPI process loopback |
 | Secrets | `oo7` (Secret Service, portal-aware) / Windows Credential Manager |
 | E2EE DMs | `vodozemac` (Olm double ratchet + SAS verification) |
 | Server glue | `chadd` in Rust (axum) |

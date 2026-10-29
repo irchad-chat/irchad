@@ -23,6 +23,7 @@ use livekit::webrtc::{
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use crate::screen::{ScreenFrame, Share};
 use crate::{AudioSettings, CallState, FRAME, InputMode, RATE};
 
 /// Most audio a remote source may queue before we skip ahead (latency cap).
@@ -112,6 +113,15 @@ pub struct Shared {
     /// Bumped by every join, so a stale call can't clobber a newer one.
     pub generation: AtomicU64,
     dsp: Mutex<Option<(Arc<AtomicBool>, JoinHandle<()>)>>,
+    /// The call's room, for screen share and watching.
+    pub room: Mutex<Option<Arc<livekit::Room>>>,
+    share: Mutex<Option<Share>>,
+    shares: AtomicU64,
+    /// A share whose capture ended before it was stored.
+    ended: AtomicU64,
+    /// Identity whose screen we watch.
+    pub watching: Mutex<Option<String>>,
+    pub screen: Mutex<Option<Arc<ScreenFrame>>>,
 }
 
 impl Shared {
@@ -131,7 +141,42 @@ impl Shared {
             call: Mutex::default(),
             generation: AtomicU64::new(0),
             dsp: Mutex::default(),
+            room: Mutex::default(),
+            share: Mutex::default(),
+            shares: AtomicU64::new(0),
+            ended: AtomicU64::new(0),
+            watching: Mutex::default(),
+            screen: Mutex::default(),
         }
+    }
+
+    pub fn next_share(&self) -> u64 {
+        self.shares.fetch_add(1, Relaxed) + 1
+    }
+
+    pub fn set_share(&self, share: Share) {
+        let mut s = lock(&self.share);
+        if self.ended.load(Relaxed) != share.id {
+            *s = Some(share);
+        }
+        drop(s);
+        (self.notify)();
+    }
+
+    /// Stops the share, or only share `id` if given.
+    pub fn take_share(&self, id: Option<u64>) -> Option<Share> {
+        let mut s = lock(&self.share);
+        if let Some(id) = id
+            && s.as_ref().is_none_or(|s| s.id != id)
+        {
+            self.ended.store(id, Relaxed);
+            return None;
+        }
+        s.take()
+    }
+
+    pub fn sharing(&self) -> bool {
+        lock(&self.share).is_some()
     }
 
     pub fn settings(&self) -> AudioSettings {
