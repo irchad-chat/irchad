@@ -86,3 +86,8 @@ Logins are throttled to 10/min per IP and per account.
 ergo's HTTP API can't read channel metadata, so chadd can't refuse a voice token for an `off` channel.
 The client reads the channel key via `METADATA SYNC` and refuses to join (or leaves) such a room.
 A modified client can still join, which is acceptable for a soft "this channel has no voice" switch. If it ever needs to be hard, chadd gets an IRC connection or ergo gets an API.
+
+## D20: UI icons are Phosphor, reactions stay system emoji (2026-10-29)
+`chad-desktop` draws UI chrome (buttons, voice controls, reply markers) with Phosphor Icons (regular) from `src/icons.rs`. Emoji reactions keep the system/egui emoji fonts.
+The font is vendored in `crates/chad-desktop/assets/` (MIT) instead of depending on `egui-phosphor`, because 0.14 pins egui 0.36 and we're on 0.37. It's installed as a lowest-priority proportional fallback; its glyphs are in the Private Use Area, so it never shadows text.
+If `egui-phosphor` catches up to our egui, switch to the crate and delete the vendored copy.

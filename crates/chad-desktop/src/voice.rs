@@ -9,9 +9,9 @@ use chad_media::{InputMode, Quality, Voice};
 use egui::{Color32, RichText, Sense, vec2};
 use tokio::sync::mpsc;
 
-use crate::chatlog;
 use crate::platform::ptt::{Ptt, PttBind, PttStatus, keymap};
 use crate::settings::Settings;
+use crate::{chatlog, icons};
 
 const SPEAKING: Color32 = Color32::from_rgb(35, 165, 90);
 const DANGER: Color32 = Color32::from_rgb(218, 55, 60);
@@ -100,7 +100,11 @@ pub fn panel(
     }
     ui.horizontal(|ui| {
         let (muted, deaf) = (voice.muted(), voice.deafened());
-        let mic = if muted { "🔇" } else { "🎤" };
+        let mic = if muted {
+            icons::MICROPHONE_SLASH
+        } else {
+            icons::MICROPHONE
+        };
         let r = ui
             .add(egui::Button::selectable(
                 muted,
@@ -119,14 +123,18 @@ pub fn panel(
         let r = ui
             .add(egui::Button::selectable(
                 deaf,
-                RichText::new("🎧").size(16.0),
+                RichText::new(icons::HEADPHONES).size(16.0),
             ))
             .on_hover_text(if deaf { "Undeafen" } else { "Deafen" });
         if r.clicked() {
             voice.set_deafened(!deaf);
         }
-        let leave =
-            egui::Button::new(RichText::new("📞").size(16.0).color(Color32::WHITE)).fill(DANGER);
+        let leave = egui::Button::new(
+            RichText::new(icons::PHONE_DISCONNECT)
+                .size(16.0)
+                .color(Color32::WHITE),
+        )
+        .fill(DANGER);
         if ui.add(leave).on_hover_text("Disconnect").clicked() {
             action = Some(PanelAction::Leave);
         }
@@ -160,7 +168,9 @@ pub fn members(
                 .small()
                 .color(chatlog::nick_color(nick, dark));
             if muted {
-                text = RichText::new(format!("{nick} 🔇")).small().weak();
+                text = RichText::new(format!("{nick} {}", icons::MICROPHONE_SLASH))
+                    .small()
+                    .weak();
             }
             ui.add(egui::Label::new(text).sense(Sense::click()).truncate())
         })

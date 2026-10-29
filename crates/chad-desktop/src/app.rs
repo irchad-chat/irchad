@@ -20,11 +20,11 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
 use crate::chatlog::{self, Action, ChatLog};
-use crate::format;
 use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
+use crate::{format, icons};
 
 const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -187,6 +187,7 @@ impl App {
             .storage
             .and_then(|s| eframe::get_value(s, settings::KEY))
             .unwrap_or_default();
+        icons::install(&cc.egui_ctx);
         settings.apply(&cc.egui_ctx);
         voice.set_settings(settings.audio.clone());
         for (id, v) in &settings.volumes {
@@ -623,7 +624,7 @@ impl App {
             if ui
                 .add_sized(
                     [48.0, 48.0],
-                    egui::Button::new(RichText::new("⚙").size(20.0)),
+                    egui::Button::new(RichText::new(icons::GEAR).size(20.0)),
                 )
                 .on_hover_text("Settings")
                 .clicked()
@@ -652,7 +653,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.heading(&self.nets[ni].info.name);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.menu_button("⋯", |ui| {
+                ui.menu_button(icons::DOTS_THREE, |ui| {
                     if ui.button("Leave network…").clicked() {
                         self.confirm_remove = Some(network.clone());
                     }
@@ -770,7 +771,7 @@ impl App {
                                 resp.rect.right_center() - vec2(right, 0.0),
                                 vec2(20.0, 20.0),
                             );
-                            let join = egui::Button::new(RichText::new("🔊").small()).frame(false);
+                            let join = egui::Button::new(RichText::new(icons::SPEAKER_HIGH).small()).frame(false);
                             if ui.put(at, join).on_hover_text("Join voice").clicked() {
                                 join_voice = Some(b.info.target.clone());
                             }
@@ -968,7 +969,10 @@ impl App {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("Replying to {nick}")).small());
-                    cancel = ui.small_button("✖").on_hover_text("Cancel reply").clicked();
+                    cancel = ui
+                        .small_button(icons::X)
+                        .on_hover_text("Cancel reply")
+                        .clicked();
                 });
                 if cancel || ui.input(|i| i.key_pressed(Key::Escape)) {
                     b.reply = None;
@@ -1023,7 +1027,10 @@ impl App {
                     .fixed_pos(pos)
                     .pivot(Align2::RIGHT_BOTTOM)
                     .show(ui.ctx(), |ui| {
-                        if ui.button("Jump to latest ⬇").clicked() {
+                        if ui
+                            .button(format!("Jump to latest {}", icons::ARROW_DOWN))
+                            .clicked()
+                        {
                             b.log.scroll_to_bottom();
                         }
                     });
@@ -1329,7 +1336,7 @@ impl App {
                             ui.set_max_width(320.0);
                             ui.horizontal(|ui| {
                                 ui.label(text);
-                                if ui.small_button("✖").clicked() {
+                                if ui.small_button(icons::X).clicked() {
                                     dismiss.insert(i);
                                 }
                             });

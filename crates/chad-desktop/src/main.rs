@@ -1,6 +1,7 @@
 mod app;
 mod chatlog;
 mod format;
+mod icons;
 mod platform;
 mod settings;
 mod voice;

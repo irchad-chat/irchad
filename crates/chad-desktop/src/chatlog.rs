@@ -9,7 +9,7 @@ use chad_core::{ChatMessage, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
 
-use crate::format;
+use crate::{format, icons};
 
 const ROW_GAP: f32 = 2.0;
 /// Room left of each row for the mention bar.
@@ -379,9 +379,16 @@ fn row_ui(
     }
     if m.reply_to.is_some() {
         let text = match parent {
-            Some(p) if p.redacted => format!("↪ {}: (deleted)", p.nick),
-            Some(p) => format!("↪ {}: {}", p.nick, snippet(&format::strip(&p.text), 80)),
-            None => "↪ Earlier message".into(),
+            Some(p) if p.redacted => {
+                format!("{} {}: (deleted)", icons::ARROW_BEND_DOWN_RIGHT, p.nick)
+            }
+            Some(p) => format!(
+                "{} {}: {}",
+                icons::ARROW_BEND_DOWN_RIGHT,
+                p.nick,
+                snippet(&format::strip(&p.text), 80)
+            ),
+            None => format!("{} Earlier message", icons::ARROW_BEND_DOWN_RIGHT),
         };
         let r = ui.add(
             egui::Label::new(RichText::new(text).weak().small())
@@ -489,10 +496,19 @@ fn toolbar(
                                 });
                             }
                         }
-                        if ui.small_button("↩").on_hover_text("Reply").clicked() {
+                        if ui
+                            .small_button(icons::ARROW_BEND_UP_LEFT)
+                            .on_hover_text("Reply")
+                            .clicked()
+                        {
                             actions.push(Action::Reply(index));
                         }
-                        if m.own && ui.small_button("🗑").on_hover_text("Delete").clicked() {
+                        if m.own
+                            && ui
+                                .small_button(icons::TRASH)
+                                .on_hover_text("Delete")
+                                .clicked()
+                        {
                             actions.push(Action::Delete { msgid: id.clone() });
                         }
                     });
