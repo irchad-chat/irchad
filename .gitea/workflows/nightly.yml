@@ -1,0 +1,83 @@
+name: Nightly
+
+# Rolling "nightly" prerelease: every push to main replaces it with a release
+# build of HEAD. Asset URLs stay stable (linked from README.md).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+    steps:
+      - id: create
+        env:
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          AUTH: "Authorization: token ${{ github.token }}"
+        run: |
+          # Old release/tag may not exist yet; 404 is fine.
+          curl -sS -o /dev/null -X DELETE -H "$AUTH" "$API/releases/tags/nightly"
+          curl -sS -o /dev/null -X DELETE -H "$AUTH" "$API/tags/nightly"
+          id=$(curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/releases" \
+            -d "{\"tag_name\":\"nightly\",\"target_commitish\":\"$GITHUB_SHA\",\"name\":\"Nightly\",\"prerelease\":true,\"body\":\"Release build of main@${GITHUB_SHA:0:9}. Replaced on every push.\"}" \
+            | jq -r .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      CC: clang-21
+      CXX: clang++-21
+      LIBCLANG_PATH: /usr/lib/llvm-21/lib
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same toolchain setup as ci.yml.
+      - name: Install system packages
+        run: |
+          SUDO=$(command -v sudo || true)
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends \
+            libpipewire-0.3-dev libfontconfig-dev pkg-config wget gnupg lsb-release software-properties-common
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          $SUDO bash /tmp/llvm.sh 21
+          $SUDO apt-get install -y --no-install-recommends libclang-21-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked -p chad-desktop
+
+      - name: Upload asset
+        run: |
+          curl -fsS -X POST -H "Authorization: token ${{ github.token }}" \
+            -F "attachment=@target/release/irchad" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-linux-x86_64"
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked -p chad-desktop
+
+      - name: Upload asset
+        shell: pwsh
+        run: |
+          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
+            -F "attachment=@target/release/irchad.exe" `
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64.exe"
