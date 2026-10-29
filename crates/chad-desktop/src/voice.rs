@@ -9,11 +9,14 @@ use chad_media::{InputMode, Quality, Voice};
 use egui::{Color32, RichText, Sense, vec2};
 use tokio::sync::mpsc;
 
+use crate::chatlog;
+use crate::icons::{self, Tip};
 use crate::platform::ptt::{Ptt, PttBind, PttStatus, keymap};
-use crate::settings::Settings;
-use crate::{chatlog, icons};
+use crate::settings::{self, Settings};
 
 const SPEAKING: Color32 = Color32::from_rgb(35, 165, 90);
+pub const ONLINE: Color32 = SPEAKING;
+pub const AWAY: Color32 = Color32::from_rgb(240, 178, 50);
 const DANGER: Color32 = Color32::from_rgb(218, 55, 60);
 
 /// The core decides when to join and leave; this connects.
@@ -75,7 +78,7 @@ pub fn panel(
             if let Some(c) = &call {
                 let (dot, tip) = match c.quality {
                     Quality::Excellent => (SPEAKING, "Excellent connection"),
-                    Quality::Good => (Color32::from_rgb(240, 178, 50), "Good connection"),
+                    Quality::Good => (AWAY, "Good connection"),
                     Quality::Poor | Quality::Lost => (DANGER, "Poor connection"),
                     Quality::Unknown => (Color32::GRAY, "Measuring…"),
                 };
@@ -127,7 +130,7 @@ pub fn panel(
                 muted,
                 RichText::new(mic).size(16.0),
             ))
-            .on_hover_text(if muted { "Unmute" } else { "Mute" });
+            .tip(if muted { "Unmute" } else { "Mute" });
         if r.clicked() {
             // Unmuting while deafened undeafens too, like Discord.
             if deaf {
@@ -142,7 +145,7 @@ pub fn panel(
                 deaf,
                 RichText::new(icons::HEADPHONES).size(16.0),
             ))
-            .on_hover_text(if deaf { "Undeafen" } else { "Deafen" });
+            .tip(if deaf { "Undeafen" } else { "Deafen" });
         if r.clicked() {
             voice.set_deafened(!deaf);
         }
@@ -153,7 +156,7 @@ pub fn panel(
                 connected,
                 egui::Button::selectable(sharing, RichText::new(icons::SCREENCAST).size(16.0)),
             )
-            .on_hover_text(if sharing {
+            .tip(if sharing {
                 "Stop sharing"
             } else {
                 "Share your screen"
@@ -171,7 +174,7 @@ pub fn panel(
                 .color(Color32::WHITE),
         )
         .fill(DANGER);
-        if ui.add(leave).on_hover_text("Disconnect").clicked() {
+        if ui.add(leave).tip("Disconnect").clicked() {
             action = Some(PanelAction::Leave);
         }
     });
@@ -275,117 +278,121 @@ pub fn settings(
     let devices = voice.devices();
     ui.add_space(8.0);
     ui.heading("Voice");
-    egui::Grid::new("audio").num_columns(2).show(ui, |ui| {
-        for (label, current, list) in [
-            ("Microphone", &mut s.audio.input, &devices.inputs),
-            ("Speakers", &mut s.audio.output, &devices.outputs),
-        ] {
-            ui.label(label);
-            let shown = current
-                .as_ref()
-                .map(|id| {
-                    list.iter()
-                        .find(|d| &d.id == id)
-                        .map_or_else(|| format!("{id} (unplugged)"), |d| d.name.clone())
-                })
-                .unwrap_or_else(|| "System default".into());
-            egui::ComboBox::from_id_salt(label)
-                .selected_text(shown)
-                .width(260.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(current, None, "System default");
-                    for d in list {
-                        ui.selectable_value(current, Some(d.id.clone()), &d.name);
-                    }
-                });
+    egui::Grid::new("audio")
+        .num_columns(2)
+        .min_col_width(settings::LABEL_W)
+        .show(ui, |ui| {
+            for (label, current, list) in [
+                ("Microphone", &mut s.audio.input, &devices.inputs),
+                ("Speakers", &mut s.audio.output, &devices.outputs),
+            ] {
+                ui.label(label);
+                let shown = current
+                    .as_ref()
+                    .map(|id| {
+                        list.iter()
+                            .find(|d| &d.id == id)
+                            .map_or_else(|| format!("{id} (unplugged)"), |d| d.name.clone())
+                    })
+                    .unwrap_or_else(|| "System default".into());
+                egui::ComboBox::from_id_salt(label)
+                    .selected_text(shown)
+                    .width(260.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(current, None, "System default");
+                        for d in list {
+                            ui.selectable_value(current, Some(d.id.clone()), &d.name);
+                        }
+                    });
+                ui.end_row();
+            }
+
+            ui.label("Input");
+            ui.vertical(|ui| {
+                ui.radio_value(
+                    &mut s.audio.mode,
+                    InputMode::VoiceActivity,
+                    "Voice activity",
+                );
+                ui.radio_value(&mut s.audio.mode, InputMode::PushToTalk, "Push to talk");
+            });
             ui.end_row();
-        }
 
-        ui.label("Input");
-        ui.vertical(|ui| {
-            ui.radio_value(
-                &mut s.audio.mode,
-                InputMode::VoiceActivity,
-                "Voice activity",
-            );
-            ui.radio_value(&mut s.audio.mode, InputMode::PushToTalk, "Push to talk");
-        });
-        ui.end_row();
-
-        match s.audio.mode {
-            InputMode::VoiceActivity => {
-                ui.label("Sensitivity");
-                ui.vertical(|ui| {
-                    meter(ui, voice, Some(s.audio.vad_threshold_db));
-                    ui.add(
-                        egui::Slider::new(&mut s.audio.vad_threshold_db, -80.0..=0.0)
-                            .suffix(" dB")
-                            .step_by(1.0),
-                    );
-                });
-                ui.end_row();
-            }
-            InputMode::PushToTalk => {
-                ui.label("Key");
-                ui.horizontal(|ui| {
-                    let text = if *binding {
-                        "Press a key or mouse button…".to_owned()
-                    } else {
-                        s.ptt.name()
+            match s.audio.mode {
+                InputMode::VoiceActivity => {
+                    ui.label("Sensitivity");
+                    ui.vertical(|ui| {
+                        meter(ui, voice, Some(s.audio.vad_threshold_db));
+                        ui.add(
+                            egui::Slider::new(&mut s.audio.vad_threshold_db, -80.0..=0.0)
+                                .suffix(" dB")
+                                .step_by(1.0)
+                                .fixed_decimals(0),
+                        );
+                    });
+                    ui.end_row();
+                }
+                InputMode::PushToTalk => {
+                    ui.label("Key");
+                    ui.horizontal(|ui| {
+                        let text = if *binding {
+                            "Press a key or mouse button…".to_owned()
+                        } else {
+                            s.ptt.name()
+                        };
+                        if ui.button(text).clicked() {
+                            *binding = !*binding;
+                        }
+                        if *binding && let Some(b) = captured(ui) {
+                            s.ptt = b;
+                            *binding = false;
+                        }
+                    });
+                    ui.end_row();
+                    ui.label("");
+                    match ptt.map(Ptt::status) {
+                        Some(PttStatus::Global(how)) => ui.label(RichText::new(how).small().weak()),
+                        Some(PttStatus::FocusedOnly(why)) => ui.label(
+                            RichText::new(format!(
+                                "{why} Push to talk works only while IrChad is focused."
+                            ))
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                        ),
+                        _ => ui.spinner(),
                     };
-                    if ui.button(text).clicked() {
-                        *binding = !*binding;
-                    }
-                    if *binding && let Some(b) = captured(ui) {
-                        s.ptt = b;
-                        *binding = false;
-                    }
-                });
-                ui.end_row();
-                ui.label("");
-                match ptt.map(Ptt::status) {
-                    Some(PttStatus::Global(how)) => ui.label(RichText::new(how).small().weak()),
-                    Some(PttStatus::FocusedOnly(why)) => ui.label(
-                        RichText::new(format!(
-                            "{why} Push to talk works only while IrChad is focused."
-                        ))
-                        .small()
-                        .color(ui.visuals().warn_fg_color),
-                    ),
-                    _ => ui.spinner(),
-                };
-                ui.end_row();
-                ui.label("Release delay");
-                ui.add(egui::Slider::new(&mut s.audio.ptt_release_ms, 0..=1000).suffix(" ms"));
-                ui.end_row();
+                    ui.end_row();
+                    ui.label("Release delay");
+                    ui.add(egui::Slider::new(&mut s.audio.ptt_release_ms, 0..=1000).suffix(" ms"));
+                    ui.end_row();
+                }
             }
-        }
 
-        ui.label("Noise");
-        ui.checkbox(&mut s.audio.rnnoise, "Extra noise suppression (RNNoise)");
-        ui.end_row();
+            ui.label("Noise");
+            ui.checkbox(&mut s.audio.rnnoise, "Extra noise suppression (RNNoise)");
+            ui.end_row();
 
-        ui.label("Quality");
-        ui.add(egui::Slider::new(&mut s.audio.bitrate_kbps, 16..=128).suffix(" kbps"))
-            .on_hover_text("Takes effect the next time you join voice.");
-        ui.end_row();
+            ui.label("Quality");
+            ui.add(egui::Slider::new(&mut s.audio.bitrate_kbps, 16..=128).suffix(" kbps"))
+                .on_hover_text("Takes effect the next time you join voice.");
+            ui.end_row();
 
-        ui.label("Test");
-        ui.vertical(|ui| {
-            let mut testing = voice.testing();
-            if ui
-                .checkbox(&mut testing, "Hear yourself")
-                .on_hover_text("Plays your microphone back, processed the way others hear it.")
-                .changed()
-            {
-                voice.set_testing(testing);
-            }
-            if s.audio.mode == InputMode::PushToTalk {
-                meter(ui, voice, None);
-            }
+            ui.label("Test");
+            ui.vertical(|ui| {
+                let mut testing = voice.testing();
+                if ui
+                    .checkbox(&mut testing, "Hear yourself")
+                    .on_hover_text("Plays your microphone back, processed the way others hear it.")
+                    .changed()
+                {
+                    voice.set_testing(testing);
+                }
+                if s.audio.mode == InputMode::PushToTalk {
+                    meter(ui, voice, None);
+                }
+            });
+            ui.end_row();
         });
-        ui.end_row();
-    });
     // The meter moves.
     ui.ctx().request_repaint_after(Duration::from_millis(50));
     (s.audio.clone(), s.ptt) != before

@@ -568,6 +568,7 @@ impl Net {
                     b.members = members;
                     self.emit_members(&key);
                 }
+                self.sync_dm_away();
             }
         }
     }
@@ -794,6 +795,7 @@ impl Net {
                         self.emit_buffer(&key);
                     }
                 }
+                self.sync_dm_away();
             }
             // 761 <me|*> <target> <key> <visibility> :<value>; 766 is "not set".
             "761" | "766" if m.param(2) == Some(VOICE_KEY) => {
@@ -1295,6 +1297,28 @@ impl Net {
         });
         f(m);
         self.emit_members(key);
+    }
+
+    /// MONITOR only says online, so DMs take away from a shared channel's WHO.
+    fn sync_dm_away(&mut self) {
+        let changed: Vec<String> = self
+            .buffers
+            .iter()
+            .filter(|(_, b)| b.kind == BufferKind::Dm && b.online == Some(true))
+            .filter(|(k, b)| {
+                self.buffers
+                    .values()
+                    .find_map(|c| c.members.get(*k))
+                    .is_some_and(|m| m.away != b.away)
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in changed {
+            if let Some(b) = self.buffers.get_mut(&k) {
+                b.away = !b.away;
+            }
+            self.emit_buffer(&k);
+        }
     }
 
     fn everywhere(&mut self, nick: &str, f: impl Fn(&mut Member)) {

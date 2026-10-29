@@ -9,7 +9,7 @@ use chad_media::{
 use eframe::egui_wgpu::{self, wgpu};
 use egui::{RichText, vec2};
 
-use crate::icons;
+use crate::icons::{self, Tip};
 
 const SHADER: &str = r"
 struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -296,7 +296,7 @@ pub fn stage(
         ui.label(RichText::new(format!("{} {who}'s screen", icons::SCREENCAST)).strong());
         ui.label(RichText::new(format!("{} {watchers} watching", icons::EYE)).weak());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(icons::X).on_hover_text("Stop watching").clicked() {
+            if ui.button(icons::X).tip("Stop watching").clicked() {
                 action = Some(StageAction::Close);
             }
             let (icon, tip) = if fullscreen {
@@ -304,7 +304,7 @@ pub fn stage(
             } else {
                 (icons::CORNERS_OUT, "Full screen")
             };
-            if ui.button(icon).on_hover_text(tip).clicked() {
+            if ui.button(icon).tip(tip).clicked() {
                 action = Some(StageAction::Fullscreen(!fullscreen));
             }
             if !fullscreen {
@@ -313,11 +313,7 @@ pub fn stage(
                 } else {
                     (StageAction::PopOut, "Pop out")
                 };
-                if ui
-                    .button(icons::ARROW_SQUARE_OUT)
-                    .on_hover_text(tip)
-                    .clicked()
-                {
+                if ui.button(icons::ARROW_SQUARE_OUT).tip(tip).clicked() {
                     action = Some(a);
                 }
             }

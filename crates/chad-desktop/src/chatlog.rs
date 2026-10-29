@@ -9,7 +9,8 @@ use chad_core::{ChatMessage, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
 
-use crate::{format, icons};
+use crate::format;
+use crate::icons::{self, Tip};
 
 const ROW_GAP: f32 = 2.0;
 /// Room left of each row for the mention bar.
@@ -498,17 +499,12 @@ fn toolbar(
                         }
                         if ui
                             .small_button(icons::ARROW_BEND_UP_LEFT)
-                            .on_hover_text("Reply")
+                            .tip("Reply")
                             .clicked()
                         {
                             actions.push(Action::Reply(index));
                         }
-                        if m.own
-                            && ui
-                                .small_button(icons::TRASH)
-                                .on_hover_text("Delete")
-                                .clicked()
-                        {
+                        if m.own && ui.small_button(icons::TRASH).tip("Delete").clicked() {
                             actions.push(Action::Delete { msgid: id.clone() });
                         }
                     });

@@ -34,6 +34,10 @@ impl Shots {
             .with_accessibility_check(false)
             .wgpu()
             .build_eframe(move |cc| {
+                // eframe adds this for the real window; kittest doesn't.
+                cc.egui_ctx.add_font_provider(Arc::new(
+                    egui_system_font_provider::SystemFontProvider::new(),
+                ));
                 let (_tx, os) = mpsc::channel();
                 let voice = chad_media::Voice::new(Arc::new(|| {}));
                 let (core, events) = chad_core::start(chad_core::Config {
@@ -74,8 +78,108 @@ fn empty() {
 
 #[test]
 fn join_dialog() {
-    let mut s = Shots::new(Some("https://chat.localhost:8443/#general"));
+    let mut s = Shots::new(Some("https://chat.localhost:8443/?channel=%23general"));
     s.harness.run();
     s.harness.get_by_label("Guest").click();
     s.shot("join_dialog_guest");
+}
+
+impl Shots {
+    /// Clicks the widget named `label` and lets the UI react.
+    pub fn click(&mut self, label: &str) {
+        self.harness.get_by_label(label).click();
+        let _guard = self._rt.enter();
+        // Not `run()`: spinners and voice meters never settle.
+        self.harness.run_steps(4);
+    }
+
+    pub fn type_into(&mut self, label: &str, text: &str) {
+        self.harness.get_by_label(label).focus();
+        self.harness.run();
+        self.harness.get_by_label(label).type_text(text);
+        self.harness.run();
+    }
+
+    /// Steps the UI for `secs` seconds, letting the network catch up.
+    pub fn settle(&mut self, secs: u64) {
+        let _guard = self._rt.enter();
+        for _ in 0..secs * 20 {
+            self.harness.step();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Steps the UI until `label` shows up, for at most 20s.
+    pub fn wait_for(&mut self, label: &str) {
+        let _guard = self._rt.enter();
+        for _ in 0..400 {
+            self.harness.step();
+            if self.harness.query_by_label(label).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        drop(_guard);
+        self.shot("timeout");
+        panic!("timed out waiting for {label:?}");
+    }
+}
+
+/// Logs in as alice and walks the main screens. Needs the dev stack (`deploy/`)
+/// and Caddy's root in `SSL_CERT_FILE`; run with `-- --ignored`.
+/// `IRCHAD_SHOTS_INVITE` overrides the invite, for a non-default `IRCHAD_HOST`.
+#[test]
+#[ignore]
+fn live() {
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", "alice");
+    s.type_into("Password", "alicepass");
+    s.click("Log in");
+    s.wait_for("Signed in as alice");
+    s.settle(3);
+    s.shot("live_general");
+    s.click("Settings");
+    s.shot("live_settings");
+    s.click("Close window");
+    s.click("Message someone");
+    s.harness.run();
+    s.harness.get_by_label("Settings").type_text("bo");
+    s.shot("live_add_dm");
+    s.harness.key_press(egui::Key::Escape);
+    s.click("#dev");
+    s.settle(1);
+    s.shot("live_dev");
+    s.harness
+        .get_all_by_label("Join voice")
+        .next()
+        .unwrap()
+        .click();
+    s.settle(4);
+    s.shot("live_voice");
+    s.click("Disconnect");
+    s.click("#general");
+    s.settle(1);
+    s.harness.get_all_by_label("hi").next().unwrap().hover();
+    s.harness.run();
+    s.shot("live_hover");
+    s.click("Reply");
+    s.shot("live_reply");
+    s.harness.key_press(egui::Key::Escape);
+    s.click("bob");
+    s.settle(2);
+    s.shot("live_dm");
+    s.click("Network options");
+    s.shot("live_menu");
+    s.click("Leave network…");
+    s.shot("live_leave");
+    s.click("Cancel");
+    s.click("Settings");
+    s.click("Light");
+    s.click("Close window");
+    s.click("#dev");
+    s.settle(1);
+    s.shot("live_light");
 }

@@ -476,6 +476,25 @@ fn members_and_presence() {
     feed(&mut n, ":dan!u@h QUIT :bye");
     feed(&mut n, ":alice!u@h PART #c");
     assert_eq!(members(&mut n).len(), 1);
+    // A DM learns away from the member list; MONITOR only says online.
+    feed(&mut n, "@msgid=d1 :carol!u@h PRIVMSG bob :hi");
+    feed(&mut n, ":s 730 bob :carol!u@h");
+    out(&mut n);
+    n.command(NetCommand::Members {
+        channel: "#c".into(),
+    });
+    let who = out(&mut n);
+    assert!(!buffer(&events(&mut n), "carol").unwrap().away);
+    for l in [
+        format!("@label={} :s BATCH +w labeled-response", label_of(&who[0])),
+        "@batch=w :s 354 bob 1 #c carol G 0".into(),
+        "@batch=w :s 315 bob #c :End".into(),
+        ":s BATCH -w".into(),
+    ] {
+        feed(&mut n, &l);
+    }
+    assert!(buffer(&events(&mut n), "carol").unwrap().away);
+
     feed(&mut n, ":carol!u@h KICK #c bob :out");
     assert!(
         events(&mut n)

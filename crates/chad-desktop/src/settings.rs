@@ -48,6 +48,9 @@ pub enum Notify {
     Never,
 }
 
+/// Label column width, shared by every settings grid so they line up.
+pub const LABEL_W: f32 = 120.0;
+
 impl Settings {
     pub fn apply(&self, ctx: &egui::Context) {
         ctx.set_theme(self.theme);
@@ -67,34 +70,41 @@ impl Settings {
     pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
         let before = self.clone();
         let (mut dragging, mut released) = (false, false);
-        egui::Grid::new("settings").num_columns(2).show(ui, |ui| {
-            ui.label("Theme");
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.theme, ThemePreference::Dark, "Dark");
-                ui.selectable_value(&mut self.theme, ThemePreference::Light, "Light");
-                ui.selectable_value(&mut self.theme, ThemePreference::System, "Match system");
-            });
-            ui.end_row();
+        egui::Grid::new("settings")
+            .num_columns(2)
+            .min_col_width(LABEL_W)
+            .show(ui, |ui| {
+                ui.label("Theme");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.theme, ThemePreference::Dark, "Dark");
+                    ui.selectable_value(&mut self.theme, ThemePreference::Light, "Light");
+                    ui.selectable_value(&mut self.theme, ThemePreference::System, "Match system");
+                });
+                ui.end_row();
 
-            ui.label("Text size");
-            let r = ui.add(egui::Slider::new(&mut self.font_size, 10.0..=24.0).step_by(1.0));
-            // Resizing mid-drag moves the slider under the pointer and feeds back into it.
-            dragging = r.dragged();
-            released = r.drag_stopped();
-            ui.end_row();
-
-            ui.label("Notify me about");
-            ui.vertical(|ui| {
-                ui.radio_value(&mut self.notify, Notify::All, "Every message");
-                ui.radio_value(
-                    &mut self.notify,
-                    Notify::MentionsAndDms,
-                    "Mentions and direct messages",
+                ui.label("Text size");
+                let r = ui.add(
+                    egui::Slider::new(&mut self.font_size, 10.0..=24.0)
+                        .step_by(1.0)
+                        .fixed_decimals(0),
                 );
-                ui.radio_value(&mut self.notify, Notify::Never, "Nothing");
+                // Resizing mid-drag moves the slider under the pointer and feeds back into it.
+                dragging = r.dragged();
+                released = r.drag_stopped();
+                ui.end_row();
+
+                ui.label("Notify me about");
+                ui.vertical(|ui| {
+                    ui.radio_value(&mut self.notify, Notify::All, "Every message");
+                    ui.radio_value(
+                        &mut self.notify,
+                        Notify::MentionsAndDms,
+                        "Mentions and direct messages",
+                    );
+                    ui.radio_value(&mut self.notify, Notify::Never, "Nothing");
+                });
+                ui.end_row();
             });
-            ui.end_row();
-        });
         (*self != before && !dragging) || released
     }
 }

@@ -900,6 +900,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_kittest",
+ "egui_system_font_provider",
  "futures-util",
  "image",
  "jiff",

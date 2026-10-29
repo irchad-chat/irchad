@@ -20,12 +20,13 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
 use crate::chatlog::{self, Action, ChatLog};
+use crate::format;
+use crate::icons::{self, Tip};
 use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
-use crate::{format, icons};
 
 const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -326,13 +327,15 @@ impl App {
                 );
                 if waiting
                     && let Some(j) = &self.join
-                    && j.busy
-                        .as_deref()
-                        .and_then(|b| invite::parse(b).ok())
-                        .is_some_and(|inv| inv.origin == origin)
+                    && let Some(inv) = j.busy.as_deref().and_then(|b| invite::parse(b).ok())
+                    && inv.origin == origin
                 {
                     self.join = None;
                     self.current = Some(origin.clone());
+                    // Open the invite's channel, not whichever autojoin lands first.
+                    if let Some(ch) = inv.channel {
+                        self.nets[i].selected = Some(key(&ch));
+                    }
                 }
                 if self.current.is_none() {
                     self.current = Some(origin);
@@ -392,7 +395,7 @@ impl App {
                             (a.info.kind == BufferKind::Dm, &a.key)
                                 .cmp(&(b.info.kind == BufferKind::Dm, &b.key))
                         });
-                        if n.selected.is_none() {
+                        if n.selected.is_none() || n.selected.as_deref() == Some(&k) {
                             n.select(&k);
                         }
                     }
@@ -624,13 +627,15 @@ impl App {
             if pick.is_some() {
                 self.current = pick;
             }
-            ui.separator();
+            if !self.nets.is_empty() {
+                ui.separator();
+            }
             let add = ui
                 .add_sized(
                     [48.0, 48.0],
                     egui::Button::new(RichText::new("+").size(24.0)),
                 )
-                .on_hover_text("Join a network");
+                .tip("Join a network");
             if add.clicked() {
                 self.join = Some(JoinDialog::default());
             }
@@ -640,7 +645,7 @@ impl App {
                     [48.0, 48.0],
                     egui::Button::new(RichText::new(icons::GEAR).size(20.0)),
                 )
-                .on_hover_text("Settings")
+                .tip("Settings")
                 .clicked()
             {
                 self.show_settings = !self.show_settings;
@@ -670,12 +675,18 @@ impl App {
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.heading(&self.nets[ni].info.name);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button(icons::DOTS_THREE, |ui| {
                     if ui.button("Leave network…").clicked() {
                         self.confirm_remove = Some(network.clone());
                     }
+                })
+                .response
+                .tip("Network options");
+                // Whatever's left of the menu, so long names truncate instead of overlapping it.
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    let name = RichText::new(&self.nets[ni].info.name).heading();
+                    ui.add(egui::Label::new(name).truncate());
                 });
             });
         });
@@ -730,9 +741,8 @@ impl App {
                                 BufferKind::Channel => "Join a channel",
                                 BufferKind::Dm => "Message someone",
                             };
-                            if ui.small_button("+").on_hover_text(hint).clicked() {
+                            if ui.small_button("+").tip(hint).clicked() {
                                 self.adding = Some((kind, String::new()));
-                                ui.memory_mut(|m| m.request_focus(adding_id()));
                             }
                         });
                     });
@@ -745,27 +755,21 @@ impl App {
                         } else {
                             text = text.color(ui.visuals().weak_text_color());
                         }
+                        let mut atoms = egui::Atoms::new(text);
                         let mut tip = None;
                         if kind == BufferKind::Dm {
-                            let dot;
-                            (dot, tip) = match (b.info.online, b.info.away) {
-                                (Some(true), false) => ("●", Some("Online")),
-                                (Some(true), true) => ("◐", Some("Away")),
-                                _ => ("○", Some("Offline")),
+                            let (dot, color, t) = match (b.info.online, b.info.away) {
+                                (Some(true), false) => ("●", voice::ONLINE, "Online"),
+                                (Some(true), true) => ("◐", voice::AWAY, "Away"),
+                                _ => ("○", ui.visuals().weak_text_color(), "Offline"),
                             };
-                            text = RichText::new(format!("{dot} {}", b.info.target)).color(
-                                if b.info.unread > 0 || selected {
-                                    ui.visuals().strong_text_color()
-                                } else {
-                                    ui.visuals().weak_text_color()
-                                },
-                            );
+                            atoms.push_left(RichText::new(dot).color(color));
+                            tip = Some(t);
                         }
                         let mut resp = ui
                             .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                                 ui.add(
-                                    egui::Button::selectable(selected, text)
-                                        .frame_when_inactive(false)
+                                    egui::Button::selectable(selected, atoms)
                                         .min_size(vec2(0.0, 24.0)),
                                 )
                             })
@@ -792,7 +796,7 @@ impl App {
                                 vec2(20.0, 20.0),
                             );
                             let join = egui::Button::new(RichText::new(icons::SPEAKER_HIGH).small()).frame(false);
-                            if ui.put(at, join).on_hover_text("Join voice").clicked() {
+                            if ui.put(at, join).tip("Join voice").clicked() {
                                 join_voice = Some(b.info.target.clone());
                             }
                         }
@@ -840,6 +844,11 @@ impl App {
                                 .hint_text(hint)
                                 .id(adding_id()),
                         );
+                        // Focus it while open: the "+" click itself would steal focus
+                        // on the first frame, leaving a field that never closes.
+                        if !r.has_focus() && !r.lost_focus() {
+                            r.request_focus();
+                        }
                         // Escape or clicking away cancels; Enter submits.
                         if r.lost_focus() {
                             let enter = ui.input(|i| i.key_pressed(Key::Enter));
@@ -998,10 +1007,7 @@ impl App {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("Replying to {nick}")).small());
-                    cancel = ui
-                        .small_button(icons::X)
-                        .on_hover_text("Cancel reply")
-                        .clicked();
+                    cancel = ui.small_button(icons::X).tip("Cancel reply").clicked();
                 });
                 if cancel || ui.input(|i| i.key_pressed(Key::Escape)) {
                     b.reply = None;
@@ -1205,13 +1211,14 @@ impl App {
                 ui.set_width(360.0);
                 ui.heading("Join a network");
                 ui.add_space(8.0);
-                ui.label("Invite link");
+                let l = ui.label("Invite link");
                 ui.add_enabled(
                     !busy,
                     egui::TextEdit::singleline(&mut j.invite)
                         .hint_text("https://chat.example.com/invite")
                         .desired_width(f32::INFINITY),
-                );
+                )
+                .labelled_by(l.id);
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!busy, |ui| {
@@ -1225,23 +1232,22 @@ impl App {
                     .num_columns(2)
                     .show(ui, |ui| {
                         let guest = j.mode == JoinMode::Guest;
-                        ui.label(if guest { "Nickname" } else { "Username" });
-                        ui.add_enabled(!busy, egui::TextEdit::singleline(&mut j.account));
+                        let l = ui.label(if guest { "Nickname" } else { "Username" });
+                        let field =
+                            |text| egui::TextEdit::singleline(text).desired_width(f32::INFINITY);
+                        ui.add_enabled(!busy, field(&mut j.account))
+                            .labelled_by(l.id);
                         ui.end_row();
                         if !guest {
-                            ui.label("Password");
-                            ui.add_enabled(
-                                !busy,
-                                egui::TextEdit::singleline(&mut j.password).password(true),
-                            );
+                            let l = ui.label("Password");
+                            ui.add_enabled(!busy, field(&mut j.password).password(true))
+                                .labelled_by(l.id);
                             ui.end_row();
                         }
                         if j.mode == JoinMode::Register {
-                            ui.label("Email");
-                            ui.add_enabled(
-                                !busy,
-                                egui::TextEdit::singleline(&mut j.email).hint_text("optional"),
-                            );
+                            let l = ui.label("Email");
+                            ui.add_enabled(!busy, field(&mut j.email).hint_text("optional"))
+                                .labelled_by(l.id);
                             ui.end_row();
                         }
                     });
@@ -1325,6 +1331,7 @@ impl App {
                 ui.heading("Check your email");
                 ui.label(message);
                 ui.add(egui::TextEdit::singleline(&mut self.verify_code).hint_text("Code"));
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Not now").clicked() {
                         done = true;
@@ -1352,6 +1359,7 @@ impl App {
                 ui.heading(format!("Leave {name}?"));
                 ui.label("IrChad forgets this network and your saved password for it.");
                 ui.label("Your account stays, so you can join again later.");
+                ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
                         close = true;
@@ -1374,6 +1382,8 @@ impl App {
         let mut open = self.show_settings;
         egui::Window::new("Settings")
             .open(&mut open)
+            .pivot(Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
@@ -1415,7 +1425,7 @@ impl App {
                             ui.set_max_width(320.0);
                             ui.horizontal(|ui| {
                                 ui.label(text);
-                                if ui.small_button(icons::X).clicked() {
+                                if ui.small_button(icons::X).tip("Dismiss").clicked() {
                                     dismiss.insert(i);
                                 }
                             });
@@ -1526,7 +1536,7 @@ impl eframe::App for App {
         });
         if let Some(ni) = ni {
             egui::Panel::left("channels")
-                .default_size(220.0)
+                .default_size(240.0)
                 .size_range(160.0..=400.0)
                 .show(ui, |ui| self.channels(ui, ni));
         }

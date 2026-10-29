@@ -33,3 +33,16 @@ pub fn install(ctx: &egui::Context) {
         }],
     ));
 }
+
+pub trait Tip {
+    /// Hover text that is also the accessible name, for icon-only widgets.
+    fn tip(self, text: &str) -> Self;
+}
+
+impl Tip for egui::Response {
+    fn tip(self, text: &str) -> Self {
+        self.ctx
+            .accesskit_node_builder(self.id, |n| n.set_label(text));
+        self.on_hover_text(text)
+    }
+}
