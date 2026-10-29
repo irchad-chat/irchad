@@ -3,19 +3,24 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use chad_irc::Message;
 use chad_irc::cap::Negotiator;
 use chad_irc::register::{self, Reply};
 use chad_irc::sasl::{self, Progress, Sasl};
 use chad_irc::ws::{self, Backoff, Connection};
+use chad_proto::chadd::VoiceTokenResponse;
 use chad_proto::discovery::{Discovery, Registration};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use url::Url;
 
+use crate::chadd::{self, Session};
 use crate::manager::Sink;
-use crate::net::{Net, failure};
+use crate::net::{Net, VOICE_KEY, failure};
 use crate::secrets::SecretStore;
-use crate::{ConnState, Event, NetCommand, discovery};
+use crate::{ConnState, Event, Media, MediaEvent, NetCommand, discovery};
 
 pub enum ToNet {
     Cmd(NetCommand),
@@ -38,6 +43,9 @@ pub struct Params {
     pub save_password: bool,
     pub db_path: PathBuf,
     pub secrets: Arc<dyn SecretStore>,
+    pub media: Option<Arc<dyn Media>>,
+    /// chadd session, reused until it expires.
+    pub session: Option<Session>,
 }
 
 enum End {
@@ -107,6 +115,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                     match rx.recv().await {
                         Some(ToNet::Cmd(NetCommand::SignIn { password })) => {
                             p.password = Some(password);
+                            p.session = None;
                             p.save_password = true;
                             backoff.reset();
                             break;
@@ -232,6 +241,10 @@ async fn session(
 
         if net.caps.ready() && !auth_started {
             auth_started = true;
+            // Before CAP END, so the reattach burst includes everyone's value.
+            if net.caps.enabled("draft/metadata-2") {
+                out.push(Message::new("METADATA", ["*", "SUB", VOICE_KEY]));
+            }
             if p.guest {
                 out.push(net.caps.end());
             } else if let Some(email) = &p.register {
@@ -313,7 +326,30 @@ async fn session(
 
     net.attach(&nick);
     backoff.reset();
+    // Dropping `call` hangs up.
+    let mut call: Option<mpsc::UnboundedReceiver<MediaEvent>> = None;
+    let mut token: Option<JoinHandle<TokenResult>> = None;
     loop {
+        if let Some(channel) = net.voice_request.take() {
+            call = None;
+            if p.media.is_some() {
+                token = Some(tokio::spawn(voice_token(
+                    d.chadd.api.clone(),
+                    p.account.clone(),
+                    password.to_owned(),
+                    p.session.clone(),
+                    channel,
+                )));
+            } else {
+                net.voice_ended(Some("Voice isn't available in this app.".into()));
+            }
+        }
+        if net.voice.is_none() {
+            call = None;
+            if let Some(t) = token.take() {
+                t.abort();
+            }
+        }
         for m in std::mem::take(&mut net.out) {
             if let Err(e) = send(&mut ws, &m).await {
                 return lost(e);
@@ -333,6 +369,32 @@ async fn session(
                 Ok(None) => return End::Lost("The server closed the connection.".into()),
                 Err(e) => return lost(e),
             },
+            r = async { token.as_mut().expect("guarded").await }, if token.is_some() => {
+                token = None;
+                let Ok((session, channel, res)) = r else { continue };
+                p.session = session;
+                let wanted = net.voice.as_ref().is_some_and(|v| v.channel == channel);
+                match (res, &p.media) {
+                    (Ok(t), Some(media)) if wanted => {
+                        call = Some(media.join(d.livekit.url.to_string(), t.token));
+                    }
+                    (Err(e), _) if wanted => net.voice_ended(Some(e)),
+                    _ => {}
+                }
+            }
+            ev = async { call.as_mut().expect("guarded").recv().await }, if call.is_some() => {
+                match ev {
+                    Some(MediaEvent::Connected) => net.voice_connected(),
+                    Some(MediaEvent::Ended(e)) => {
+                        call = None;
+                        net.voice_ended(e);
+                    }
+                    None => {
+                        call = None;
+                        net.voice_ended(Some("Lost the voice connection.".into()));
+                    }
+                }
+            }
             cmd = rx.recv() => match cmd {
                 Some(ToNet::Cmd(c)) => net.command(c),
                 Some(ToNet::Remove) => {
@@ -340,7 +402,11 @@ async fn session(
                     return End::Remove;
                 }
                 None => {
-                    // App exit: always-on keeps us in our channels.
+                    // App exit: always-on keeps us in our channels, but not in voice.
+                    net.voice_ended(None);
+                    for m in std::mem::take(&mut net.out) {
+                        let _ = send(&mut ws, &m).await;
+                    }
                     let _ = ws.close().await;
                     return End::Stop;
                 }
@@ -365,6 +431,34 @@ async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
         net.error(format!("{e} You'll need to sign in again next time."));
         sink.send(net.events.drain(..));
     }
+}
+
+type TokenResult = (Option<Session>, String, Result<VoiceTokenResponse, String>);
+
+/// A LiveKit token for `channel`, logging in to chadd first if the session
+/// is missing, expired or refused.
+async fn voice_token(
+    api: Url,
+    account: String,
+    password: String,
+    session: Option<Session>,
+    channel: String,
+) -> TokenResult {
+    if let Some(s) = session.filter(|s| s.until > Instant::now()) {
+        match chadd::voice_token(&api, &s.token, &channel).await {
+            Ok(t) => return (Some(s), channel, Ok(t)),
+            Err(chadd::Error::Unauthorized(_)) => {}
+            Err(e) => return (Some(s), channel, Err(e.message())),
+        }
+    }
+    let s = match chadd::login(&api, &account, &password).await {
+        Ok(s) => s,
+        Err(e) => return (None, channel, Err(e.message())),
+    };
+    let r = chadd::voice_token(&api, &s.token, &channel)
+        .await
+        .map_err(chadd::Error::message);
+    (Some(s), channel, r)
 }
 
 /// A line we built from server-supplied names may not serialize; skip it

@@ -3,6 +3,7 @@ mod chatlog;
 mod format;
 mod platform;
 mod settings;
+mod voice;
 
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
@@ -25,13 +26,26 @@ fn main() -> eframe::Result {
     let wake = platform::Wake::default();
     let (os_tx, os_rx) = mpsc::channel();
     let os_tx = platform::OsTx::new(os_tx, wake.clone());
+    // Dev: `IRCHAD_PROFILE=bob` runs another instance beside the normal one (to
+    // test calls) with its own data and settings, and passwords kept in memory.
+    let profile = std::env::var("IRCHAD_PROFILE")
+        .ok()
+        .filter(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric()));
+    let mut data_dir =
+        eframe::storage_dir("IrChad").unwrap_or_else(|| PathBuf::from("irchad-data"));
     // Held until exit: owning the bus name (or pipe) is what makes us the instance.
-    let Some(_instance) = rt.block_on(platform::single_instance(open.clone(), os_tx.clone()))
-    else {
-        tracing::info!("handed over to the running IrChad");
-        return Ok(());
+    let _instance = if let Some(p) = &profile {
+        data_dir = data_dir.join("profiles").join(p);
+        None
+    } else {
+        let Some(instance) = rt.block_on(platform::single_instance(open.clone(), os_tx.clone()))
+        else {
+            tracing::info!("handed over to the running IrChad");
+            return Ok(());
+        };
+        platform::register_scheme();
+        Some(instance)
     };
-    platform::register_scheme();
     let tray = rt.block_on(platform::Tray::spawn(os_tx));
 
     let options = eframe::NativeOptions {
@@ -40,6 +54,7 @@ fn main() -> eframe::Result {
             .with_app_id(platform::APP_ID)
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([640.0, 400.0]),
+        persistence_path: profile.is_some().then(|| data_dir.join("app.ron")),
         ..Default::default()
     };
     eframe::run_native(
@@ -48,14 +63,21 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();
             let _ = wake.set(ctx.clone());
-            let data_dir =
-                eframe::storage_dir("IrChad").unwrap_or_else(|| PathBuf::from("irchad-data"));
+            let repaint = ctx.clone();
+            let voice = chad_media::Voice::new(Arc::new(move || repaint.request_repaint()));
             let (core, events) = chad_core::start(chad_core::Config {
                 data_dir,
-                secrets: Arc::new(chad_core::secrets::SystemSecrets),
+                secrets: if profile.is_some() {
+                    Arc::new(chad_core::secrets::MemorySecrets::default())
+                } else {
+                    Arc::new(chad_core::secrets::SystemSecrets)
+                },
                 notify: Arc::new(move || ctx.request_repaint()),
+                media: Some(Arc::new(voice::Glue(voice.clone()))),
             });
-            Ok(Box::new(app::App::new(cc, core, events, os_rx, tray, open)))
+            Ok(Box::new(app::App::new(
+                cc, core, events, os_rx, tray, open, voice,
+            )))
         }),
     )
 }

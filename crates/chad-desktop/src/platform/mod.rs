@@ -1,7 +1,13 @@
 //! OS integration: single instance with URL forwarding, the `irchad://` scheme,
-//! notifications and the tray. One impl per target.
+//! notifications, the tray and push-to-talk. One impl per target.
 
 use std::sync::{Arc, OnceLock, mpsc};
+
+pub mod ptt;
+#[cfg(target_os = "linux")]
+mod ptt_linux;
+#[cfg(windows)]
+mod ptt_windows;
 
 #[cfg(target_os = "linux")]
 mod linux;

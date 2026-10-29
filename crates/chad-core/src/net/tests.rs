@@ -587,3 +587,114 @@ fn hostile_input_is_bounded() {
     );
     assert!(mentions("hi bob.", "bob") && mentions("BOB: hi", "bob") && !mentions("bobby", "bob"));
 }
+
+fn voice_members(events: &[Event], channel: &str) -> Option<Vec<String>> {
+    events.iter().rev().find_map(|e| match e {
+        Event::VoiceMembers {
+            channel: c, nicks, ..
+        } if c == channel => Some(nicks.clone()),
+        _ => None,
+    })
+}
+
+fn voice_state(events: &[Event]) -> Option<VoiceState> {
+    events.iter().rev().find_map(|e| match e {
+        Event::Voice { state, .. } => Some(state.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn voice_metadata_and_calls() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * LS :draft/metadata-2"));
+    n.caps.handle(&line("CAP * ACK :draft/metadata-2"));
+    assert!(n.caps.enabled("draft/metadata-2"));
+    n.attach("bob");
+    let label = out(&mut n)[1]
+        .strip_prefix("@label=")
+        .unwrap()
+        .split(' ')
+        .next()
+        .unwrap()
+        .to_owned();
+    feed(&mut n, ":bob!u@h JOIN #dev bob :bob");
+    // Our own value in the reattach burst is left over from a crash.
+    feed(&mut n, ":s 761 * bob chad/voice * #dev");
+    assert!(out(&mut n).contains(&"METADATA * SET chad/voice".to_owned()));
+    feed(&mut n, ":s 761 * alice chad/voice * #Dev");
+    feed(&mut n, ":s 761 * carol chad/voice * :not a channel");
+    feed(&mut n, &format!("@label={label} :s PONG s sync"));
+    let ev = events(&mut n);
+    assert_eq!(voice_members(&ev, "#dev").unwrap(), ["alice", "bob"]);
+    out(&mut n);
+
+    // After sync our own value is left alone (another device may be in a call).
+    feed(&mut n, ":s 761 * bob chad/voice * #dev");
+    assert!(out(&mut n).is_empty());
+    feed(&mut n, ":s 766 * bob chad/voice :Key deleted");
+    feed(&mut n, ":alice!u@h NICK alicia");
+    assert_eq!(voice_members(&events(&mut n), "#dev").unwrap(), ["alicia"]);
+    feed(&mut n, ":alicia!u@h QUIT :bye");
+    assert_eq!(
+        voice_members(&events(&mut n), "#dev").unwrap(),
+        Vec::<String>::new()
+    );
+
+    // Join: conn fetches a token, connects, then we publish.
+    n.command(NetCommand::JoinVoice {
+        channel: "#DEV".into(),
+    });
+    assert_eq!(n.voice_request.take().as_deref(), Some("#dev"));
+    assert_eq!(
+        voice_state(&events(&mut n)),
+        Some(VoiceState::Connecting {
+            channel: "#dev".into()
+        })
+    );
+    n.voice_connected();
+    assert_eq!(out(&mut n), ["METADATA * SET chad/voice #dev"]);
+    // Something else cleared it while we're in: put it back.
+    feed(&mut n, ":s 766 * bob chad/voice :Key deleted");
+    assert_eq!(out(&mut n), ["METADATA * SET chad/voice #dev"]);
+
+    // Ops turn voice off: we leave, and clear our value.
+    feed(&mut n, ":s 761 * #dev chad/voice * off");
+    let ev = events(&mut n);
+    assert!(!buffer(&ev, "#dev").unwrap().voice);
+    assert_eq!(voice_state(&ev), Some(VoiceState::Idle));
+    assert_eq!(out(&mut n), ["METADATA * SET chad/voice"]);
+    assert!(n.voice.is_none());
+    n.command(NetCommand::JoinVoice {
+        channel: "#dev".into(),
+    });
+    assert!(n.voice_request.is_none());
+
+    // Dropping the connection ends the call without touching the server.
+    feed(&mut n, ":s 766 * #dev chad/voice :Key deleted");
+    n.command(NetCommand::JoinVoice {
+        channel: "#dev".into(),
+    });
+    n.voice_connected();
+    out(&mut n);
+    events(&mut n);
+    n.detach();
+    assert!(n.out.is_empty());
+    assert_eq!(voice_state(&events(&mut n)), Some(VoiceState::Idle));
+}
+
+#[test]
+fn guests_get_no_voice() {
+    let mut n = net();
+    attach(&mut n, &["#dev"]);
+    n.guest = true;
+    n.command(NetCommand::JoinVoice {
+        channel: "#dev".into(),
+    });
+    assert!(n.voice_request.is_none());
+    assert!(
+        events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::Error { .. }))
+    );
+}

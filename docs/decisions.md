@@ -65,3 +65,24 @@ This doesn't cover what a server can always do (drop, delay or forge plaintext m
 A chad can join with only a nickname, the way any IRC client can, when the server allows it (ergo's `require-sasl: false`, the default).
 Guests get text chat only: no always-on (it needs an account), no chadd session (so no voice or uploads), and no E2EE DMs (keys are published per account).
 The client keeps their channel list locally and re-`JOIN`s it on reconnect. Nothing goes in the secret store.
+
+## D16: ergo keeps always-on users' metadata after disconnect (2026-10-28)
+Partly supersedes D6. ergo does *not* clear user metadata while an always-on client has no devices connected, so `chad/voice` can outlive the call.
+The client clears its own key on leave, on any media disconnect, and before exiting the app. On reconnect, the `metadata *ALL` burst may still carry our old value, and the client clears it.
+Another of our devices that is still in a call re-asserts its own value.
+Remaining stale window: the app is killed without a clean exit, and that lasts until the next launch.
+
+## D17: chad-core drives media through a `Media` trait (2026-10-28)
+`chad-core` asks for a call through `trait Media { fn join(url, token) -> events }` and never depends on `chad-media` (libwebrtc).
+The desktop implements it with `chad_media::Voice`, and Android will implement it over the LiveKit Android SDK.
+Core owns *when* to be in a call: the token, metadata, and leaving on IRC loss. The media crate owns *how*: the room, audio and DSP.
+
+## D18: chadd session tokens are JWTs with a per-process secret (2026-10-28)
+`/api/login` checks the password with ergo's `/v1/check_auth` and returns an HS256 JWT (issuer `chadd-session`, 1 h TTL), built with livekit-api's token code. That means no new JWT crate and no session table.
+The signing secret is random per chadd process, so a restart invalidates sessions. The client re-logs in once on 401 using its stored password.
+Logins are throttled to 10/min per IP and per account.
+
+## D19: `chad/voice=off` is enforced by the client (2026-10-28)
+ergo's HTTP API can't read channel metadata, so chadd can't refuse a voice token for an `off` channel.
+The client reads the channel key via `METADATA SYNC` and refuses to join (or leaves) such a room.
+A modified client can still join, which is acceptable for a soft "this channel has no voice" switch. If it ever needs to be hard, chadd gets an IRC connection or ergo gets an API.

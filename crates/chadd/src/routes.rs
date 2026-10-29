@@ -4,22 +4,39 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
     response::Html,
-    routing::get,
+    routing::{get, post},
 };
 use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
+use crate::api;
 use crate::config::Config;
 
 pub struct AppState {
-    config: Config,
+    pub config: Config,
     discovery: Discovery,
+    pub http: reqwest::Client,
+    /// Signs session tokens. Random per process: a restart signs everyone out
+    /// of chadd (not IRC), and clients just log in again.
+    pub session_secret: String,
+    pub throttle: api::Throttle,
 }
 
 impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let discovery = config.discovery()?;
-        Ok(Self { config, discovery })
+        let mut key = [0u8; 32];
+        getrandom::fill(&mut key).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
+        Ok(Self {
+            config,
+            discovery,
+            http,
+            session_secret: key.iter().map(|b| format!("{b:02x}")).collect(),
+            throttle: api::Throttle::default(),
+        })
     }
 }
 
@@ -29,6 +46,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/invite", get(invite))
         .route("/invite/", get(invite))
         .route("/invite/{code}", get(invite_code))
+        .route("/api/login", post(api::login))
+        .route("/api/voice/token", post(api::voice_token))
         .with_state(state)
 }
 
@@ -141,12 +160,14 @@ mod tests {
     use tower::ServiceExt;
 
     fn app() -> Router {
-        let config = Config::parse(
+        let config = Config::parse(&format!(
             r#"
             origin = "https://chat.example.com"
             name = "Chad <Network>"
+            {}
             "#,
-        )
+            crate::config::tests::KEYS
+        ))
         .unwrap();
         router(Arc::new(AppState::new(config).unwrap()))
     }

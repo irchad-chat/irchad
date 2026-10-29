@@ -22,6 +22,27 @@ pub struct Config {
     pub download_url: Option<Url>,
     #[serde(default)]
     pub endpoints: Endpoints,
+    pub ergo: Ergo,
+    pub livekit: Livekit,
+}
+
+/// ergo's HTTP API, for checking passwords (`docs/notes/ergo-api.md`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ergo {
+    /// e.g. `http://ergo:8089`. Every API call is fully privileged, so keep it
+    /// off the public internet.
+    pub api: Url,
+    /// One of ergo's `api.bearer-tokens`.
+    pub token: String,
+}
+
+/// Must match the LiveKit server's `keys`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Livekit {
+    pub key: String,
+    pub secret: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -69,6 +90,10 @@ impl Config {
         );
         // Validate derived URLs up front rather than on first request.
         config.discovery()?;
+        anyhow::ensure!(
+            config.livekit.secret.len() >= 32,
+            "livekit.secret must be at least 32 characters"
+        );
         Ok(())
     }
 
@@ -103,17 +128,27 @@ impl Config {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+
+    pub const KEYS: &str = r#"
+        [ergo]
+        api = "http://ergo:8089"
+        token = "t"
+        [livekit]
+        key = "devkey"
+        secret = "0123456789abcdef0123456789abcdef"
+    "#;
 
     #[test]
     fn derives_endpoints_from_origin() {
-        let c = Config::parse(
+        let c = Config::parse(&format!(
             r#"
             origin = "https://chat.example.com"
             name = "Chad Network"
-            "#,
-        )
+            {KEYS}
+            "#
+        ))
         .unwrap();
         let d = c.discovery().unwrap();
         assert_eq!(d.irc.websocket.as_str(), "wss://chat.example.com/irc");
@@ -124,15 +159,16 @@ mod tests {
 
     #[test]
     fn endpoint_overrides_win() {
-        let c = Config::parse(
+        let c = Config::parse(&format!(
             r#"
             origin = "https://chat.example.com"
             name = "x"
             registration = "closed"
             [endpoints]
             livekit = "wss://lk.example.com"
-            "#,
-        )
+            {KEYS}
+            "#
+        ))
         .unwrap();
         let d = c.discovery().unwrap();
         assert_eq!(d.livekit.url.as_str(), "wss://lk.example.com/");

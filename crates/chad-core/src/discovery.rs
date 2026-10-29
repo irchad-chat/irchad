@@ -34,6 +34,12 @@ pub async fn fetch_icon(url: &Url) -> Result<Vec<u8>, String> {
 
 /// `Ok(None)` when the body is over `max`.
 async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
+    let resp = client(url)?.get(url).send().await?.error_for_status()?;
+    body(resp, max).await
+}
+
+/// HTTPS only, short timeouts, and `*.localhost` resolved by hand.
+pub fn client(url: &str) -> Result<reqwest::Client, reqwest::Error> {
     let mut client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(3))
@@ -46,7 +52,14 @@ async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
     {
         client = client.resolve(&host, ([127, 0, 0, 1], 0).into());
     }
-    let mut resp = client.build()?.get(url).send().await?.error_for_status()?;
+    client.build()
+}
+
+/// The body, or `Ok(None)` past `max` bytes (D14).
+pub async fn body(
+    mut resp: reqwest::Response,
+    max: usize,
+) -> Result<Option<Vec<u8>>, reqwest::Error> {
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await? {
         if body.len() + chunk.len() > max {

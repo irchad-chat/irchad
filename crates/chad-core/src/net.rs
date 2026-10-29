@@ -14,7 +14,7 @@ use chad_irc::label::Labels;
 use crate::store::{Store, StoredBuffer};
 use crate::{
     BufferInfo, BufferKind, ChatMessage, ConnState, Event, Member, MessageKind, NetCommand,
-    NetworkInfo, SendStatus, Typing, time,
+    NetworkInfo, SendStatus, Typing, VoiceState, time,
 };
 
 /// Messages per CHATHISTORY request (ergo allows 1000).
@@ -31,6 +31,8 @@ const MAX_NAME: usize = 200;
 /// Bytes of text per PRIVMSG line we send: 512 minus the relayed prefix, target and slack.
 const MAX_PIECE: usize = 350;
 const TYPING_EVERY: Duration = Duration::from_secs(3);
+/// Metadata key for voice: a user's room (`#chan`), or `off` on a channel.
+pub const VOICE_KEY: &str = "chad/voice";
 
 #[derive(Debug)]
 enum Pending {
@@ -60,6 +62,15 @@ struct Buffer {
     members: HashMap<String, Member>,
     online: Option<bool>,
     away: bool,
+    /// `chad/voice=off` on the channel.
+    voice_off: bool,
+}
+
+/// Our voice call on this network.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Voice {
+    pub channel: String,
+    pub connected: bool,
 }
 
 pub struct Net {
@@ -85,6 +96,13 @@ pub struct Net {
     /// Always-on, per `PERSISTENCE STATUS`. ergo's default (D11).
     persistent: bool,
     joined: HashSet<String>,
+    pub voice: Option<Voice>,
+    /// A `JoinVoice` was accepted: `conn` takes this and fetches a token.
+    pub voice_request: Option<String>,
+    /// Our `chad/voice` is set (by this client).
+    voice_published: bool,
+    /// Folded nick → (nick, folded channel) from their `chad/voice`.
+    voice_of: HashMap<String, (String, String)>,
 }
 
 impl Net {
@@ -109,6 +127,10 @@ impl Net {
             synced: false,
             persistent: true,
             joined: HashSet::new(),
+            voice: None,
+            voice_request: None,
+            voice_published: false,
+            voice_of: HashMap::new(),
         }
     }
 
@@ -149,6 +171,7 @@ impl Net {
                     members: HashMap::new(),
                     online: None,
                     away: false,
+                    voice_off: false,
                 },
             );
             self.emit_buffer(&key);
@@ -193,6 +216,14 @@ impl Net {
             b.members.clear();
             b.online = None;
         }
+        // The call can't outlive the connection; `conn` hangs up.
+        self.voice_request = None;
+        self.voice_published = false;
+        if self.voice.take().is_some() {
+            self.emit_voice_state();
+        }
+        let channels: HashSet<String> = self.voice_of.drain().map(|(_, (_, c))| c).collect();
+        channels.iter().for_each(|c| self.emit_voice_members(c));
     }
 
     pub fn handle(&mut self, msg: Message) -> Result<(), Overflow> {
@@ -237,7 +268,9 @@ impl Net {
                 }
             }
             NetCommand::Verify { .. } | NetCommand::SignIn { .. } => {}
+            NetCommand::LeaveVoice => self.voice_ended(None),
             _ if offline => self.error("You're offline right now."),
+            NetCommand::JoinVoice { channel } => self.join_voice(&channel),
             NetCommand::React {
                 target,
                 msgid,
@@ -641,6 +674,10 @@ impl Net {
                         && self.synced
                     {
                         self.fetch_new(&key);
+                        // Who's in voice there; the connect burst covers the rest.
+                        if self.caps.enabled("draft/metadata-2") {
+                            self.out.push(Message::new("METADATA", [chan, "SYNC"]));
+                        }
                     }
                 } else {
                     let account = m.param(1).filter(|a| *a != "*").map(str::to_owned);
@@ -672,6 +709,7 @@ impl Net {
                 }
             }
             "QUIT" => {
+                self.set_voice_of(&from, None);
                 let nick = self.fold(&from);
                 let keys: Vec<String> = self
                     .buffers
@@ -689,6 +727,11 @@ impl Net {
                     self.events.push(Event::Network(self.info.clone()));
                 }
                 let (old, newk) = (self.fold(&from), self.fold(new));
+                if let Some((_, ch)) = self.voice_of.remove(&old) {
+                    self.voice_of
+                        .insert(newk.clone(), (new.to_owned(), ch.clone()));
+                    self.emit_voice_members(&ch);
+                }
                 let keys: Vec<String> = self
                     .buffers
                     .iter_mut()
@@ -750,6 +793,13 @@ impl Net {
                         b.away &= online;
                         self.emit_buffer(&key);
                     }
+                }
+            }
+            // 761 <me|*> <target> <key> <visibility> :<value>; 766 is "not set".
+            "761" | "766" if m.param(2) == Some(VOICE_KEY) => {
+                let value = if m.command == "761" { m.param(4) } else { None };
+                if let Some(target) = m.param(1) {
+                    self.voice_metadata(target, value.unwrap_or_default());
                 }
             }
             "PERSISTENCE" if m.param(0) == Some("STATUS") => {
@@ -952,6 +1002,171 @@ impl Net {
         n
     }
 
+    // ---- voice ------------------------------------------------------------
+
+    fn join_voice(&mut self, channel: &str) {
+        let key = self.fold(channel);
+        let Some(b) = self
+            .buffers
+            .get(&key)
+            .filter(|b| b.kind == BufferKind::Channel)
+        else {
+            return;
+        };
+        let refuse = if self.guest {
+            Some("Voice needs an account. Sign up to use it.".to_owned())
+        } else if b.voice_off {
+            Some(format!("Voice is turned off in {}.", b.name))
+        } else {
+            None
+        };
+        if let Some(error) = refuse {
+            return self.error(error);
+        }
+        let channel = b.name.clone();
+        if self
+            .voice
+            .as_ref()
+            .is_some_and(|v| self.cm.eq(&v.channel, &channel))
+        {
+            return;
+        }
+        self.voice = Some(Voice {
+            channel: channel.clone(),
+            connected: false,
+        });
+        self.voice_request = Some(channel);
+        self.emit_voice_state();
+    }
+
+    /// `conn` joined the room: tell everyone.
+    pub fn voice_connected(&mut self) {
+        let Some(v) = &mut self.voice else { return };
+        v.connected = true;
+        let channel = v.channel.clone();
+        self.set_own_voice(Some(&channel));
+        self.emit_voice_state();
+    }
+
+    /// The call is over: we left, or it dropped with `error`.
+    pub fn voice_ended(&mut self, error: Option<String>) {
+        self.voice_request = None;
+        if self.voice_published {
+            self.set_own_voice(None);
+        }
+        if self.voice.take().is_some() {
+            self.emit_voice_state();
+        }
+        if let Some(e) = error {
+            self.error(e);
+        }
+    }
+
+    fn set_own_voice(&mut self, channel: Option<&str>) {
+        if !self.connected || !self.caps.enabled("draft/metadata-2") {
+            return;
+        }
+        self.voice_published = channel.is_some();
+        let mut m = Message::new("METADATA", ["*", "SET", VOICE_KEY]);
+        if let Some(c) = channel {
+            m.params.push(c.to_owned());
+        }
+        self.out.push(m);
+    }
+
+    /// A `chad/voice` value: a user's room, or `off` on a channel. Empty is unset.
+    fn voice_metadata(&mut self, target: &str, value: &str) {
+        if !valid_name(target) {
+            return;
+        }
+        if self.is_channel(target) {
+            let key = self.fold(target);
+            if let Some(b) = self.buffers.get_mut(&key) {
+                b.voice_off = value == "off";
+                let off = b.voice_off;
+                self.emit_buffer(&key);
+                // shortcut: chadd can't read channel metadata (ergo's API has no
+                // call for it), so turning voice off is enforced here only.
+                if off
+                    && self
+                        .voice
+                        .as_ref()
+                        .is_some_and(|v| self.fold(&v.channel) == key)
+                {
+                    self.voice_ended(Some(format!("Voice was turned off in {target}.")));
+                }
+            }
+            return;
+        }
+        let room = (valid_name(value) && self.is_channel(value)).then_some(value);
+        if self.cm.eq(target, &self.info.nick) {
+            match &self.voice {
+                // ergo keeps an always-on account's metadata after a crash, so a
+                // value seen while reattaching is stale. Another device of ours in
+                // a call puts its value back when it sees this.
+                None if room.is_some() && !self.synced => self.set_own_voice(None),
+                Some(v) if v.connected && room.is_none_or(|r| !self.cm.eq(r, &v.channel)) => {
+                    let channel = v.channel.clone();
+                    self.set_own_voice(Some(&channel));
+                }
+                _ => {}
+            }
+        }
+        self.set_voice_of(target, room);
+    }
+
+    fn set_voice_of(&mut self, nick: &str, room: Option<&str>) {
+        let key = self.fold(nick);
+        let new = room.map(|r| self.fold(r));
+        let old = match &new {
+            Some(ch) if self.voice_of.len() < MAX_MEMBERS || self.voice_of.contains_key(&key) => {
+                self.voice_of
+                    .insert(key, (nick.to_owned(), ch.clone()))
+                    .map(|(_, c)| c)
+            }
+            Some(_) => return,
+            None => self.voice_of.remove(&key).map(|(_, c)| c),
+        };
+        if old != new {
+            for ch in [old, new].into_iter().flatten() {
+                self.emit_voice_members(&ch);
+            }
+        }
+    }
+
+    fn emit_voice_state(&mut self) {
+        let state = match &self.voice {
+            None => VoiceState::Idle,
+            Some(v) if v.connected => VoiceState::Connected {
+                channel: v.channel.clone(),
+            },
+            Some(v) => VoiceState::Connecting {
+                channel: v.channel.clone(),
+            },
+        };
+        let network = self.id();
+        self.events.push(Event::Voice { network, state });
+    }
+
+    fn emit_voice_members(&mut self, key: &str) {
+        let Some(b) = self.buffers.get(key) else {
+            return;
+        };
+        let mut nicks: Vec<String> = self
+            .voice_of
+            .values()
+            .filter(|(_, c)| c == key)
+            .map(|(n, _)| n.clone())
+            .collect();
+        nicks.sort_by_key(|n| n.to_lowercase());
+        let (network, channel) = (self.id(), b.name.clone());
+        self.events.push(Event::VoiceMembers {
+            network,
+            channel,
+            nicks,
+        });
+    }
+
     // ---- helpers ----------------------------------------------------------
 
     fn fold(&self, s: &str) -> String {
@@ -1035,6 +1250,7 @@ impl Net {
                 members: HashMap::new(),
                 online: None,
                 away: false,
+                voice_off: false,
             },
         );
         self.emit_buffer(&key);
@@ -1123,6 +1339,7 @@ impl Net {
             mentions,
             online: b.online,
             away: b.away,
+            voice: b.kind == BufferKind::Channel && !b.voice_off,
         };
         let network = self.id();
         self.events.push(Event::Buffer { network, buffer });

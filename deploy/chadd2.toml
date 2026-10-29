@@ -3,3 +3,12 @@ listen = "0.0.0.0:8080"
 origin = "https://chat2.localhost:8443"
 name = "Chad Dev Network 2"
 registration = "open"
+
+# DEV ONLY: public secrets, matching ergo.yaml and livekit.yaml.
+[ergo]
+api = "http://ergo2:8089"
+token = "chad-dev-api-token"
+
+[livekit]
+key = "devkey"
+secret = "chad-dev-livekit-secret-0123456789abcdef"

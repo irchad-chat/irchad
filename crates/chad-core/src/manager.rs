@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::conn::{self, Params, ToNet};
 use crate::net::Net;
 use crate::store::Store;
-use crate::{Auth, Command, Config, ConnState, Core, Event, NetworkInfo, invite};
+use crate::{Auth, Command, Config, ConnState, Core, Event, NetCommand, NetworkInfo, invite};
 
 #[derive(Clone)]
 pub struct Sink {
@@ -59,6 +59,8 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         save_password: false,
         db_path,
         secrets: cfg.secrets.clone(),
+        media: cfg.media.clone(),
+        session: None,
     };
 
     let mut nets: HashMap<String, mpsc::UnboundedSender<ToNet>> = HashMap::new();
@@ -157,6 +159,12 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                 }
             }
             Command::Net { network, cmd } => {
+                // One call at a time, across every network.
+                if matches!(cmd, NetCommand::JoinVoice { .. }) {
+                    for (_, tx) in nets.iter().filter(|(n, _)| **n != network) {
+                        let _ = tx.send(ToNet::Cmd(NetCommand::LeaveVoice));
+                    }
+                }
                 if let Some(tx) = nets.get(&network) {
                     let _ = tx.send(ToNet::Cmd(cmd));
                 }

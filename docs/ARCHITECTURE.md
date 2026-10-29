@@ -54,15 +54,18 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
   Always-on is the default (`accounts.multiclient.always-on: opt-out`, D11). The client logs in as `account@<device>`, treats the server's channel list as authoritative, and fills gaps with `CHATHISTORY AFTER` and `TARGETS`.
 - Credentials are stored per network in the OS secret store.
 - **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs.
-- **chadd session:** the client POSTs the account and password to `chadd /api/login`. chadd checks them against ergo's HTTP API and returns a short-lived signed session token.
-  Endpoint to verify in Phase 0: the old Go chadd called `/v1/account_details`, but `/v1/check_auth` is the likely right one.
+- **chadd session (D18):** the client POSTs the account and password to `chadd /api/login`. chadd checks them with ergo's `/v1/check_auth` and returns a 1 h signed session token.
+  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it only allows publishing the microphone.
+  Request and response types live in `chad_proto::chadd`.
 
 ## Client crates
 
 ```
 chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──▶ ergo
-        ▲                            │    └────▶ chad-e2ee
-        └───────events / snapshots───┘    └────▶ chad-media ──▶ livekit
+   │    ▲                            │ │  └────▶ chad-e2ee
+   │    └───────events / snapshots───┘ └─ Media trait (D17)
+   │                                          ▲ implemented by
+   └──▶ chad-media ──▶ livekit ───────────────┘ chad-desktop's voice::Glue
 ```
 
 - `chad-core` owns all state: networks, buffers, members, unread markers, voice state.
@@ -75,7 +78,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
   The capabilities we request are listed once, in `chad_irc::cap::WANTED`.
   It's fuzzed and unit-tested against real ergo transcripts.
   It treats the server as hostile input (D14), so every buffer the server can grow is bounded.
-- `chad-media` owns the LiveKit `Room`, the PipeWire/WASAPI audio graph, the APM (AEC/NS/AGC), capture backends and decoded video frames.
+- `chad-media` (`Voice`) owns the LiveKit `Room`, the PipeWire/WASAPI audio graph, the APM (AEC/NS/AGC), capture backends and decoded video frames.
   Video goes to the UI as GPU textures, using I420 → RGB in a wgpu shader rather than a CPU conversion.
 - Persistence is a SQLite cache (`rusqlite`) per network for scrollback and read state. History of record lives on ergo (`draft/chathistory`).
   Decrypted E2EE plaintext is the exception and lives only locally (see Phase 4).
@@ -86,8 +89,8 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 |---|---|
 | "Server" in the sidebar rail | Network (one origin) |
 | Text channel | IRC channel. Auto-join everything in `LIST` on first login, and after that always-on keeps it. |
-| Voice room | Every channel has one, named `<casefolded channel>`. Ops disable it by setting channel metadata `chad/voice=off`. |
-| Who's in voice | User metadata `chad/voice=<#channel>`, set by the client. ergo clears it on disconnect. LiveKit is the authority once you're inside a room. |
+| Voice room | Every channel has one, named `<casefolded channel>`. Ops disable it by setting channel metadata `chad/voice=off`, which the client enforces (D19). |
+| Who's in voice | User metadata `chad/voice=<#channel>`, set by the client and cleared on leave, media loss and app exit. ergo keeps it for disconnected always-on users, so the client also clears a stale value on reconnect (D16). Clients `METADATA * SUB chad/voice` before `CAP END` and `SYNC` each channel they join. LiveKit is the authority once you're inside a room. |
 | Display name / avatar | Metadata `display-name`, `avatar` (de-facto keys) |
 | Typing | `+typing` |
 | Replies / reactions | `+draft/reply`, `+draft/react` |
@@ -118,13 +121,16 @@ Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query
 | Fallback fonts (CJK, emoji) | eframe `system_fonts` (fontique → fontconfig), on demand | same |
 | Idle → away | `ext-idle-notify-v1` | XScreenSaver extension |
 
-Windows equivalents: WGC capture, WASAPI (process loopback for app audio), `RegisterHotKey` / raw input for PTT, toast notifications, Credential Manager, and a named pipe for single instance.
+Windows equivalents: WGC capture, WASAPI (process loopback for app audio), `GetAsyncKeyState` polling for PTT (raw input later), toast notifications, Credential Manager, and a named pipe for single instance.
 
 ## Media
 
 - One LiveKit room per voice channel. The participant identity is the ergo account name, and the token comes from chadd.
-- Voice is Opus with DTX and RED. AEC, NS and AGC come from libwebrtc's APM, fed with our own playback mix as the far-end reference.
+- Voice is Opus with DTX and RED, with a bitrate setting (default 64 kbps). AEC, NS and AGC come from libwebrtc's APM, fed with our own playback mix as the far-end reference.
   Optional RNNoise (`nnnoiseless`) runs before the APM.
+- Audio path: the backend (PipeWire streams `irchad-mic` / `irchad-voice` with role Communication on Linux, cpal elsewhere) moves 10 ms frames through lock-free rings.
+  A DSP thread runs RNNoise → APM → VAD/PTT gate → `NativeAudioSource`. Each remote track decodes into its own ring, and the playback callback mixes them with per-user volume.
+  Device choice is a PipeWire `target.object`. Without one, WirePlumber follows the default and handles unplug.
 - Screen share uses a single layer with no simulcast. Codec preference:
   - H.264 via VAAPI on AMD/Intel.
   - AV1 or H.265 via NVENC on Nvidia.

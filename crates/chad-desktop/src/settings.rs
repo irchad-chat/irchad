@@ -1,7 +1,12 @@
 //! User preferences, persisted by eframe's storage (per user).
 
+use std::collections::HashMap;
+
+use chad_media::AudioSettings;
 use egui::{FontId, ThemePreference};
 use serde::{Deserialize, Serialize};
+
+use crate::platform::ptt::PttBind;
 
 pub const KEY: &str = "settings";
 
@@ -11,6 +16,10 @@ pub struct Settings {
     pub theme: ThemePreference,
     pub font_size: f32,
     pub notify: Notify,
+    pub audio: AudioSettings,
+    pub ptt: PttBind,
+    /// Voice volume per account, 0.0..=2.0.
+    pub volumes: HashMap<String, f32>,
 }
 
 impl Default for Settings {
@@ -19,6 +28,9 @@ impl Default for Settings {
             theme: ThemePreference::Dark,
             font_size: 14.0,
             notify: Notify::MentionsAndDms,
+            audio: AudioSettings::default(),
+            ptt: PttBind::default(),
+            volumes: HashMap::new(),
         }
     }
 }

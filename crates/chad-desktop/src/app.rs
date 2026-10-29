@@ -1,7 +1,7 @@
 //! The window: projects core events into a view model and draws it.
 //!
-//! Layout, left to right: network rail, channel list, chat (topic, log,
-//! composer), member list.
+//! Layout, left to right: network rail, channel list (with the voice panel at
+//! its foot during a call), chat (topic, log, composer), member list.
 
 use std::collections::HashSet;
 use std::sync::mpsc;
@@ -9,8 +9,9 @@ use std::time::{Duration, Instant};
 
 use chad_core::{
     Auth, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, Event, Member, NetCommand,
-    NetworkInfo, SendStatus, Typing, invite,
+    NetworkInfo, SendStatus, Typing, VoiceState, invite,
 };
+use chad_media::{InputMode, Voice};
 use egui::{
     Align2, Color32, CornerRadius, FontId, Key, KeyboardShortcut, Modifiers, RichText, Sense,
     TextureHandle, vec2,
@@ -20,8 +21,10 @@ use url::Url;
 
 use crate::chatlog::{self, Action, ChatLog};
 use crate::format;
+use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
 use crate::settings::{self, Notify, Settings};
+use crate::voice;
 
 const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -50,6 +53,12 @@ pub struct App {
     adding: Option<(BufferKind, String)>,
     toasts: Vec<(String, Instant)>,
     last_badge: (bool, u32),
+    voice: Voice,
+    /// Our call: (network, state). One at a time across networks.
+    call: Option<(String, VoiceState)>,
+    /// Listening for push-to-talk, while that's the input mode.
+    ptt: Option<Ptt>,
+    binding_ptt: bool,
 }
 
 struct Network {
@@ -82,6 +91,8 @@ struct Buffer {
     reply: Option<(String, String)>,
     /// A message to scroll to once `LoadAround` brings it in.
     jump: Option<String>,
+    /// Who's in the channel's voice room (metadata).
+    voice: Vec<String>,
 }
 
 #[derive(Default)]
@@ -170,12 +181,17 @@ impl App {
         os: mpsc::Receiver<Os>,
         tray: Tray,
         open: Option<String>,
+        voice: Voice,
     ) -> Self {
         let settings: Settings = cc
             .storage
             .and_then(|s| eframe::get_value(s, settings::KEY))
             .unwrap_or_default();
         settings.apply(&cc.egui_ctx);
+        voice.set_settings(settings.audio.clone());
+        for (id, v) in &settings.volumes {
+            voice.set_volume(id, *v);
+        }
         let mut app = Self {
             core,
             events,
@@ -194,11 +210,26 @@ impl App {
             adding: None,
             toasts: Vec::new(),
             last_badge: (false, 0),
+            voice,
+            call: None,
+            ptt: None,
+            binding_ptt: false,
         };
+        app.restart_ptt(&cc.egui_ctx);
         if let Some(url) = open {
             app.open_invite(&url);
         }
         app
+    }
+
+    /// (Re)starts the global push-to-talk listener for the current bind.
+    fn restart_ptt(&mut self, ctx: &egui::Context) {
+        self.ptt = None;
+        if self.settings.audio.mode == InputMode::PushToTalk {
+            let ctx = ctx.clone();
+            let wake = move || ctx.request_repaint();
+            self.ptt = Some(Ptt::start(self.voice.clone(), self.settings.ptt, wake));
+        }
     }
 
     fn net_idx(&self, origin: &str) -> Option<usize> {
@@ -340,6 +371,7 @@ impl App {
                             draft: String::new(),
                             reply: None,
                             jump: None,
+                            voice: Vec::new(),
                         });
                         n.buffers.sort_by(|a, b| {
                             (a.info.kind == BufferKind::Dm, &a.key)
@@ -431,6 +463,22 @@ impl App {
                     }
                 }
             }
+            Event::Voice { network, state } => {
+                if state != VoiceState::Idle {
+                    self.call = Some((network, state));
+                } else if self.call.as_ref().is_some_and(|(n, _)| *n == network) {
+                    self.call = None;
+                }
+            }
+            Event::VoiceMembers {
+                network,
+                channel,
+                nicks,
+            } => {
+                if let Some(b) = self.buffer_mut(&network, &channel) {
+                    b.voice = nicks;
+                }
+            }
             Event::Error { network, error } => {
                 let name = self
                     .net_idx(&network)
@@ -461,6 +509,12 @@ impl App {
                 }
                 Os::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             }
+        }
+        // No global shortcut: push-to-talk follows the key while we're focused.
+        if let Some(p) = self.ptt.as_ref().filter(|p| p.focused_only()) {
+            let bind = p.bind;
+            self.voice
+                .set_ptt(ctx.input(|i| i.focused && bind.down(i)) && !self.binding_ptt);
         }
         while let Ok((origin, img)) = self.icons.1.try_recv() {
             if let Some(i) = self.net_idx(&origin) {
@@ -581,6 +635,19 @@ impl App {
 
     fn channels(&mut self, ui: &mut egui::Ui, ni: usize) {
         let network = self.nets[ni].info.network.clone();
+        if let Some((net, state)) = self.call.clone() {
+            let name = self
+                .net_idx(&net)
+                .map_or(net.clone(), |i| self.nets[i].info.name.clone());
+            let action = egui::Panel::bottom("voice-panel")
+                .show(ui, |ui| {
+                    voice::panel(ui, &self.voice, &state, &name, self.ptt.as_ref())
+                })
+                .inner;
+            if let Some(voice::PanelAction::Leave) = action {
+                self.send(&net, NetCommand::LeaveVoice);
+            }
+        }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.heading(&self.nets[ni].info.name);
@@ -627,6 +694,7 @@ impl App {
         let mut pick = None;
         let mut part = None;
         let mut close = None;
+        let mut join_voice = None;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
@@ -691,8 +759,27 @@ impl App {
                                 b.info.mentions,
                             );
                         }
+                        let in_call = matches!(
+                            &self.call,
+                            Some((net, VoiceState::Connecting { channel } | VoiceState::Connected { channel }))
+                                if *net == network && key(channel) == b.key
+                        );
+                        if b.info.voice && !in_call {
+                            let right = if b.info.mentions > 0 { 34.0 } else { 14.0 };
+                            let at = egui::Rect::from_center_size(
+                                resp.rect.right_center() - vec2(right, 0.0),
+                                vec2(20.0, 20.0),
+                            );
+                            let join = egui::Button::new(RichText::new("🔊").small()).frame(false);
+                            if ui.put(at, join).on_hover_text("Join voice").clicked() {
+                                join_voice = Some(b.info.target.clone());
+                            }
+                        }
                         resp.context_menu(|ui| match kind {
                             BufferKind::Channel => {
+                                if b.info.voice && !in_call && ui.button("Join voice").clicked() {
+                                    join_voice = Some(b.info.target.clone());
+                                }
                                 if ui.button("Leave channel").clicked() {
                                     part = Some(b.info.target.clone());
                                 }
@@ -705,6 +792,17 @@ impl App {
                         });
                         if resp.clicked() {
                             pick = Some(b.key.clone());
+                        }
+                        let live = in_call
+                            && matches!(&self.call, Some((_, VoiceState::Connected { .. })));
+                        if live || !b.voice.is_empty() {
+                            voice::members(
+                                ui,
+                                &self.voice,
+                                live,
+                                &b.voice,
+                                &mut self.settings.volumes,
+                            );
                         }
                     }
                     if let Some((k, text)) = &mut self.adding
@@ -756,6 +854,9 @@ impl App {
         }
         if let Some(nick) = close {
             self.send(&network, NetCommand::CloseDm { nick });
+        }
+        if let Some(channel) = join_voice {
+            self.send(&network, NetCommand::JoinVoice { channel });
         }
     }
 
@@ -1193,7 +1294,26 @@ impl App {
                 if self.settings.ui(ui) {
                     self.settings.apply(ctx);
                 }
+                let ptt = (self.settings.audio.mode, self.settings.ptt);
+                if voice::settings(
+                    ui,
+                    &mut self.settings,
+                    &self.voice,
+                    self.ptt.as_ref(),
+                    &mut self.binding_ptt,
+                ) {
+                    self.voice.set_settings(self.settings.audio.clone());
+                    if (self.settings.audio.mode, self.settings.ptt) != ptt {
+                        self.restart_ptt(ctx);
+                    }
+                }
             });
+        if !open {
+            self.binding_ptt = false;
+            if self.voice.testing() {
+                self.voice.set_testing(false);
+            }
+        }
         self.show_settings = open;
 
         self.toasts.retain(|(_, t)| t.elapsed() < TOAST_TTL);

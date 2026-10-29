@@ -5,6 +5,7 @@
 //! Networks are keyed by origin (`https://chat.example.com`); buffers by name
 //! as the server spells it, compared under the network's casemapping.
 
+mod chadd;
 mod conn;
 mod discovery;
 pub mod invite;
@@ -30,6 +31,23 @@ pub struct Config {
     pub secrets: Arc<dyn secrets::SecretStore>,
     /// Called after every event, e.g. `ctx.request_repaint()`.
     pub notify: Arc<dyn Fn() + Send + Sync>,
+    /// Voice calls; `None` turns voice off.
+    pub media: Option<Arc<dyn Media>>,
+}
+
+/// Whatever plays voice calls (`chad-media` on desktop). The core decides when
+/// to join and leave; this only connects.
+pub trait Media: Send + Sync {
+    /// Joins a LiveKit room, leaving any other. Report on the returned channel;
+    /// when the core drops its end, hang up.
+    fn join(&self, url: String, token: String) -> mpsc::UnboundedReceiver<MediaEvent>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MediaEvent {
+    Connected,
+    /// The call is over by itself: `Some(reason)` if something went wrong.
+    Ended(Option<String>),
 }
 
 /// Handle to a running core. Dropping it shuts the core down.
@@ -140,6 +158,11 @@ pub enum NetCommand {
     CloseDm {
         nick: String,
     },
+    /// Join a channel's voice room, leaving any other (on any network).
+    JoinVoice {
+        channel: String,
+    },
+    LeaveVoice,
     /// The code from the sign-up email.
     Verify {
         code: String,
@@ -202,6 +225,18 @@ pub enum Event {
         nick: String,
         state: Typing,
     },
+    /// Our own voice call on this network.
+    Voice {
+        network: String,
+        state: VoiceState,
+    },
+    /// Who's in a channel's voice room, per `chad/voice` metadata. Inside the
+    /// room, the call's own participant list is the better source.
+    VoiceMembers {
+        network: String,
+        channel: String,
+        nicks: Vec<String>,
+    },
     /// Something went wrong, in words a user understands.
     Error {
         network: String,
@@ -246,6 +281,15 @@ pub struct BufferInfo {
     /// DMs: whether the other side is connected (MONITOR), and away.
     pub online: Option<bool>,
     pub away: bool,
+    /// Channels: ops can turn voice off with metadata `chad/voice=off`.
+    pub voice: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VoiceState {
+    Idle,
+    Connecting { channel: String },
+    Connected { channel: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

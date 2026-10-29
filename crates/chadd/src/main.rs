@@ -3,6 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::Context;
 use tracing_subscriber::EnvFilter;
 
+mod api;
 mod config;
 mod routes;
 

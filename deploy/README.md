@@ -13,7 +13,7 @@ curl -k https://chat.localhost:8443/.well-known/irchad.json
 | Origin | `https://chat.localhost:8443` (`IRCHAD_HTTPS_PORT`, `IRCHAD_HOST` in `deploy/.env`; see `.env.example`) |
 | Invite page | `https://chat.localhost:8443/invite` |
 | Raw IRC (debugging) | `127.0.0.1:6667`, plaintext |
-| Second network | `https://chat2.localhost:8443` (`IRCHAD_HOST2`): its own ergo (`ChadDev2`, raw IRC `127.0.0.1:6668`) and chadd, sharing Caddy (same CA root) and LiveKit. Seed with `python3 deploy/seed.py --port 6668` |
+| Second network | `https://chat2.localhost:8443` (`IRCHAD_HOST2`): its own ergo (`ChadDev2`, raw IRC `127.0.0.1:6668`) and chadd, sharing Caddy (same CA root) and LiveKit (so `#dev` on both networks is the same voice room). Seed with `python3 deploy/seed.py --port 6668` |
 | Accounts | `alice` / `alicepass`, `bob` / `bobpass` |
 | Channels | `#general`, `#random`, `#dev` (registered to alice) |
 | ergo oper | `admin` / `chadadmin` |
@@ -31,7 +31,7 @@ Caddy's internal CA root is in the `caddy-data` volume (`/data/caddy/pki/authori
   To move to a new ergo version, run `tools/patch-ergo-default.py` against the new `default.yaml`. It fails loudly if upstream changed under a patch.
 - `livekit.yaml`: LiveKit dev config. Production TURN settings are in the comments.
 - `Caddyfile`: routing per `docs/ARCHITECTURE.md`.
-- `chadd.toml`: chadd config. compose sets `CHADD_ORIGIN` to match the published host and port.
+- `chadd.toml`: chadd config. compose sets `CHADD_ORIGIN` to match the published host and port. `[ergo]` holds the API URL and bearer token (must match `ergo.yaml`), and `[livekit]` holds the key and secret (must match `livekit.yaml`).
 - `tools/ergo-probe.py`: the Phase 0 capability probe (see `docs/notes/ergo-caps.md`).
 
 Port 443 needs `sysctl net.ipv4.ip_unprivileged_port_start=443` for rootless containers. Then set `IRCHAD_HTTPS_PORT=443`.
