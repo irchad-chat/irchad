@@ -5,7 +5,7 @@
 ```
                  https://chat.example.com  (Caddy, :443, auto TLS)
                  ├── /.well-known/irchad.json  → chadd   discovery
-                 ├── /invite/*                 → chadd   invite landing page
+                 ├── / and /invite/*           → chadd   landing page
                  ├── /api/*                    → chadd   auth, LiveKit tokens, (later) uploads
                  ├── /irc                      → ergo    IRC over WebSocket
                  └── /livekit                  → livekit signalling (media: UDP direct / TURN)
@@ -23,7 +23,7 @@ A network is one origin. Everything about it comes from the discovery document, 
 The whole point of chadd is that a single URL gets a user onto someone else's network.
 
 - **The invite URL** is `https://chat.example.com/invite[/<code>]`.
-  Opening it in a browser gives a chadd-served landing page with an "Open in IrChad" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download link.
+  Opening it (or the bare origin) in a browser gives a chadd-served landing page with a "Click to Join" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download button for the visitor's OS, picked from the User-Agent (chadd's `downloads`, defaulting to the nightly release).
 - **Pasting** either form into the client's "Join a network" box works the same.
   A bare `chat.example.com` also works, defaulting to https.
 - **Scheme handler:** on Linux it's `x-scheme-handler/irchad` in the `.desktop` file, and on Windows it's a registry key.

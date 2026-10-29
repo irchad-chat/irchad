@@ -18,8 +18,10 @@ pub struct Config {
     pub icon: Option<Url>,
     #[serde(default = "default_registration")]
     pub registration: Registration,
-    /// Where users download the client, shown on the invite page.
-    pub download_url: Option<Url>,
+    /// Where the landing page links client builds: `<downloads>/<asset>`,
+    /// asset names as in `.gitea/workflows/nightly.yml`.
+    #[serde(default = "default_downloads")]
+    pub downloads: Url,
     #[serde(default)]
     pub endpoints: Endpoints,
     pub ergo: Ergo,
@@ -55,6 +57,11 @@ pub struct Endpoints {
 
 fn default_listen() -> SocketAddr {
     ([0, 0, 0, 0], 8080).into()
+}
+
+fn default_downloads() -> Url {
+    Url::parse("https://git.gentoo.party/sam/irchad-ng/releases/download/nightly/")
+        .expect("static URL")
 }
 
 fn default_registration() -> Registration {
