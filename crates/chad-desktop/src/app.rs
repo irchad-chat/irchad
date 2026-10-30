@@ -8,8 +8,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chad_core::{
-    Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, Event, Member,
-    NetCommand, NetworkInfo, SendStatus, Typing, VoiceState, invite,
+    Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, DeviceInfo,
+    Encryption, Event, Member, NetCommand, NetworkInfo, SendStatus, Typing, VerifyState,
+    VerifyStep, VoiceState, invite,
 };
 use chad_media::{InputMode, Voice};
 use egui::{
@@ -72,6 +73,8 @@ pub struct App {
     picker: Option<Picker>,
     switcher: Option<Switcher>,
     profile: Option<ProfileDialog>,
+    /// The emoji verification on screen: (network, nick, where it stands).
+    verify: Option<(String, String, VerifyState)>,
     files: (mpsc::Sender<Picked>, mpsc::Receiver<Picked>),
     idle: Idle,
     /// Whether the networks were last told we're away.
@@ -120,6 +123,8 @@ struct Network {
     icon: Icon,
     /// By `key(nick)`.
     profiles: HashMap<String, Profile>,
+    /// Encrypted-DM devices, by `key(nick)`.
+    devices: HashMap<String, Vec<DeviceInfo>>,
     media: Media,
 }
 
@@ -279,6 +284,7 @@ impl App {
             picker: None,
             switcher: None,
             profile: None,
+            verify: None,
             files: mpsc::channel(),
             idle: Idle::start({
                 let ctx = cc.egui_ctx.clone();
@@ -454,6 +460,7 @@ impl App {
                             focus: false,
                             icon: Icon::None,
                             profiles: HashMap::new(),
+                            devices: HashMap::new(),
                             media: Media::default(),
                         });
                     }
@@ -699,6 +706,37 @@ impl App {
                         avatar,
                     };
                     self.nets[i].profiles.insert(key(&nick), p);
+                }
+            }
+            Event::Devices {
+                network,
+                nick,
+                devices,
+            } => {
+                if let Some(i) = self.net_idx(&network) {
+                    self.nets[i].devices.insert(key(&nick), devices);
+                }
+            }
+            Event::Verification {
+                network,
+                nick,
+                state,
+            } => {
+                // A request from someone else waits behind the one on screen.
+                let busy = self.verify.as_ref().is_some_and(|(n, k, s)| {
+                    (*n != network || key(k) != key(&nick))
+                        && !matches!(s, VerifyState::Done | VerifyState::Failed(_))
+                });
+                if !busy {
+                    self.verify = Some((network, nick, state));
+                } else if state == VerifyState::Incoming {
+                    self.send(
+                        &network,
+                        NetCommand::Verification {
+                            nick,
+                            step: VerifyStep::Cancel,
+                        },
+                    );
                 }
             }
             Event::Preview {
@@ -1015,6 +1053,7 @@ impl App {
                     network: network.clone(),
                     name,
                 });
+                self.send(&network, NetCommand::Devices { nick: own.clone() });
                 ui.close();
             }
         })
@@ -1264,7 +1303,8 @@ impl App {
         let uploads = self.nets[ni].info.uploads.is_some();
         let auto_media = self.settings.load_media;
         let n = &mut self.nets[ni];
-        let (b, profiles, media) = (&mut n.buffers[bi], &n.profiles, &mut n.media);
+        let (b, profiles, media, devices) =
+            (&mut n.buffers[bi], &n.profiles, &mut n.media, &n.devices);
         let focus = std::mem::take(&mut n.focus);
         let target = b.info.target.clone();
         // Set inside the panels, acted on once `b` is free again.
@@ -1291,6 +1331,34 @@ impl App {
                         (None, _) => "",
                     };
                     ui.label(RichText::new(status).weak());
+                    let lock = match b.info.encryption {
+                        Encryption::Unknown => None,
+                        Encryption::Off => Some((icons::LOCK_OPEN, "Not encrypted", OFF_TIP)),
+                        Encryption::On => Some((icons::LOCK, "Encrypted", ON_TIP)),
+                        Encryption::Verified => {
+                            Some((icons::SHIELD_CHECK, "Verified", VERIFIED_TIP))
+                        }
+                        Encryption::Changed => Some((icons::WARNING, "Keys changed", CHANGED_TIP)),
+                    };
+                    if let Some((icon, text, tip)) = lock {
+                        ui.separator();
+                        ui.label(RichText::new(format!("{icon} {text}")).weak())
+                            .on_hover_ui(|ui| {
+                                ui.label(tip);
+                                for d in devices.get(&b.key).into_iter().flatten() {
+                                    device_row(ui, d);
+                                }
+                            });
+                    }
+                    if connected
+                        && matches!(b.info.encryption, Encryption::On | Encryption::Changed)
+                        && ui.small_button("Verify…").clicked()
+                    {
+                        send(NetCommand::Verification {
+                            nick: target.clone(),
+                            step: VerifyStep::Start,
+                        });
+                    }
                 }
                 let topic = format::strip(&b.info.topic);
                 if !topic.is_empty() {
@@ -1299,6 +1367,22 @@ impl App {
                         .on_hover_text(&topic);
                 }
             });
+            if b.info.encryption == Encryption::Changed {
+                ui.horizontal_wrapped(|ui| {
+                    let warn = format!(
+                        "{} {target}'s encryption keys changed. That's normal after they \
+                         reinstall, but it can also mean someone is listening in. Verify \
+                         to be sure.",
+                        icons::WARNING
+                    );
+                    ui.label(RichText::new(warn).color(ui.visuals().warn_fg_color));
+                    if ui.button("Accept the new keys").clicked() {
+                        send(NetCommand::AcceptKeys {
+                            nick: target.clone(),
+                        });
+                    }
+                });
+            }
         });
 
         egui::Panel::bottom("composer").show(ui, |ui| {
@@ -1440,6 +1524,7 @@ impl App {
                 media,
                 network: &network,
                 auto_media,
+                dm: b.info.kind == BufferKind::Dm,
             };
             let out = b
                 .log
@@ -1784,6 +1869,9 @@ impl App {
             let modal = egui::Modal::new(egui::Id::unique("remove")).show(ctx, |ui| {
                 ui.heading(format!("Leave {name}?"));
                 ui.label("IrChad forgets this network and your saved password for it.");
+                ui.label(
+                    "This device's encryption keys go too, so it can't read encrypted DMs again.",
+                );
                 ui.label("Your account stays, so you can join again later.");
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -1841,6 +1929,7 @@ impl App {
         self.picker_ui(ctx);
         self.switcher_ui(ctx);
         self.profile_ui(ctx);
+        self.verify_ui(ctx);
         if let Some((version, url)) = self.new_version.clone() {
             let mut close = false;
             egui::Area::new(egui::Id::unique("update"))
@@ -2046,6 +2135,15 @@ impl App {
                     .small()
                     .weak(),
             );
+            if let Some(devices) = n.devices.get(&key(&own)).filter(|d| !d.is_empty()) {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(format!("{} Devices with encrypted DMs", icons::LOCK)).strong(),
+                );
+                for d in devices {
+                    device_row(ui, d);
+                }
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 close = ui.button("Cancel").clicked();
@@ -2075,6 +2173,111 @@ impl App {
         }
         if save || close || modal.should_close() {
             self.profile = None;
+        }
+    }
+}
+
+const OFF_TIP: &str = "They don't use IrChad here, so your messages aren't end-to-end encrypted.";
+const ON_TIP: &str = "End-to-end encrypted: only your devices and theirs can read it. Verify to make sure nobody is in the middle.";
+const VERIFIED_TIP: &str = "End-to-end encrypted, and you compared emoji with them.";
+const CHANGED_TIP: &str = "One of their devices has a new key since you last talked.";
+
+/// One encrypted-DM device: its name, whether it's verified, and its fingerprint.
+fn device_row(ui: &mut egui::Ui, d: &DeviceInfo) {
+    ui.horizontal(|ui| {
+        let name = if d.this { "This device" } else { d.id.as_str() };
+        ui.label(name);
+        if d.verified {
+            ui.label(icons::SHIELD_CHECK).on_hover_text("Verified");
+        }
+    });
+    ui.label(RichText::new(&d.fingerprint).monospace().small().weak());
+}
+
+impl App {
+    /// Comparing emoji with someone (SAS), one person at a time.
+    fn verify_ui(&mut self, ctx: &egui::Context) {
+        let Some((network, nick, state)) = self.verify.clone() else {
+            return;
+        };
+        let (mut step, mut close) = (None, false);
+        let modal = egui::Modal::new(egui::Id::unique("verify")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.heading(format!("Verify {nick}"));
+            ui.add_space(8.0);
+            match &state {
+                VerifyState::Incoming => {
+                    ui.label(format!(
+                        "{nick} wants to make sure your messages to each other are private, \
+                         by comparing emoji."
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("Not now").clicked() {
+                            step = Some(VerifyStep::Cancel);
+                        }
+                        if ui.button("Start").clicked() {
+                            step = Some(VerifyStep::Accept);
+                        }
+                    });
+                }
+                VerifyState::Waiting => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(format!("Waiting for {nick}…"));
+                    });
+                    if ui.button("Cancel").clicked() {
+                        step = Some(VerifyStep::Cancel);
+                    }
+                }
+                VerifyState::Compare(emoji) => {
+                    ui.label(format!(
+                        "Check that {nick} sees the same emoji, in the same order. Compare \
+                         them in person or on a call, not by message."
+                    ));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        for (e, name) in emoji {
+                            ui.allocate_ui(vec2(48.0, 64.0), |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new(*e).size(28.0));
+                                    ui.label(RichText::new(*name).small());
+                                });
+                            });
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("They don't match").clicked() {
+                            step = Some(VerifyStep::Cancel);
+                        }
+                        if ui.button("They match").clicked() {
+                            step = Some(VerifyStep::Match);
+                        }
+                    });
+                }
+                VerifyState::Done => {
+                    ui.label(format!(
+                        "{} {nick}'s device is verified. Nobody is listening in.",
+                        icons::SHIELD_CHECK
+                    ));
+                    close = ui.button("Done").clicked();
+                }
+                VerifyState::Failed(why) => {
+                    ui.label(why);
+                    close = ui.button("Close").clicked();
+                }
+            }
+        });
+        let finished = matches!(state, VerifyState::Done | VerifyState::Failed(_));
+        if !finished && step.is_none() && modal.should_close() {
+            step = Some(VerifyStep::Cancel);
+        }
+        if let Some(step) = step {
+            let nick = nick.clone();
+            self.send(&network, NetCommand::Verification { nick, step });
+        }
+        if close || (finished && modal.should_close()) {
+            self.verify = None;
         }
     }
 }

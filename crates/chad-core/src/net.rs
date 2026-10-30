@@ -13,9 +13,12 @@ use chad_irc::label::Labels;
 
 use crate::store::{Store, StoredBuffer};
 use crate::{
-    BufferInfo, BufferKind, ChatMessage, ConnState, Event, Member, MessageKind, NetCommand,
+    BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind, NetCommand,
     NetworkInfo, SendStatus, Typing, VoiceState, time,
 };
+
+mod e2e;
+pub use e2e::{DEVICES_KEY, E2e};
 use url::Url;
 
 /// Messages per CHATHISTORY request (ergo allows 1000).
@@ -41,12 +44,27 @@ const MAX_DISPLAY_NAME: usize = 64;
 
 #[derive(Debug)]
 enum Pending {
-    Send { target: String, local: ChatMessage },
-    History { target: String, kind: Hist },
+    /// `rest`: the other devices' copies of an encrypted DM, sent once the first
+    /// one's echo gives them a msgid to share.
+    Send {
+        target: String,
+        local: Box<ChatMessage>,
+        rest: Vec<Message>,
+    },
+    /// Someone's metadata, for their E2EE devices.
+    Devices {
+        nick: String,
+    },
+    History {
+        target: String,
+        kind: Hist,
+    },
     Targets,
     Sync,
     List,
-    Who { channel: String },
+    Who {
+        channel: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +132,8 @@ pub struct Net {
     profiles: HashMap<String, Profile>,
     /// Our away message, sent again after every reconnect.
     away: Option<String>,
+    /// Encrypted DMs; `None` for guests, or without a keyring.
+    pub e2e: Option<E2e>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -151,6 +171,7 @@ impl Net {
             voice_of: HashMap::new(),
             profiles: HashMap::new(),
             away: None,
+            e2e: None,
         }
     }
 
@@ -230,10 +251,14 @@ impl Net {
         self.batches.clear();
         self.typing_sent.clear();
         self.out.clear();
+        self.e2e_detach();
         for pending in self.labels.clear() {
-            if let Pending::Send { target, mut local } = pending {
+            if let Pending::Send {
+                target, mut local, ..
+            } = pending
+            {
                 local.status = SendStatus::Failed("Not sent: the connection dropped.".into());
-                self.emit_messages(&target, vec![local]);
+                self.emit_messages(&target, vec![*local]);
             }
         }
         for b in self.buffers.values_mut() {
@@ -391,6 +416,13 @@ impl Net {
                     self.who_wanted.insert(key);
                 }
             }
+            NetCommand::Devices { nick } => self.fetch_devices(&nick),
+            NetCommand::Verification { nick, step } => self.verification(&nick, step),
+            NetCommand::AcceptKeys { nick } => {
+                let key = self.fold(&nick);
+                self.store.trust(&key, None);
+                self.emit_buffer(&key);
+            }
             NetCommand::JoinChannel { channel } => self.out.push(Message::new("JOIN", [channel])),
             NetCommand::Part { channel } => self.out.push(Message::new("PART", [channel])),
             NetCommand::OpenDm { .. } => {}
@@ -407,8 +439,18 @@ impl Net {
         if text.trim().is_empty() {
             return;
         }
+        // An encrypted message has to fit in one tag; longer ones go as several.
+        if text.len() > chad_e2ee::MAX_PLAINTEXT
+            && !self.is_channel(target)
+            && self.may_encrypt(target)
+        {
+            let piece = truncate(text, chad_e2ee::MAX_PLAINTEXT);
+            let cut = piece.rfind('\n').filter(|&i| i > 0).unwrap_or(piece.len());
+            self.send_text(target, &text[..cut], reply_to.clone());
+            return self.send_text(target, &text[cut..], reply_to);
+        }
         self.next_local += 1;
-        let mut local = ChatMessage {
+        let local = ChatMessage {
             msgid: None,
             local_id: Some(self.next_local),
             time: time::now_ms(),
@@ -422,8 +464,18 @@ impl Net {
             reactions: Vec::new(),
             mention: false,
             own: true,
+            crypt: Crypt::Plain,
         };
-        let pieces = split(text);
+        if self.connected && !self.is_channel(target) && self.e2e.is_some() {
+            self.send_dm(target, local);
+        } else {
+            self.send_plain(target, local);
+        }
+    }
+
+    fn send_plain(&mut self, target: &str, mut local: ChatMessage) {
+        let (text, reply_to) = (local.text.clone(), local.reply_to.clone());
+        let pieces = split(&text);
         let limits = self.caps.enabled("draft/multiline").then(|| {
             let v = self.caps.value("draft/multiline").unwrap_or_default();
             let get = |k: &str| {
@@ -454,7 +506,8 @@ impl Net {
 
         let token = Pending::Send {
             target: target.to_owned(),
-            local,
+            local: Box::new(local),
+            rest: Vec::new(),
         };
         let reply = |m: Message| match &reply_to {
             Some(id) => m.with_tag("+draft/reply", id.as_str()),
@@ -532,7 +585,7 @@ impl Net {
         match item {
             Item::Message(m) => self.message(m),
             Item::Batch(b) if b.kind() == "draft/multiline" => {
-                if let Some((target, msg)) = self.chat(&Item::Batch(b)) {
+                if let Some((target, msg)) = self.chat_in(&Item::Batch(b)) {
                     self.live(&target, msg);
                 }
             }
@@ -555,22 +608,41 @@ impl Net {
             other => vec![other],
         };
         match token {
-            Pending::Send { target, mut local } => {
+            Pending::Send {
+                target,
+                mut local,
+                rest,
+            } => {
                 let echo = items.iter().find_map(|i| self.chat(i));
+                if echo.is_some() || items.iter().all(|i| failure(i).is_none()) {
+                    // The other devices' copies share the first one's msgid.
+                    let id = echo.as_ref().and_then(|(_, m)| m.msgid.clone());
+                    for m in rest {
+                        self.out.push(match &id {
+                            Some(id) => m.with_tag("+chad/e2e-id", id.as_str()),
+                            None => m,
+                        });
+                    }
+                }
                 match (echo, items.iter().find_map(failure)) {
                     (Some((_, mut msg)), _) => {
                         msg.local_id = local.local_id;
+                        if local.crypt == Crypt::Encrypted {
+                            // The echo is the ciphertext for another device.
+                            msg.text = local.text.clone();
+                            msg.crypt = Crypt::Encrypted;
+                        }
                         let key = self.fold(&target);
                         self.store.insert(&key, &msg);
                         self.emit_messages(&target, vec![msg]);
                     }
                     (None, Some(error)) => {
                         local.status = SendStatus::Failed(error);
-                        self.emit_messages(&target, vec![local]);
+                        self.emit_messages(&target, vec![*local]);
                     }
                     (None, None) => {
                         local.status = SendStatus::Sent;
-                        self.emit_messages(&target, vec![local]);
+                        self.emit_messages(&target, vec![*local]);
                     }
                 }
             }
@@ -622,6 +694,7 @@ impl Net {
                     }
                 }
             }
+            Pending::Devices { nick } => self.devices_reply(&nick, flatten(items)),
             Pending::Sync => self.synced(),
             Pending::List => {
                 let channels: Vec<String> = flatten(items)
@@ -717,6 +790,7 @@ impl Net {
             .map(|b| b.name.clone())
             .collect();
         self.monitor(&dms.iter().map(String::as_str).collect::<Vec<_>>());
+        self.e2e_synced(&dms);
     }
 
     fn message(&mut self, m: Message) {
@@ -724,7 +798,7 @@ impl Net {
         let me = self.cm.eq(&from, &self.info.nick);
         match m.command.as_str() {
             "PRIVMSG" | "NOTICE" => {
-                if let Some((target, msg)) = self.chat(&Item::Message(m)) {
+                if let Some((target, msg)) = self.chat_in(&Item::Message(m)) {
                     self.live(&target, msg);
                 }
             }
@@ -732,7 +806,11 @@ impl Net {
                 let Some(target) = self.buffer_target(&m) else {
                     return;
                 };
-                if let (Some((emoji, add)), Some(msgid)) = (reaction(&m), m.tag("+draft/reply")) {
+                if let Some(step) = m.tag("+chad/e2e-verify") {
+                    self.verify_tag(&target, me, step);
+                } else if let (Some((emoji, add)), Some(msgid)) =
+                    (reaction(&m), m.tag("+draft/reply"))
+                {
                     self.store.react(msgid, &from, truncate(emoji, 64), add);
                     self.refresh(msgid);
                 } else if let Some(state) = m.tag("+typing").filter(|_| !me) {
@@ -956,6 +1034,15 @@ impl Net {
                 }
                 self.sync_dm_away();
             }
+            // Someone's devices changed: fetch them again if we DM them (or it's us).
+            "761" | "766" if m.param(2) == Some(DEVICES_KEY) => {
+                if let Some(nick) = m.param(1).filter(|n| valid_name(n) && !self.is_channel(n)) {
+                    let key = self.fold(nick);
+                    if self.wants_devices(&key) {
+                        self.devices_changed(nick);
+                    }
+                }
+            }
             // 761 <me|*> <target> <key> <visibility> :<value>; 766 is "not set".
             "761" | "766" if m.param(2) == Some(VOICE_KEY) => {
                 let value = if m.command == "761" { m.param(4) } else { None };
@@ -1107,8 +1194,17 @@ impl Net {
                 own,
                 nick,
                 text,
+                crypt: Crypt::Plain,
             },
         ))
+    }
+
+    /// [`Net::chat`] as this device sees it: decrypted, or `None` if it's
+    /// someone else's copy or waits for the sender's keys.
+    fn chat_in(&mut self, item: &Item) -> Option<(String, ChatMessage)> {
+        let (target, msg) = self.chat(item)?;
+        let msg = self.open(&target, head(item), msg)?;
+        Some((target, msg))
     }
 
     /// The buffer a message to `params[0]` belongs in: the channel, or the other
@@ -1156,9 +1252,12 @@ impl Net {
         };
         let mut messages = Vec::new();
         let mut touched = Vec::new();
+        let mut n = 0;
         for item in items.into_iter().take(PAGE as usize * 2) {
-            if let Some((_, msg)) = self.chat(&item) {
-                messages.push(msg);
+            if let Some((target, msg)) = self.chat(&item) {
+                // Copies for other devices still count towards the page.
+                n += 1;
+                messages.extend(self.open(&target, head(&item), msg));
             } else if let Item::Message(m) = item {
                 match m.command.as_str() {
                     "TAGMSG" => {
@@ -1179,7 +1278,6 @@ impl Net {
                 }
             }
         }
-        let n = messages.len();
         self.store.batch(|| {
             for m in &messages {
                 self.store.insert(key, m);
@@ -1472,6 +1570,9 @@ impl Net {
             },
         );
         self.emit_buffer(&key);
+        if kind == BufferKind::Dm {
+            self.fetch_devices(name);
+        }
         true
     }
 
@@ -1580,6 +1681,7 @@ impl Net {
             online: b.online,
             away: b.away,
             voice: b.kind == BufferKind::Channel && !b.voice_off,
+            encryption: self.encryption(key),
         };
         let network = self.id();
         self.events.push(Event::Buffer { network, buffer });
@@ -1626,6 +1728,14 @@ pub fn failure(item: &Item) -> Option<String> {
         _ => return None,
     };
     Some(truncate(&text, 400).to_owned())
+}
+
+/// The message whose tags speak for an item: a multiline batch's start.
+fn head(item: &Item) -> &Message {
+    match item {
+        Item::Message(m) => m,
+        Item::Batch(b) => &b.start,
+    }
 }
 
 fn flatten(items: Vec<Item>) -> impl Iterator<Item = Message> {

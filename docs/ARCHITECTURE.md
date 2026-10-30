@@ -76,6 +76,8 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
   egui keeps a projected view model, and core calls `ctx.request_repaint()` (via a callback) on change.
   Inside, there's one task per network: `conn` does the I/O, registration and reconnects, and `net::Net` is the sans-IO state machine, unit-tested from IRC lines.
   The only things kept locally are the per-network SQLite cache (whose `meta` holds the origin, account and cached discovery) and the password, behind `secrets::SecretStore`.
+  With E2EE (D29), the cache also holds this device's Olm account and sessions, encrypted with a key kept in the secret store under `<origin>#e2e`, plus the pinned devices of everyone it has talked to.
+- `chad-e2ee` is sans-IO crypto over `vodozemac`: the Olm account and sessions, signed device records, and the SAS verification state machine. `chad-core`'s `net::e2e` does the IRC side.
 - `chad-irc` is pure protocol with no I/O policy. It handles tag escaping, batch reassembly, labeled-response correlation, CAP 302 negotiation, ISUPPORT and casemapping.
   Everything is sans-IO except `chad_irc::ws`, the WebSocket transport (one connection, keepalive, frame cap). Reconnect policy lives in `chad-core`.
   The capabilities we request are listed once, in `chad_irc::cap::WANTED`.
@@ -84,7 +86,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 - `chad-media` (`Voice`) owns the LiveKit `Room`, the PipeWire/WASAPI audio graph, the APM (AEC/NS/AGC), capture backends and decoded video frames.
   Video goes to the UI as GPU textures, using I420 → RGB in a wgpu shader rather than a CPU conversion.
 - Persistence is a SQLite cache (`rusqlite`) per network for scrollback and read state. History of record lives on ergo (`draft/chathistory`).
-  Decrypted E2EE plaintext is the exception and lives only locally (see Phase 4).
+  Decrypted E2EE plaintext is the exception and lives only locally, in the same cache (D29). It isn't encrypted at rest beyond whatever the disk is, and it's pruned with the rest of the scrollback.
 
 ## IRC conventions
 
@@ -102,7 +104,9 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | Edit | Not in IRCv3. Parked. |
 | Delete | `draft/message-redaction` (`REDACT`) |
 | Unread | `draft/read-marker` (`MARKREAD`), synced across devices |
-| Encrypted DM | PRIVMSG with `+chad/e2e` ciphertext tag + human-readable fallback body (Phase 4) |
+| Encrypted DM | One PRIVMSG per recipient device with `+chad/e2e=<type>:<ciphertext>`, `+chad/e2e-from`/`-to=<device>` and a readable fallback body. Copies after the first carry `+chad/e2e-id=<first copy's msgid>` (D29). |
+| E2EE devices | User metadata `chad/e2e/d/<device>` (signed keys), found with `METADATA <nick> LIST`. `chad/e2e/devices` is set whenever a device comes or goes, as a subscribed change signal. |
+| Verification | `TAGMSG <nick>` with `+chad/e2e-verify` (SAS steps) |
 | Mobile push | `draft/webpush` (ergo ≥ 2.15, experimental) |
 
 Relevant ergo versions: webpush landed in 2.15, metadata in 2.17, and 2.19 fixed a channel-metadata visibility leak. **Require ergo ≥ 2.19.**

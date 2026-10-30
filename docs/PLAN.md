@@ -10,7 +10,7 @@ Update the line above when a phase's "Done when" holds.
 | 1 | Connect & chat: invite URLs, multi-network, text MVP | [phases/1-chat.md](phases/1-chat.md) | done (2026-10-28; some checks deferred to 5) |
 | 2 | Voice | [phases/2-voice.md](phases/2-voice.md) | implemented; Done-when checks need hardware |
 | 3 | Screen share | [phases/3-screenshare.md](phases/3-screenshare.md) | implemented; Done-when checks need hardware |
-| 4 | Encrypted DMs | [phases/4-e2ee-dms.md](phases/4-e2ee-dms.md) | not started |
+| 4 | Encrypted DMs | [phases/4-e2ee-dms.md](phases/4-e2ee-dms.md) | implemented; Done-when holds in tests, UI checked headless only |
 | 5 | Polish & distribution | [phases/5-polish.md](phases/5-polish.md) | implemented; Done-when checks need hardware and a release run |
 | 6 | Android | [phases/6-android.md](phases/6-android.md) | not started |
 | 7 | Later / parking lot | [phases/7-later.md](phases/7-later.md) | — |

@@ -236,3 +236,134 @@ fn live_polish() {
     s.harness.run();
     s.shot("polish_switcher");
 }
+
+/// Phase 4: an encrypted DM, a plain one, and emoji verification, with a bare
+/// core playing bob. Same setup as `live`; fresh accounts every run.
+#[test]
+#[ignore]
+fn live_e2ee() {
+    use chad_core::{Auth, Command, ConnState, Event, NetCommand, VerifyState, VerifyStep};
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
+    let origin = chad_core::invite::parse(&invite).unwrap().origin;
+    let stamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
+    let (alice, bob, guest) = (
+        format!("sa{stamp}"),
+        format!("sb{stamp}"),
+        format!("sg{stamp}"),
+    );
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dirs = [(); 3].map(|()| tempfile::tempdir().unwrap());
+    let core = |i: usize, auth: Auth| {
+        let _guard = rt.enter();
+        let (core, mut rx) = chad_core::start(chad_core::Config {
+            data_dir: dirs[i].path().to_owned(),
+            secrets: Arc::new(chad_core::secrets::MemorySecrets::default()),
+            notify: Arc::new(|| {}),
+            media: None,
+        });
+        core.send(Command::Join {
+            invite: origin.clone(),
+            auth,
+        });
+        rt.block_on(next(&mut rx, |e| match e {
+            Event::Network(n) => (n.state == ConnState::Connected).then_some(()),
+            _ => None,
+        }));
+        (core, rx)
+    };
+    let register = |account: &str| Auth::Register {
+        account: account.into(),
+        password: "shotspass".into(),
+        email: None,
+    };
+    drop(core(0, register(&alice)));
+    let (b, mut brx) = core(1, register(&bob));
+    let net = |cmd| Command::Net {
+        network: origin.clone(),
+        cmd,
+    };
+
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", &alice);
+    s.type_into("Password", "shotspass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(2);
+    b.send(net(NetCommand::Send {
+        target: alice.clone(),
+        text: "hi! only our devices can read this".into(),
+        reply_to: None,
+    }));
+    let (g, _grx) = core(
+        2,
+        Auth::Guest {
+            nick: guest.clone(),
+        },
+    );
+    g.send(net(NetCommand::Send {
+        target: alice.clone(),
+        text: "hello from a plain IRC client".into(),
+        reply_to: None,
+    }));
+    // bob is in #general too: his name there opens the DM.
+    s.wait_for(&bob);
+    s.click(&bob);
+    s.wait_for("hi! only our devices can read this");
+    s.shot("e2ee_dm");
+    s.harness.get_by_label_contains(&guest).click();
+    s.settle(1);
+    s.shot("e2ee_plain");
+
+    b.send(net(NetCommand::Verification {
+        nick: alice.clone(),
+        step: VerifyStep::Start,
+    }));
+    s.wait_for("Start");
+    s.shot("e2ee_verify_request");
+    s.click("Start");
+    s.wait_for("They match");
+    s.shot("e2ee_verify_emoji");
+    rt.block_on(next(&mut brx, |e| {
+        matches!(
+            e,
+            Event::Verification {
+                state: VerifyState::Compare(_),
+                ..
+            }
+        )
+        .then_some(())
+    }));
+    b.send(net(NetCommand::Verification {
+        nick: alice.clone(),
+        step: VerifyStep::Match,
+    }));
+    s.click("They match");
+    s.wait_for("Done");
+    s.shot("e2ee_verified");
+    s.click("Done");
+    s.harness.get_by_label_contains(&bob).click();
+    s.settle(1);
+    s.shot("e2ee_dm_verified");
+}
+
+/// The first event `f` picks out, within 30s.
+async fn next<T>(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<chad_core::Event>,
+    mut f: impl FnMut(&chad_core::Event) -> Option<T>,
+) -> T {
+    let wait = async {
+        loop {
+            if let Some(t) = f(&rx.recv().await.expect("core stopped")) {
+                return t;
+            }
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), wait)
+        .await
+        .expect("timed out")
+}

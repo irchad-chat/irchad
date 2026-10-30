@@ -12,6 +12,9 @@ use chad_core::{Auth, Command, Config, ConnState, Event, NetCommand, SendStatus}
 use tokio::sync::mpsc::UnboundedReceiver;
 
 async fn until<T>(rx: &mut UnboundedReceiver<Event>, mut f: impl FnMut(&Event) -> Option<T>) -> T {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let e = rx.recv().await.expect("core stopped");
@@ -389,4 +392,248 @@ async fn two_networks_upload_profile() {
             name: String::new(),
         },
     });
+}
+
+async fn state(rx: &mut UnboundedReceiver<Event>, nick: &str) -> chad_core::VerifyState {
+    until(rx, |e| match e {
+        Event::Verification { nick: n, state, .. } if n == nick => Some(state.clone()),
+        _ => None,
+    })
+    .await
+}
+
+/// Phase 4's done-when: alice on two installs and bob on one. A DM sent while
+/// bob is offline decrypts on all three, his reply too, and they verify with
+/// emoji. A plain client's DM shows as not encrypted. Fresh accounts every run,
+/// so device lists don't pile up on the server.
+#[tokio::test]
+#[ignore]
+async fn encrypted_dms_across_devices() {
+    use chad_core::{Crypt, Encryption, VerifyState, VerifyStep};
+    let origin = std::env::var("IRCHAD_ORIGIN").unwrap_or("localhost:8443".into());
+    let network = format!("https://{origin}");
+    let stamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
+    let (alice, bob) = (format!("ea{stamp}"), format!("eb{stamp}"));
+    let config = |d: &std::path::Path, secrets: Arc<MemorySecrets>| Config {
+        data_dir: d.to_owned(),
+        secrets,
+        notify: Arc::new(|| {}),
+        media: None,
+    };
+    let auth = |account: &str, register: bool| {
+        let (account, password) = (account.to_owned(), "livecorepass".to_owned());
+        if register {
+            Auth::Register {
+                account,
+                password,
+                email: None,
+            }
+        } else {
+            Auth::Login { account, password }
+        }
+    };
+    let net = |cmd: NetCommand| Command::Net {
+        network: network.clone(),
+        cmd,
+    };
+    let dirs = [(); 4].map(|()| tempfile::tempdir().unwrap());
+    let bob_secrets = Arc::new(MemorySecrets::default());
+
+    let (a1, mut a1rx) = chad_core::start(config(dirs[0].path(), Default::default()));
+    a1.send(Command::Join {
+        invite: origin.clone(),
+        auth: auth(&alice, true),
+    });
+    until(&mut a1rx, connected).await;
+    let (b, mut brx) = chad_core::start(config(dirs[1].path(), bob_secrets.clone()));
+    b.send(Command::Join {
+        invite: origin.clone(),
+        auth: auth(&bob, true),
+    });
+    until(&mut brx, connected).await;
+    let (a2, mut a2rx) = chad_core::start(config(dirs[2].path(), Default::default()));
+    a2.send(Command::Join {
+        invite: origin.clone(),
+        auth: auth(&alice, false),
+    });
+    until(&mut a2rx, connected).await;
+
+    // Both of alice's devices are published, and a1 knows about a2.
+    let devices = |nick: String, n: usize| {
+        move |e: &Event| match e {
+            Event::Devices {
+                nick: who, devices, ..
+            } if *who == nick && devices.len() == n => Some(()),
+            _ => None,
+        }
+    };
+    for _ in 0..20 {
+        a1.send(net(NetCommand::Devices {
+            nick: alice.clone(),
+        }));
+        let got = tokio::time::timeout(
+            Duration::from_secs(1),
+            until(&mut a1rx, devices(alice.clone(), 2)),
+        );
+        if got.await.is_ok() {
+            break;
+        }
+    }
+    until(&mut brx, |e| match e {
+        Event::Devices { nick, devices, .. } if *nick == bob => {
+            devices.iter().any(|d| d.this).then_some(())
+        }
+        _ => None,
+    })
+    .await;
+    a1.send(net(NetCommand::OpenDm { nick: bob.clone() }));
+    until(&mut a1rx, devices(bob.clone(), 1)).await;
+
+    // bob is offline when alice writes.
+    drop(b);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let secret = format!("the secret is {stamp}");
+    a1.send(net(NetCommand::Send {
+        target: bob.clone(),
+        text: secret.clone(),
+        reply_to: None,
+    }));
+    let has = |target: String, text: String| {
+        move |e: &Event| match e {
+            Event::Messages {
+                target: t,
+                messages,
+                ..
+            } if *t == target => messages
+                .iter()
+                .find(|m| m.text == text && m.msgid.is_some())
+                .map(|m| m.crypt),
+            _ => None,
+        }
+    };
+    assert_eq!(
+        until(&mut a1rx, has(bob.clone(), secret.clone())).await,
+        Crypt::Encrypted
+    );
+    assert_eq!(
+        until(&mut a2rx, has(bob.clone(), secret.clone())).await,
+        Crypt::Encrypted
+    );
+
+    // bob comes back and reads it from history, then answers.
+    let (b, mut brx) = chad_core::start(config(dirs[1].path(), bob_secrets.clone()));
+    until(&mut brx, connected).await;
+    assert_eq!(
+        until(&mut brx, has(alice.clone(), secret.clone())).await,
+        Crypt::Encrypted
+    );
+    let reply = format!("got it {stamp}");
+    b.send(net(NetCommand::Send {
+        target: alice.clone(),
+        text: reply.clone(),
+        reply_to: None,
+    }));
+    for rx in [&mut a1rx, &mut a2rx] {
+        assert_eq!(
+            until(rx, has(bob.clone(), reply.clone())).await,
+            Crypt::Encrypted
+        );
+    }
+
+    // a1 and bob compare emoji.
+    a1.send(net(NetCommand::Verification {
+        nick: bob.clone(),
+        step: VerifyStep::Start,
+    }));
+    assert_eq!(state(&mut brx, &alice).await, VerifyState::Incoming);
+    b.send(net(NetCommand::Verification {
+        nick: alice.clone(),
+        step: VerifyStep::Accept,
+    }));
+    let compare = |s: VerifyState| match s {
+        VerifyState::Compare(e) => e,
+        other => panic!("{other:?}"),
+    };
+    let mut seen = Vec::new();
+    for (rx, nick) in [(&mut a1rx, bob.clone()), (&mut brx, alice.clone())] {
+        loop {
+            match state(rx, &nick).await {
+                VerifyState::Waiting => continue,
+                s => break seen.push(compare(s)),
+            }
+        }
+    }
+    assert_eq!(seen[0], seen[1]);
+    a1.send(net(NetCommand::Verification {
+        nick: bob.clone(),
+        step: VerifyStep::Match,
+    }));
+    b.send(net(NetCommand::Verification {
+        nick: alice.clone(),
+        step: VerifyStep::Match,
+    }));
+    for (rx, nick) in [(&mut a1rx, bob.clone()), (&mut brx, alice.clone())] {
+        loop {
+            match state(rx, &nick).await {
+                VerifyState::Waiting => continue,
+                s => break assert_eq!(s, VerifyState::Done),
+            }
+        }
+    }
+    until(&mut a1rx, |e| match e {
+        Event::Buffer { buffer, .. } if buffer.target == bob => {
+            (buffer.encryption == Encryption::Verified).then_some(())
+        }
+        _ => None,
+    })
+    .await;
+
+    // A plain client (a guest here) gets no encryption, and it shows.
+    let guest = format!("gp{stamp}");
+    let (g, mut grx) = chad_core::start(config(dirs[3].path(), Default::default()));
+    g.send(Command::Join {
+        invite: origin.clone(),
+        auth: Auth::Guest {
+            nick: guest.clone(),
+        },
+    });
+    until(&mut grx, connected).await;
+    g.send(net(NetCommand::Send {
+        target: bob.clone(),
+        text: "plain hi".into(),
+        reply_to: None,
+    }));
+    assert_eq!(
+        until(&mut brx, has(guest.clone(), "plain hi".into())).await,
+        Crypt::Plain
+    );
+    until(&mut brx, |e| match e {
+        Event::Buffer { buffer, .. } if buffer.target == guest => {
+            (buffer.encryption == Encryption::Off).then_some(())
+        }
+        _ => None,
+    })
+    .await;
+
+    // Logging out unpublishes the device.
+    a2.send(Command::Remove {
+        network: network.clone(),
+    });
+    until(&mut a2rx, |e| {
+        matches!(e, Event::NetworkRemoved { .. }).then_some(())
+    })
+    .await;
+    for _ in 0..20 {
+        a1.send(net(NetCommand::Devices {
+            nick: alice.clone(),
+        }));
+        let got = tokio::time::timeout(
+            Duration::from_secs(1),
+            until(&mut a1rx, devices(alice.clone(), 1)),
+        );
+        if got.await.is_ok() {
+            return;
+        }
+    }
+    panic!("a2 is still listed");
 }

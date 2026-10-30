@@ -142,3 +142,18 @@ The client checks `git.gentoo.party`'s latest release at startup (a setting, on 
 Away is IRC `AWAY`, sent to every network when the user picks Away or has been idle for the configured minutes (10 by default, 0 for never). `Net` re-sends it after reconnects.
 Idle time is the whole desktop's, not just our window's. On Wayland it comes from `ext-idle-notify-v1`: a notification at 60 s, so "idle since" is a minute before it fires, and any threshold of a minute or more works without re-arming. On X11 it comes from the XScreenSaver extension, and on Windows from `GetLastInputInfo`.
 On a Wayland compositor without the protocol (GNOME before 48), we don't fall back to XWayland, which only sees X clients' input. Input to our own window is the signal there.
+
+## D29: How encrypted DMs go over IRC (2026-10-30)
+This refines the Phase 4 design (D8 still holds) where testing against ergo showed it needed to.
+- **Device records** are user metadata `chad/e2e/d/<device id>`: `<curve25519> <ed25519> <fallback key> <signature>`. The signature covers the folded nick and the device ID, so the server can't move a record to another person or device. Clients find them with `METADATA <nick> LIST`.
+  There's no shared device list: two devices of one account updating a list at once lose one of the writes, and the live test hit exactly that. `chad/e2e/devices` is set whenever a device publishes or unpublishes, and its only job is to tell subscribers (`METADATA * SUB`) to fetch again. A change that lands while a fetch is underway triggers one more fetch.
+- **Prekeys:** fallback keys only, rotated weekly; the previous one keeps working through one rotation. A replayed pre-key message can't start a second session while the first is kept (four per peer device).
+- **Transport:** one PRIVMSG per device, ours included, with `+chad/e2e=<type>:<base64>`, `+chad/e2e-from` and `+chad/e2e-to`, and the fallback body `🔒 Encrypted message, open IrChad to read`.
+  The first copy goes alone. Its echo's msgid goes on the others as `+chad/e2e-id`, and every device files the message under that msgid. That way replies, reactions, `REDACT` and `CHATHISTORY` references keep working with one real server msgid.
+  Plaintext is capped at 2000 bytes per message so the ciphertext fits ergo's client-tag budget, and longer text goes out as several messages.
+- **Not encrypted:** replies' targets, reactions, typing, redactions, timing and sizes. They're tags and commands the server sees, as it sees who talks to whom.
+- **Storage:** the Olm account and sessions are pickled with a key from the OS secret store (entry `<origin>#e2e`). Without a keyring, encrypted DMs stay off and DMs go in the clear with the marker.
+  Decrypted text is stored once (an Olm message decrypts once) in the ordinary cache. shortcut: it isn't encrypted at rest (the phase file said encrypted SQLite), and it's pruned at 2000 messages per buffer like any scrollback. SQLCipher, or a column encrypted with the pickle key, is the upgrade if at-rest matters.
+- **Trust:** trust on first use per (nick, device). A device whose keys change is pinned again but flagged, and the DM warns until the user verifies or accepts.
+  SAS runs over `TAGMSG +chad/e2e-verify`: request, accept with a SHA-256 commitment to the responder's key, both keys, then a MAC of each side's signing key once the people say the emoji match. Only another person's devices can be verified for now, not our own.
+- **Logging out** (leaving the network) deletes the record before quitting, and the cache and pickle key with it. A device that's removed while offline stays listed until someone deletes it by hand.

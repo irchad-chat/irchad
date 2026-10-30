@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::chadd::{self, Session};
 use crate::manager::Sink;
-use crate::net::{AVATAR_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure};
+use crate::net::{AVATAR_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure};
 use crate::secrets::SecretStore;
 use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
 
@@ -59,6 +59,10 @@ enum End {
 }
 
 pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<ToNet>, sink: Sink) {
+    if !p.guest {
+        init_e2e(&mut net, &p).await;
+        sink.send(net.events.drain(..));
+    }
     let mut backoff = Backoff::new();
     loop {
         let password = if p.guest {
@@ -145,10 +149,12 @@ async fn remove(net: Net, p: &Params, sink: &Sink) {
         path.push(ext);
         let _ = std::fs::remove_file(path);
     }
-    if !p.guest
-        && let Err(e) = p.secrets.delete(&network).await
-    {
-        tracing::warn!("forgetting the password for {network}: {e}");
+    for name in [network.clone(), e2e_secret(&network)] {
+        if !p.guest
+            && let Err(e) = p.secrets.delete(&name).await
+        {
+            tracing::warn!("forgetting {name}: {e}");
+        }
     }
     sink.send([Event::NetworkRemoved { network }]);
 }
@@ -250,7 +256,14 @@ async fn session(
             if net.caps.enabled("draft/metadata-2") {
                 out.push(Message::new(
                     "METADATA",
-                    ["*", "SUB", VOICE_KEY, DISPLAY_NAME_KEY, AVATAR_KEY],
+                    [
+                        "*",
+                        "SUB",
+                        VOICE_KEY,
+                        DISPLAY_NAME_KEY,
+                        AVATAR_KEY,
+                        DEVICES_KEY,
+                    ],
                 ));
             }
             if p.guest {
@@ -409,6 +422,10 @@ async fn session(
                     }
                 }
                 Some(ToNet::Remove) => {
+                    net.unpublish();
+                    for m in std::mem::take(&mut net.out) {
+                        let _ = send(&mut ws, &m).await;
+                    }
                     let _ = ws.send(&Message::new("QUIT", ["bye"])).await;
                     return End::Remove;
                 }
@@ -442,6 +459,41 @@ async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
         net.error(format!("{e} You'll need to sign in again next time."));
         sink.send(net.events.drain(..));
     }
+}
+
+/// The secret store entry holding the key to a network's E2EE pickles.
+fn e2e_secret(origin: &str) -> String {
+    format!("{origin}#e2e")
+}
+
+/// Opens this device's E2EE keys, making them on first use. Without a keyring
+/// encrypted DMs stay off rather than keep keys in the clear.
+async fn init_e2e(net: &mut Net, p: &Params) {
+    let name = e2e_secret(&net.info.network);
+    let parse = |hex: &str| -> Option<[u8; 32]> {
+        let bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+            .collect::<Option<_>>()?;
+        bytes.try_into().ok()
+    };
+    let key = match p.secrets.load(&name).await {
+        Ok(Some((_, hex))) => parse(&hex),
+        Ok(None) => None,
+        Err(e) => return net.error(format!("{e} Encrypted DMs are off for now.")),
+    };
+    let key = match key {
+        Some(k) => k,
+        None => {
+            let k = chad_e2ee::new_pickle_key();
+            let hex: String = k.iter().map(|b| format!("{b:02x}")).collect();
+            if let Err(e) = p.secrets.save(&name, "e2e", &hex).await {
+                return net.error(format!("{e} Encrypted DMs are off for now."));
+            }
+            k
+        }
+    };
+    net.e2e_init(key, &p.device);
 }
 
 type TokenResult = (String, Result<VoiceTokenResponse, String>);

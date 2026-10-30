@@ -212,6 +212,29 @@ pub enum NetCommand {
     Media {
         url: String,
     },
+    /// Someone's devices with encrypted DMs on, fetched again: `Event::Devices`.
+    Devices {
+        nick: String,
+    },
+    /// Compare emoji with someone to check their device's keys (SAS).
+    Verification {
+        nick: String,
+        step: VerifyStep,
+    },
+    /// Keep using someone's devices after a key change, without verifying them.
+    AcceptKeys {
+        nick: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyStep {
+    Start,
+    /// Answer their request.
+    Accept,
+    /// The emoji are the same on both screens.
+    Match,
+    Cancel,
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +333,39 @@ pub enum Event {
         url: String,
         result: Result<Blob, String>,
     },
+    /// Someone's devices with encrypted DMs on (ours, for our own nick).
+    Devices {
+        network: String,
+        nick: String,
+        devices: Vec<DeviceInfo>,
+    },
+    /// A verification with `nick` moved on.
+    Verification {
+        network: String,
+        nick: String,
+        state: VerifyState,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub id: String,
+    /// The device's signing key, for comparing by eye.
+    pub fingerprint: String,
+    pub verified: bool,
+    /// This install.
+    pub this: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyState {
+    /// They asked: `VerifyStep::Accept` or `Cancel`.
+    Incoming,
+    Waiting,
+    /// `(emoji, name)` to compare with what they see: `Match` or `Cancel`.
+    Compare(Vec<(&'static str, &'static str)>),
+    Done,
+    Failed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,6 +409,22 @@ pub struct BufferInfo {
     pub away: bool,
     /// Channels: ops can turn voice off with metadata `chad/voice=off`.
     pub voice: bool,
+    /// DMs: whether they're end-to-end encrypted.
+    pub encryption: Encryption,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encryption {
+    /// A channel, or their keys aren't known yet.
+    Unknown,
+    /// They publish no keys (not IrChad, or a guest): DMs go in the clear.
+    Off,
+    On,
+    /// Every device of theirs checked by comparing emoji.
+    Verified,
+    /// A device key changed since we last saw it: a new install, or someone
+    /// in the middle. Until verified or `AcceptKeys`.
+    Changed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,6 +458,17 @@ pub struct ChatMessage {
     /// Highlights you (always true for someone else's DM).
     pub mention: bool,
     pub own: bool,
+    pub crypt: Crypt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Crypt {
+    Plain,
+    /// End-to-end encrypted; `text` is what it decrypted to.
+    Encrypted,
+    /// Encrypted, but it didn't decrypt: tampered with, replayed, or sent to
+    /// keys this device no longer has. `text` is empty.
+    Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

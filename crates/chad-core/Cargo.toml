@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 chad-proto.workspace = true
 chad-irc.workspace = true
+chad-e2ee.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 serde.workspace = true
@@ -29,4 +30,5 @@ oo7 = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_Security_Credentials", "Win32_Foundation"] }
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 tempfile = "3.27.0"

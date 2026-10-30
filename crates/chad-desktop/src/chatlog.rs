@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use chad_core::{ChatMessage, MessageKind, SendStatus};
+use chad_core::{ChatMessage, Crypt, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
 use url::Url;
@@ -41,6 +41,8 @@ pub struct Extras<'a> {
     pub network: &'a str,
     /// Load images, previews and avatars without asking.
     pub auto_media: bool,
+    /// A DM, where unencrypted messages are marked.
+    pub dm: bool,
 }
 
 /// The name to show for `nick`: their display name if they set one.
@@ -411,8 +413,12 @@ fn row_ui(
     let header = new_day
         || unread
         || m.reply_to.is_some()
-        || prev
-            .is_none_or(|p| p.nick != m.nick || m.time - p.time > GROUP_GAP_MS || p.kind != m.kind);
+        || prev.is_none_or(|p| {
+            p.nick != m.nick
+                || m.time - p.time > GROUP_GAP_MS
+                || p.kind != m.kind
+                || p.crypt != m.crypt
+        });
 
     let bg = ui.painter().add(egui::Shape::Noop);
     let top = ui.cursor().min;
@@ -452,6 +458,13 @@ fn row_ui(
                         actions.push(Action::OpenDm(m.nick.clone()));
                     }
                     ui.label(RichText::new(clock(m.time)).weak().small());
+                    if extras.dm && m.crypt == Crypt::Plain {
+                        ui.label(
+                            RichText::new(format!("{} not encrypted", icons::LOCK_OPEN))
+                                .weak()
+                                .small(),
+                        );
+                    }
                 });
             }
             if m.reply_to.is_some() {
@@ -485,6 +498,16 @@ fn row_ui(
 
             if m.redacted {
                 ui.label(RichText::new("This message was deleted.").italics().weak());
+            } else if m.crypt == Crypt::Failed {
+                let text = format!(
+                    "{} This message couldn't be decrypted. It may have been tampered with.",
+                    icons::WARNING
+                );
+                ui.label(
+                    RichText::new(text)
+                        .italics()
+                        .color(ui.visuals().error_fg_color),
+                );
             } else {
                 body_ui(ui, m, name, dark);
                 links_ui(ui, m, extras);
@@ -719,6 +742,7 @@ mod tests {
             reactions: vec![],
             mention: false,
             own: false,
+            crypt: Crypt::Plain,
         }
     }
 

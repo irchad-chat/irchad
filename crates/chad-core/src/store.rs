@@ -1,12 +1,17 @@
 //! One SQLite file per network: the last scrollback, buffers and read markers, so
 //! startup shows something before the connection is up. The server holds the
 //! history of record (chathistory), so a failed write is logged and forgotten.
+//! The exceptions are E2EE (Phase 4): decrypted DMs, which no server can give
+//! back, and this device's Olm account and sessions, encrypted with a key from
+//! the OS secret store.
 
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 
-use crate::{BufferKind, ChatMessage, MessageKind, Reaction, SendStatus};
+use chad_e2ee::{Changes, Device};
+
+use crate::{BufferKind, ChatMessage, Crypt, MessageKind, Reaction, SendStatus};
 
 /// Messages kept per buffer between runs.
 const KEEP: u32 = 2000;
@@ -15,6 +20,15 @@ const MAX_REACTIONS: i64 = 200;
 
 pub struct Store {
     db: Connection,
+}
+
+/// Someone's device as first seen (trust on first use).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pin {
+    pub device: Device,
+    pub verified: bool,
+    /// Its keys changed since it was pinned, and nobody has said that's fine.
+    pub changed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +56,16 @@ CREATE INDEX IF NOT EXISTS messages_buffer_time ON messages (buffer, time);
 CREATE TABLE IF NOT EXISTS reactions (
     msgid TEXT NOT NULL, nick TEXT NOT NULL, emoji TEXT NOT NULL,
     PRIMARY KEY (msgid, nick, emoji));
+CREATE TABLE IF NOT EXISTS e2e_sessions (
+    id TEXT PRIMARY KEY, peer TEXT NOT NULL, pickle TEXT NOT NULL, used INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS e2e_pins (
+    nick TEXT NOT NULL, id TEXT NOT NULL, record TEXT NOT NULL,
+    verified INTEGER NOT NULL DEFAULT 0, changed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (nick, id));
 ";
+
+/// Run in order on older files; `PRAGMA user_version` counts how many have.
+const MIGRATIONS: &[&str] = &["ALTER TABLE messages ADD COLUMN crypt INTEGER NOT NULL DEFAULT 0"];
 
 fn ok<T: Default>(what: &str, r: rusqlite::Result<T>) -> T {
     r.unwrap_or_else(|e| {
@@ -63,6 +86,10 @@ impl Store {
 
     fn init(db: Connection) -> rusqlite::Result<Self> {
         db.execute_batch(SCHEMA)?;
+        let done: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        for (i, m) in MIGRATIONS.iter().enumerate().skip(done as usize) {
+            db.execute_batch(&format!("{m}; PRAGMA user_version = {}", i + 1))?;
+        }
         db.execute(
             "DELETE FROM messages WHERE id IN (SELECT id FROM (SELECT id, row_number() OVER
              (PARTITION BY buffer ORDER BY time DESC) AS n FROM messages) WHERE n > ?1)",
@@ -193,16 +220,21 @@ impl Store {
             MessageKind::Notice => 1,
             MessageKind::Action => 2,
         };
+        let crypt = match m.crypt {
+            Crypt::Plain => 0,
+            Crypt::Encrypted => 1,
+            Crypt::Failed => 2,
+        };
         ok(
             "write message",
             self.db
                 .execute(
                     "INSERT OR IGNORE INTO messages
-                     (buffer, msgid, time, nick, account, kind, text, reply_to, redacted, mention, own)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                     (buffer, msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         buffer, m.msgid, m.time, m.nick, m.account, kind, m.text, m.reply_to,
-                        m.redacted, m.mention, m.own
+                        m.redacted, m.mention, m.own, crypt
                     ],
                 )
                 .map(|n| n == 1),
@@ -223,7 +255,7 @@ impl Store {
     pub fn recent(&self, buffer: &str, limit: u32) -> Vec<ChatMessage> {
         let read = || {
             let mut st = self.db.prepare(
-                "SELECT * FROM (SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own
+                "SELECT * FROM (SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt
                  FROM messages WHERE buffer = ?1 ORDER BY time DESC, id DESC LIMIT ?2) ORDER BY time, msgid",
             )?;
             st.query_map(params![buffer, limit], row)?.collect()
@@ -241,10 +273,10 @@ impl Store {
             "read message",
             self.db
                 .query_row(
-                    "SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, buffer
+                    "SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, buffer
                      FROM messages WHERE msgid = ?1",
                     [msgid],
-                    |r| Ok((r.get(10)?, row(r)?)),
+                    |r| Ok((r.get(11)?, row(r)?)),
                 )
                 .optional(),
         );
@@ -367,6 +399,99 @@ impl Store {
                 .query_row("SELECT max(time) FROM messages", [], |r| r.get(0)),
         )
     }
+
+    /// `(their key, pickle)` of every Olm session, least recently used first.
+    pub fn e2e_sessions(&self) -> Vec<(String, String)> {
+        let read = || {
+            let mut st = self
+                .db
+                .prepare("SELECT peer, pickle FROM e2e_sessions ORDER BY used")?;
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+        };
+        ok("read sessions", read())
+    }
+
+    pub fn save_e2e(&self, c: Changes) {
+        let now = crate::time::now_ms();
+        self.batch(|| {
+            if let Some(a) = &c.account {
+                self.set_meta("e2e_account", a);
+            }
+            for (id, peer, pickle) in &c.sessions {
+                ok(
+                    "write session",
+                    self.db
+                        .execute(
+                            "INSERT OR REPLACE INTO e2e_sessions VALUES (?1, ?2, ?3, ?4)",
+                            params![id, peer, pickle, now],
+                        )
+                        .map(drop),
+                );
+            }
+            for id in &c.removed {
+                ok(
+                    "remove session",
+                    self.db
+                        .execute("DELETE FROM e2e_sessions WHERE id = ?1", [id])
+                        .map(drop),
+                );
+            }
+        });
+    }
+
+    /// Everyone's pinned devices, under their folded nick.
+    pub fn pins(&self, nick: &str) -> Vec<Pin> {
+        let read = || {
+            let mut st = self
+                .db
+                .prepare("SELECT id, record, verified, changed FROM e2e_pins WHERE nick = ?1")?;
+            st.query_map([nick], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        };
+        ok("read pins", read())
+            .into_iter()
+            .filter_map(|(id, record, verified, changed)| {
+                Some(Pin {
+                    device: Device::parse(nick, &id, &record)?,
+                    verified,
+                    changed,
+                })
+            })
+            .collect()
+    }
+
+    pub fn put_pin(&self, nick: &str, id: &str, record: &str, verified: bool, changed: bool) {
+        ok(
+            "write pin",
+            self.db
+                .execute(
+                    "INSERT OR REPLACE INTO e2e_pins VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![nick, id, record, verified, changed],
+                )
+                .map(drop),
+        );
+    }
+
+    /// Someone's device was verified, or (`id` = `None`) all their key changes accepted.
+    pub fn trust(&self, nick: &str, id: Option<&str>) {
+        let r = match id {
+            Some(id) => self.db.execute(
+                "UPDATE e2e_pins SET verified = 1, changed = 0 WHERE nick = ?1 AND id = ?2",
+                [nick, id],
+            ),
+            None => self
+                .db
+                .execute("UPDATE e2e_pins SET changed = 0 WHERE nick = ?1", [nick]),
+        };
+        ok("write trust", r.map(drop));
+    }
 }
 
 fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
@@ -388,6 +513,11 @@ fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
         reactions: Vec::new(),
         mention: r.get(8)?,
         own: r.get(9)?,
+        crypt: match r.get::<_, i64>(10)? {
+            1 => Crypt::Encrypted,
+            2 => Crypt::Failed,
+            _ => Crypt::Plain,
+        },
     })
 }
 
@@ -407,6 +537,7 @@ pub(crate) fn msg(msgid: &str, time: i64, nick: &str, text: &str) -> ChatMessage
         reactions: Vec::new(),
         mention: false,
         own: false,
+        crypt: Crypt::Plain,
     }
 }
 
