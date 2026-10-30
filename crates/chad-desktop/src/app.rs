@@ -1,7 +1,8 @@
 //! The window: projects core events into a view model and draws it.
 //!
 //! Layout, left to right: network rail, channel list (with the voice panel at
-//! its foot during a call), chat (topic, log, composer), member list.
+//! its foot during a call), then the open buffers tiled as panes, each with
+//! its own chat (topic, log, composer) and member list.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
@@ -52,6 +53,12 @@ pub struct App {
     nets: Vec<Network>,
     /// Origin of the network on screen.
     current: Option<String>,
+    /// Buffers tiled in the main window, as (network, key). The focused one,
+    /// `panes[pane]`, is `current`'s selected buffer.
+    panes: Vec<(String, String)>,
+    pane: usize,
+    /// Show the next selected buffer in the focused pane, not a new one.
+    replace_pane: bool,
     settings: Settings,
     show_settings: bool,
     join: Option<JoinDialog>,
@@ -191,6 +198,11 @@ fn state_text(state: &ConnState) -> Option<(String, bool)> {
     }
 }
 
+/// Columns in the pane grid: as square as it gets, wider than tall.
+fn pane_cols(n: usize) -> usize {
+    (1..).find(|c| c * c >= n).unwrap_or(1)
+}
+
 fn badge(n: u32) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
 }
@@ -265,6 +277,9 @@ impl App {
             icons: mpsc::channel(),
             nets: Vec::new(),
             current: None,
+            panes: Vec::new(),
+            pane: 0,
+            replace_pane: false,
             settings,
             show_settings: false,
             join: None,
@@ -392,6 +407,144 @@ impl App {
         let next = (at + step).rem_euclid(len) as usize;
         let k = n.buffers[next].key.clone();
         n.select(&k);
+        self.replace_pane = true;
+    }
+
+    /// Keeps `panes` in step with the selected buffer: a newly selected one
+    /// opens a pane (or takes over the focused one), and gone ones close.
+    fn tile(&mut self, ctx: &egui::Context) {
+        let before = (self.panes.len(), self.pane);
+        let alive = |nets: &[Network], (net, k): &(String, String)| {
+            nets.iter()
+                .any(|n| n.info.network == *net && n.buffer(k).is_some())
+        };
+        let cur = self
+            .current
+            .as_deref()
+            .and_then(|c| self.net_idx(c))
+            .and_then(|i| {
+                let n = &self.nets[i];
+                let k = n.selected.clone().filter(|k| n.buffer(k).is_some())?;
+                Some((n.info.network.clone(), k))
+            });
+        let replace = std::mem::take(&mut self.replace_pane);
+        if !self.settings.panes {
+            self.panes = cur.into_iter().collect();
+            self.pane = 0;
+            return;
+        }
+        let focus_gone = self
+            .panes
+            .get(self.pane)
+            .is_some_and(|p| !alive(&self.nets, p));
+        self.panes.retain(|p| alive(&self.nets, p));
+        self.pane = self.pane.min(self.panes.len().saturating_sub(1));
+        if focus_gone && !self.panes.is_empty() {
+            // Parted or closed: focus a neighbour rather than open a new pane.
+            self.focus_pane(self.pane);
+        } else if let Some(cur) = cur {
+            if let Some(i) = self.panes.iter().position(|p| *p == cur) {
+                self.pane = i;
+            } else if replace && !self.panes.is_empty() {
+                self.panes[self.pane] = cur;
+            } else {
+                self.panes.push(cur);
+                self.pane = self.panes.len() - 1;
+            }
+        }
+        if (self.panes.len(), self.pane) != before {
+            ctx.request_repaint();
+        }
+    }
+
+    fn focus_pane(&mut self, i: usize) {
+        let Some((net, k)) = self.panes.get(i).cloned() else {
+            return;
+        };
+        self.pane = i;
+        if let Some(ni) = self.net_idx(&net) {
+            self.nets[ni].selected = Some(k);
+            self.nets[ni].focus = true;
+            self.current = Some(net);
+        }
+    }
+
+    fn close_pane(&mut self, i: usize) {
+        self.panes.remove(i);
+        if i == self.pane {
+            self.focus_pane(i.min(self.panes.len() - 1));
+        } else if i < self.pane {
+            self.pane -= 1;
+        }
+    }
+
+    /// Ctrl+arrows: the pane next to the focused one in that direction.
+    fn step_pane(&mut self, k: Key) {
+        let n = self.panes.len();
+        let cols = pane_cols(n);
+        let (p, rows) = (self.pane, n.div_ceil(cols));
+        let to = match k {
+            Key::ArrowLeft if p % cols > 0 => p - 1,
+            Key::ArrowRight if p % cols + 1 < cols && p + 1 < n => p + 1,
+            Key::ArrowUp if p >= cols => p - cols,
+            // The last row can be short.
+            Key::ArrowDown if p / cols + 1 < rows => (p + cols).min(n - 1),
+            _ => return,
+        };
+        self.focus_pane(to);
+    }
+
+    /// The open panes in a grid, rows filled left to right; a short last row
+    /// stretches. The focused pane is outlined.
+    fn tiles(&mut self, ui: &mut egui::Ui) {
+        let n = self.panes.len();
+        let cols = pane_cols(n);
+        let area = ui.available_rect_before_wrap();
+        let h = area.height() / n.div_ceil(cols) as f32;
+        let (mut close, mut focus) = (None, None);
+        for (i, (net, k)) in self.panes.clone().iter().enumerate() {
+            let (row, col) = (i / cols, i % cols);
+            let w = area.width() / cols.min(n - row * cols) as f32;
+            let rect = egui::Rect::from_min_size(
+                area.min + vec2(col as f32 * w, row as f32 * h),
+                vec2(w, h),
+            );
+            let Some(ni) = self.net_idx(net) else {
+                continue;
+            };
+            let Some(bi) = self.nets[ni].buffer(k) else {
+                continue;
+            };
+            let mut pane = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(rect.shrink(2.0))
+                    .id_salt(("pane", net, k)),
+            );
+            pane.set_clip_rect(rect);
+            let active = i == self.pane;
+            if !active && ui.rect_contains_pointer(rect) && ui.input(|i| i.pointer.any_pressed()) {
+                focus = Some(i);
+            }
+            if self.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
+                egui::Panel::right("members")
+                    .default_size(200.0)
+                    .size_range(140.0..=360.0)
+                    .show(&mut pane, |ui| self.members(ui, ni, bi));
+            }
+            if self.chat(&mut pane, ni, bi, active, n > 1) {
+                close = Some(i);
+            }
+            if active && n > 1 {
+                let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
+                ui.painter()
+                    .rect_stroke(rect.shrink(1.0), 4.0, stroke, egui::StrokeKind::Inside);
+            }
+        }
+        if let Some(i) = close {
+            self.close_pane(i);
+        } else if let Some(i) = focus {
+            self.focus_pane(i);
+        }
     }
 
     fn toast(&mut self, text: String) {
@@ -574,7 +727,12 @@ impl App {
                         .cmp(&(b.info.kind == BufferKind::Dm, &b.key))
                 });
                 if n.selected.as_deref() == Some(&old) {
-                    n.selected = Some(new);
+                    n.selected = Some(new.clone());
+                }
+                for p in &mut self.panes {
+                    if p.0 == network && p.1 == old {
+                        p.1 = new.clone();
+                    }
                 }
             }
             Event::Messages {
@@ -587,14 +745,13 @@ impl App {
                     let v = i.viewport();
                     i.focused || (v.minimized != Some(true) && v.occluded != Some(true))
                 });
-                let on_screen = self.current.as_deref() == Some(&network);
+                let k = key(&target);
+                let viewing = seen && self.panes.iter().any(|p| p.0 == network && p.1 == k);
                 let Some(ni) = self.net_idx(&network) else {
                     return;
                 };
                 let n = &mut self.nets[ni];
-                let k = key(&target);
                 let Some(bi) = n.buffer(&k) else { return };
-                let viewing = seen && on_screen && n.selected.as_deref() == Some(&k);
                 let b = &mut n.buffers[bi];
                 b.older_asked = None;
                 let new = b.log.merge(&messages);
@@ -1288,7 +1445,16 @@ impl App {
         }
     }
 
-    fn chat(&mut self, ui: &mut egui::Ui, ni: usize, bi: usize) {
+    /// One buffer's pane. `active`: the focused pane, which takes the
+    /// composer focus. Returns whether its close button was clicked.
+    fn chat(
+        &mut self,
+        ui: &mut egui::Ui,
+        ni: usize,
+        bi: usize,
+        active: bool,
+        closable: bool,
+    ) -> bool {
         let network = self.nets[ni].info.network.clone();
         let own = self.nets[ni].info.nick.clone();
         let connected = self.nets[ni].info.state == ConnState::Connected;
@@ -1305,8 +1471,9 @@ impl App {
         let n = &mut self.nets[ni];
         let (b, profiles, media, devices) =
             (&mut n.buffers[bi], &n.profiles, &mut n.media, &n.devices);
-        let focus = std::mem::take(&mut n.focus);
+        let focus = active && std::mem::take(&mut n.focus);
         let target = b.info.target.clone();
+        let mut close = false;
         // Set inside the panels, acted on once `b` is free again.
         let mut attach = false;
         let mut emoji_at = None;
@@ -1321,7 +1488,22 @@ impl App {
         }
 
         egui::Panel::top("topic").show(ui, |ui| {
+            if closable {
+                // A child, so it doesn't push the topic row down.
+                let at = egui::Rect::from_min_size(
+                    ui.max_rect().right_top() - vec2(24.0, 0.0),
+                    vec2(24.0, 24.0),
+                );
+                close = ui
+                    .new_child(egui::UiBuilder::new().max_rect(at))
+                    .button(icons::X)
+                    .tip("Close pane")
+                    .clicked();
+            }
             ui.horizontal(|ui| {
+                if closable {
+                    ui.set_max_width(ui.available_width() - 28.0);
+                }
                 ui.heading(&target);
                 if b.info.kind == BufferKind::Dm {
                     let status = match (b.info.online, b.info.away) {
@@ -1531,7 +1713,7 @@ impl App {
                 .ui(ui, &own, b.info.kind == BufferKind::Channel, &mut extras);
             if !out.at_bottom {
                 let pos = ui.max_rect().right_bottom() - vec2(16.0, 16.0);
-                egui::Area::new(egui::Id::unique("jump-latest"))
+                egui::Area::new(egui::Id::unique(("jump-latest", &network, &b.key)))
                     .fixed_pos(pos)
                     .pivot(Align2::RIGHT_BOTTOM)
                     .show(ui.ctx(), |ui| {
@@ -1646,6 +1828,7 @@ impl App {
                 },
             }
         }
+        close
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
@@ -2421,6 +2604,21 @@ impl eframe::App for App {
         if step != 0 {
             self.step_buffer(step);
         }
+        self.tile(&ctx);
+        if self.panes.len() > 1 {
+            for k in [
+                Key::ArrowLeft,
+                Key::ArrowRight,
+                Key::ArrowUp,
+                Key::ArrowDown,
+            ] {
+                if ctx.input_mut(|i| {
+                    i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, k))
+                }) {
+                    self.step_pane(k);
+                }
+            }
+        }
         // shortcut: winit 0.30 has no drag-and-drop on Wayland, so this only
         // fires on X11 and Windows; paste and the paperclip work everywhere.
         let (dropped, hovering) = ctx.input(|i| {
@@ -2459,36 +2657,26 @@ impl eframe::App for App {
             .show(ui, |ui| self.rail(ui));
 
         let ni = self.current.as_deref().and_then(|c| self.net_idx(c));
-        let bi = ni.and_then(|ni| {
-            let n = &self.nets[ni];
-            n.selected.as_deref().and_then(|k| n.buffer(k))
-        });
         if let Some(ni) = ni {
             egui::Panel::left("channels")
                 .default_size(240.0)
                 .size_range(160.0..=400.0)
                 .show(ui, |ui| self.channels(ui, ni));
         }
-        if let (Some(ni), Some(bi)) = (ni, bi)
-            && self.nets[ni].buffers[bi].info.kind == BufferKind::Channel
-        {
-            egui::Panel::right("members")
-                .default_size(200.0)
-                .size_range(140.0..=360.0)
-                .show(ui, |ui| self.members(ui, ni, bi));
-        }
-        egui::CentralPanel::default().show(ui, |ui| match (ni, bi) {
+        egui::CentralPanel::default().show(ui, |ui| match ni {
             _ if watching && !self.stage.popped => self.stage_ui(ui, &ctx),
-            (None, _) => self.welcome(ui),
-            (Some(_), None) => {
+            None => self.welcome(ui),
+            Some(_) if self.panes.is_empty() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No channels yet. Join one with + on the left.").weak());
                 });
             }
-            (Some(ni), Some(bi)) => self.chat(ui, ni, bi),
+            Some(_) => self.tiles(ui),
         });
 
         self.dialogs(&ctx);
+        // Picks made while drawing show next frame.
+        self.tile(&ctx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

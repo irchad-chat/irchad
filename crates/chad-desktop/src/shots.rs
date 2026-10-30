@@ -190,6 +190,36 @@ fn live() {
     s.shot("live_light");
 }
 
+/// Split panes: #general and #dev side by side, Ctrl+Left back to #general,
+/// then #dev closed. Same setup as `live`.
+#[test]
+#[ignore]
+fn live_panes() {
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", "alice");
+    s.type_into("Password", "alicepass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(2);
+    s.click("#dev");
+    s.settle(1);
+    s.shot("panes_two");
+    s.harness
+        .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::ArrowLeft);
+    s.settle(1);
+    s.shot("panes_focus_left");
+    s.harness
+        .get_all_by_label("Close pane")
+        .last()
+        .unwrap()
+        .click();
+    s.settle(1);
+    s.shot("panes_closed");
+}
+
 /// Phase 5: an inline image and a link preview, the profile dialog, the
 /// quick switcher and the emoji picker. Same setup as `live`; set
 /// `IRCHAD_SHOTS_IMAGE` to an uploaded image's URL.

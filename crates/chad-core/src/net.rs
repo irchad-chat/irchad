@@ -902,8 +902,15 @@ impl Net {
                 let key = self.fold(chan);
                 // Members keep only their highest prefix, so a WHO is simpler than replaying the change.
                 if self.joined.contains(&key)
-                    && self.buffers.get(&key).is_some_and(|b| !b.members.is_empty())
-                    && self.isupport.prefix().iter().any(|(c, _)| modes.contains(*c))
+                    && self
+                        .buffers
+                        .get(&key)
+                        .is_some_and(|b| !b.members.is_empty())
+                    && self
+                        .isupport
+                        .prefix()
+                        .iter()
+                        .any(|(c, _)| modes.contains(*c))
                 {
                     self.who(chan.to_owned());
                 }

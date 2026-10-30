@@ -31,6 +31,8 @@ pub struct Settings {
     /// Away by choice, on every network.
     pub away: bool,
     pub check_updates: bool,
+    /// Opening a channel splits the window instead of replacing the one on screen.
+    pub panes: bool,
 }
 
 impl Default for Settings {
@@ -48,6 +50,7 @@ impl Default for Settings {
             away_after: 10,
             away: false,
             check_updates: true,
+            panes: true,
         }
     }
 }
@@ -132,6 +135,13 @@ impl Settings {
                         .labelled_by(l.id);
                     ui.label("idle minutes (0: never)");
                 });
+                ui.end_row();
+
+                ui.label("Layout");
+                ui.checkbox(
+                    &mut self.panes,
+                    "Open channels side by side (Ctrl+arrows move between them)",
+                );
                 ui.end_row();
 
                 ui.label("Updates");
