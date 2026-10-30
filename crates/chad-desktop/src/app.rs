@@ -115,6 +115,8 @@ struct Network {
     buffers: Vec<Buffer>,
     /// Key of the buffer on screen.
     selected: Option<String>,
+    /// Put the cursor in the composer on the next frame.
+    focus: bool,
     icon: Icon,
     /// By `key(nick)`.
     profiles: HashMap<String, Profile>,
@@ -204,6 +206,7 @@ impl Network {
     /// Shows a buffer, with the "new messages" line above the first unread one.
     fn select(&mut self, k: &str) {
         self.selected = Some(k.to_owned());
+        self.focus = true;
         let Some(i) = self.buffer(k) else { return };
         let b = &mut self.buffers[i];
         let mut left = b.info.unread;
@@ -448,6 +451,7 @@ impl App {
                             info,
                             buffers: Vec::new(),
                             selected: None,
+                            focus: false,
                             icon: Icon::None,
                             profiles: HashMap::new(),
                             media: Media::default(),
@@ -548,6 +552,22 @@ impl App {
                     if let Some(first) = n.buffers.first().map(|b| b.key.clone()) {
                         n.select(&first);
                     }
+                }
+            }
+            Event::BufferRenamed { network, from, to } => {
+                let Some(ni) = self.net_idx(&network) else {
+                    return;
+                };
+                let n = &mut self.nets[ni];
+                let (old, new) = (key(&from), key(&to));
+                let Some(bi) = n.buffer(&old) else { return };
+                n.buffers[bi].key = new.clone();
+                n.buffers.sort_by(|a, b| {
+                    (a.info.kind == BufferKind::Dm, &a.key)
+                        .cmp(&(b.info.kind == BufferKind::Dm, &b.key))
+                });
+                if n.selected.as_deref() == Some(&old) {
+                    n.selected = Some(new);
                 }
             }
             Event::Messages {
@@ -1245,6 +1265,7 @@ impl App {
         let auto_media = self.settings.load_media;
         let n = &mut self.nets[ni];
         let (b, profiles, media) = (&mut n.buffers[bi], &n.profiles, &mut n.media);
+        let focus = std::mem::take(&mut n.focus);
         let target = b.info.target.clone();
         // Set inside the panels, acted on once `b` is free again.
         let mut attach = false;
@@ -1358,6 +1379,9 @@ impl App {
                     .inner
                 })
                 .inner;
+            if focus {
+                resp.request_focus();
+            }
             // Screen readers get the hint as the field's name.
             ui.ctx()
                 .accesskit_node_builder(resp.id, |n| n.set_label(format!("Message {target}")));

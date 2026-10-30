@@ -168,6 +168,24 @@ impl Store {
         );
     }
 
+    /// `draft/channel-rename`: the buffer and its scrollback move to `new`.
+    pub fn rename_buffer(&self, old: &str, new: &str, name: &str) {
+        ok(
+            "rename buffer",
+            self.db.execute_batch("BEGIN").and_then(|()| {
+                self.db.execute(
+                    "UPDATE buffers SET key = ?2, name = ?3 WHERE key = ?1",
+                    [old, new, name],
+                )?;
+                self.db.execute(
+                    "UPDATE messages SET buffer = ?2 WHERE buffer = ?1",
+                    [old, new],
+                )?;
+                self.db.execute_batch("COMMIT")
+            }),
+        );
+    }
+
     /// False if a message with this msgid is already stored.
     pub fn insert(&self, buffer: &str, m: &ChatMessage) -> bool {
         let kind = match m.kind {

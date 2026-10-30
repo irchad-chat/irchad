@@ -436,6 +436,19 @@ fn dms_presence_and_ctcp() {
 }
 
 #[test]
+fn members_wait_for_join() {
+    let mut n = net();
+    n.attach("bob");
+    out(&mut n);
+    n.command(NetCommand::Members {
+        channel: "#c".into(),
+    });
+    assert!(out(&mut n).is_empty());
+    feed(&mut n, ":bob!u@h JOIN #c bob :bob");
+    assert!(out(&mut n)[0].ends_with("WHO #c %tcnfa,1"));
+}
+
+#[test]
 fn members_and_presence() {
     let mut n = net();
     attach(&mut n, &["#c"]);
@@ -446,7 +459,7 @@ fn members_and_presence() {
     assert!(who[0].ends_with("WHO #c %tcnfa,1"));
     for l in [
         format!("@label={} :s BATCH +w labeled-response", label_of(&who[0])),
-        "@batch=w :s 354 bob 1 #c alice H@+ alice".into(),
+        "@batch=w :s 354 bob 1 #c alice H+@ alice".into(),
         "@batch=w :s 354 bob 1 #c carol G 0".into(),
         "@batch=w :s 315 bob #c :End".into(),
         ":s BATCH -w".into(),
@@ -464,7 +477,7 @@ fn members_and_presence() {
             .unwrap()
     };
     let m = members(&mut n);
-    assert_eq!(m[0].prefix, "@+");
+    assert_eq!(m[0].prefix, "@");
     assert_eq!(m[1].account, None);
     assert!(m[1].away);
 
@@ -776,4 +789,45 @@ fn profiles_and_away() {
             "AWAY"
         ]
     );
+}
+
+#[test]
+fn channel_rename_keeps_history_and_ends_the_call() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * LS :draft/metadata-2"));
+    n.caps.handle(&line("CAP * ACK :draft/metadata-2"));
+    n.store.insert("#old", &msg("o1", 1000, "alice", "before"));
+    attach(&mut n, &["#old", "#taken"]);
+    n.command(NetCommand::JoinVoice {
+        channel: "#old".into(),
+    });
+    n.voice_connected();
+    out(&mut n);
+    events(&mut n);
+
+    // Onto a channel we already hold: ignored.
+    feed(&mut n, ":s RENAME #old #Taken :x");
+    assert!(events(&mut n).is_empty());
+
+    feed(&mut n, ":s RENAME #old #New :tidy");
+    let ev = events(&mut n);
+    assert!(
+        matches!(&ev[0], Event::BufferRenamed { from, to, .. } if from == "#old" && to == "#New")
+    );
+    assert!(buffer(&ev, "#New").is_some());
+    assert_eq!(voice_state(&ev), Some(VoiceState::Idle));
+    assert_eq!(out(&mut n), ["METADATA * SET chad/voice"]);
+    assert_eq!(n.store.recent("#new", 10)[0].text, "before");
+    assert!(
+        n.store
+            .buffers()
+            .iter()
+            .any(|b| b.key == "#new" && b.name == "#New")
+    );
+    assert!(n.joined.contains("#new") && !n.joined.contains("#old"));
+
+    // Unknown channel, or a new name that isn't a channel: nothing happens.
+    feed(&mut n, ":s RENAME #nope #other :x");
+    feed(&mut n, ":s RENAME #new alice :x");
+    assert!(events(&mut n).is_empty());
 }

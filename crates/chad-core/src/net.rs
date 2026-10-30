@@ -101,6 +101,8 @@ pub struct Net {
     /// Always-on, per `PERSISTENCE STATUS`. ergo's default (D11).
     persistent: bool,
     joined: HashSet<String>,
+    /// `Members` asked before our JOIN landed; WHO then would miss +i users and us.
+    who_wanted: HashSet<String>,
     pub voice: Option<Voice>,
     /// A `JoinVoice` was accepted: `conn` takes this and fetches a token.
     pub voice_request: Option<String>,
@@ -142,6 +144,7 @@ impl Net {
             synced: false,
             persistent: true,
             joined: HashSet::new(),
+            who_wanted: HashSet::new(),
             voice: None,
             voice_request: None,
             voice_published: false,
@@ -206,6 +209,7 @@ impl Net {
         self.connected = true;
         self.synced = false;
         self.joined.clear();
+        self.who_wanted.clear();
         self.set_state(ConnState::Connected);
         self.persistent = !self.guest;
         if let Some(m) = &self.away {
@@ -380,13 +384,22 @@ impl Net {
                 self.history(&key, Hist::Around, &format!("msgid={msgid}"));
             }
             NetCommand::Members { channel } => {
-                let m = Message::new("WHO", [channel.as_str(), "%tcnfa,1"]);
-                self.send_labeled(m, Pending::Who { channel });
+                let key = self.fold(&channel);
+                if self.joined.contains(&key) {
+                    self.who(channel);
+                } else if self.who_wanted.len() < MAX_BUFFERS {
+                    self.who_wanted.insert(key);
+                }
             }
             NetCommand::JoinChannel { channel } => self.out.push(Message::new("JOIN", [channel])),
             NetCommand::Part { channel } => self.out.push(Message::new("PART", [channel])),
             NetCommand::OpenDm { .. } => {}
         }
+    }
+
+    fn who(&mut self, channel: String) {
+        let m = Message::new("WHO", [channel.as_str(), "%tcnfa,1"]);
+        self.send_labeled(m, Pending::Who { channel });
     }
 
     fn send_text(&mut self, target: &str, text: &str, reply_to: Option<String>) {
@@ -635,7 +648,12 @@ impl Net {
                         nick: nick.to_owned(),
                         account: m.param(5).filter(|a| *a != "0").map(str::to_owned),
                         away: flags.starts_with('G'),
-                        prefix: flags.chars().filter(|c| prefixes.contains(*c)).collect(),
+                        // multi-prefix sends them all; PREFIX order is highest first.
+                        prefix: prefixes
+                            .chars()
+                            .find(|p| flags.contains(*p))
+                            .map(String::from)
+                            .unwrap_or_default(),
                     };
                     members.insert(self.fold(nick), member);
                 }
@@ -745,6 +763,9 @@ impl Net {
                 let key = self.fold(chan);
                 if me {
                     let new = !self.buffers.contains_key(&key);
+                    if self.who_wanted.remove(&key) {
+                        self.who(chan.to_owned());
+                    }
                     if (!new || self.add_buffer(chan, BufferKind::Channel))
                         && self.joined.insert(key.clone())
                         && self.synced
@@ -794,6 +815,53 @@ impl Net {
                     {
                         self.emit_members(&key);
                     }
+                }
+            }
+            "RENAME" => {
+                let (Some(old), Some(new)) = (
+                    m.param(0),
+                    m.param(1).filter(|c| valid_name(c) && self.is_channel(c)),
+                ) else {
+                    return;
+                };
+                let (ok, nk) = (self.fold(old), self.fold(new));
+                // ergo never renames onto an existing channel; don't merge two buffers.
+                if ok != nk && self.buffers.contains_key(&nk) {
+                    return;
+                }
+                let Some(mut b) = self.buffers.remove(&ok) else {
+                    return;
+                };
+                let from = std::mem::replace(&mut b.name, new.to_owned());
+                self.buffers.insert(nk.clone(), b);
+                self.store.rename_buffer(&ok, &nk, new);
+                if self.joined.remove(&ok) {
+                    self.joined.insert(nk.clone());
+                }
+                if self.who_wanted.remove(&ok) {
+                    self.who_wanted.insert(nk.clone());
+                }
+                self.typing_sent.remove(&ok);
+                // Their calls are in the old room; they republish `chad/voice` when they rejoin.
+                self.voice_of.retain(|_, (_, c)| *c != ok);
+                let network = self.id();
+                self.events.push(Event::BufferRenamed {
+                    network,
+                    from: from.clone(),
+                    to: new.to_owned(),
+                });
+                self.emit_buffer(&nk);
+                self.emit_members(&nk);
+                self.emit_voice_members(&nk);
+                // The LiveKit room is named after the channel.
+                if self
+                    .voice
+                    .as_ref()
+                    .is_some_and(|v| self.fold(&v.channel) == ok)
+                {
+                    self.voice_ended(Some(format!(
+                        "{from} was renamed to {new}. Join voice again."
+                    )));
                 }
             }
             "QUIT" => {

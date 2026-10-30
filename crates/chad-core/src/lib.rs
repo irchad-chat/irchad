@@ -241,6 +241,12 @@ pub enum Event {
         network: String,
         target: String,
     },
+    /// An op renamed a channel. A `Buffer` with the new name follows.
+    BufferRenamed {
+        network: String,
+        from: String,
+        to: String,
+    },
     /// New or updated messages, oldest first. Merge by `msgid` (or `local_id`
     /// for your own not yet echoed) and keep sorted by `time`.
     Messages {
