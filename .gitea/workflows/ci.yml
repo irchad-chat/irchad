@@ -1,0 +1,29 @@
+
+  # Push to main: build chadd against trixie's glibc and swap it on chad-prod
+  # (deploy/native/README.md). PROD_SSH_KEY: a private key in root's
+  # authorized_keys on the server.
+  deploy-chadd:
+    needs: linux
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-chadd
+    env:
+      HOST: root@64.177.55.62
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          docker build -f deploy/chadd.Dockerfile -t irchad-chadd .
+          docker cp "$(docker create irchad-chadd)":/usr/local/bin/chadd ./chadd
+      - name: Deploy
+        env:
+          KEY: ${{ secrets.PROD_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id && chmod 600 ~/.ssh/id
+          echo "64.177.55.62 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJxUsvP6xFUASiojiJKnRe5VBg1J+JT6PrufoK9RoGcm" > ~/.ssh/known_hosts
+          # Write beside, then rename: overwriting a running binary fails with ETXTBSY.
+          ssh -i ~/.ssh/id "$HOST" 'cat > /usr/local/bin/chadd.new && chmod 755 /usr/local/bin/chadd.new \
+            && mv /usr/local/bin/chadd.new /usr/local/bin/chadd \
+            && systemctl restart chadd && sleep 2 && systemctl is-active chadd' < chadd
