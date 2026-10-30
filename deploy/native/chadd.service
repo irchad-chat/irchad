@@ -1,0 +1,27 @@
+[Unit]
+Description=IrChad chadd (discovery, auth, tokens)
+After=network-online.target ergo.service
+Wants=network-online.target
+
+[Service]
+User=chadd
+Group=chadd
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/chadd /etc/chadd/chadd.toml
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

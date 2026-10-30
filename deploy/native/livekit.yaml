@@ -1,0 +1,11 @@
+# IrChad production LiveKit config. The API key/secret come from LIVEKIT_KEYS
+# in /etc/livekit/env, and the public IP from --node-ip (see livekit.service).
+port: 7880
+bind_addresses: ["127.0.0.1"]
+log_level: info
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false

@@ -108,3 +108,9 @@ It's LiveKit-only state, so IRC clients never see it.
 The first `/sys/class/drm/renderD*` node whose PCI vendor we know decides: AMD/Intel → H.264 with the VAAPI backend, Nvidia → AV1 with NVENC, anything else → VP9 in software.
 The SDK falls back on its own if that encoder isn't available (for example `LIBVA_DRIVER_NAME` pointing at a decode-only driver, or a build without CUDA headers, which compiles NVENC out). We log the encoder libwebrtc really picked from the outbound-rtp stats.
 Off Linux there's no probe yet, so Windows encodes VP9 in software.
+
+## D24: Production runs natively under systemd, not compose (2026-10-29)
+The first production box (`chat.gentoo.party`, Debian 13, 1 vCPU / 2 GB) runs ergo, LiveKit, chadd and Caddy as plain binaries with hardened systemd units. Files are in `deploy/native/`.
+Every service is a single binary, so containers bought us little, and Docker's bridge NAT and per-port `docker-proxy` sit in LiveKit's UDP media path.
+Persistent history stays in ergo's SQLite (no MariaDB), to save RAM on a small box.
+`deploy/compose.yaml` stays the dev stack. `deploy/native/ergo-prod.py` derives the production `ircd.yaml` from `deploy/ergo.yaml`, so the two can't drift silently.

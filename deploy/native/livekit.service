@@ -1,0 +1,29 @@
+[Unit]
+Description=LiveKit SFU
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=livekit
+Group=livekit
+# Sets LIVEKIT_KEYS ("key: secret") and NODE_IP (the public IPv4).
+EnvironmentFile=/etc/livekit/env
+ExecStart=/usr/local/bin/livekit-server --config /etc/livekit/livekit.yaml --node-ip ${NODE_IP}
+Restart=on-failure
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

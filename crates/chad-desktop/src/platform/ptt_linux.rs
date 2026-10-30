@@ -24,7 +24,8 @@ pub fn listen(voice: Voice, bind: PttBind, stop: Arc<AtomicBool>, report: Report
             }
             voice.set_ptt(false);
         });
-    } else if std::env::var_os("DISPLAY").is_some() {
+    } else if cfg!(feature = "x11") && std::env::var_os("DISPLAY").is_some() {
+        #[cfg(feature = "x11")]
         std::thread::spawn(move || {
             if let Err(e) = x11(&voice, bind, &stop, &report) {
                 tracing::warn!("XInput2: {e}");
@@ -81,6 +82,7 @@ async fn portal(
     Ok(())
 }
 
+#[cfg(feature = "x11")]
 fn x11(
     voice: &Voice,
     bind: PttBind,

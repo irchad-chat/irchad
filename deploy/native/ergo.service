@@ -1,0 +1,30 @@
+[Unit]
+Description=ergo IRC server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ergo
+Group=ergo
+ExecStart=/opt/ergo/ergo run --conf /etc/ergo/ircd.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+LimitNOFILE=65536
+StateDirectory=ergo
+WorkingDirectory=/var/lib/ergo
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

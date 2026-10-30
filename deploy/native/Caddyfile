@@ -1,0 +1,27 @@
+# Production routing per docs/ARCHITECTURE.md; same routes as deploy/Caddyfile,
+# services on loopback. Caddy gets the certificate from Let's Encrypt.
+
+{$IRCHAD_HOST} {
+	handle /.well-known/irchad.json {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle / {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /invite* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /irc {
+		reverse_proxy 127.0.0.1:8097
+	}
+	# The LiveKit SDK appends /rtc etc. to the URL, so strip our prefix.
+	handle_path /livekit/* {
+		reverse_proxy 127.0.0.1:7880
+	}
+	handle {
+		respond 404
+	}
+}
