@@ -895,6 +895,19 @@ impl Net {
                     }
                 }
             }
+            "MODE" => {
+                let (Some(chan), Some(modes)) = (m.param(0), m.param(1)) else {
+                    return;
+                };
+                let key = self.fold(chan);
+                // Members keep only their highest prefix, so a WHO is simpler than replaying the change.
+                if self.joined.contains(&key)
+                    && self.buffers.get(&key).is_some_and(|b| !b.members.is_empty())
+                    && self.isupport.prefix().iter().any(|(c, _)| modes.contains(*c))
+                {
+                    self.who(chan.to_owned());
+                }
+            }
             "RENAME" => {
                 let (Some(old), Some(new)) = (
                     m.param(0),

@@ -484,6 +484,11 @@ fn members_and_presence() {
 
     feed(&mut n, ":dave!u@h JOIN #c dave :Dave");
     assert_eq!(members(&mut n)[2].account.as_deref(), Some("dave"));
+    // ergo grants a founder's +q after the JOIN; only prefix modes refresh the list.
+    feed(&mut n, ":s MODE #c +q dave");
+    assert!(out(&mut n)[0].ends_with("WHO #c %tcnfa,1"));
+    feed(&mut n, ":s MODE #c +t");
+    assert!(out(&mut n).is_empty());
     feed(&mut n, ":carol!u@h AWAY");
     assert!(!members(&mut n)[1].away);
     feed(&mut n, ":dave!u@h NICK dan");
