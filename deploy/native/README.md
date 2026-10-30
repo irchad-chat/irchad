@@ -14,7 +14,7 @@ The firewall is `/etc/nftables.conf`: 22, 80, 443 tcp, 443 udp, 7881 tcp, 50000-
 
 ## Updating
 
-- **chadd:** build against trixie's glibc, then copy the binary over and restart.
+- **chadd:** CI's `deploy-chadd` job does this on every push to `main` once the Linux checks pass. To do it by hand, build against trixie's glibc, then copy the binary over and restart.
   ```sh
   podman build -f deploy/chadd.Dockerfile -t irchad-chadd .
   podman cp $(podman create irchad-chadd):/usr/local/bin/chadd ./chadd
