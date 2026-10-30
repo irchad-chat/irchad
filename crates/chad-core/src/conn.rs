@@ -3,7 +3,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use chad_irc::Message;
 use chad_irc::cap::Negotiator;
@@ -18,9 +17,9 @@ use url::Url;
 
 use crate::chadd::{self, Session};
 use crate::manager::Sink;
-use crate::net::{Net, VOICE_KEY, failure};
+use crate::net::{AVATAR_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure};
 use crate::secrets::SecretStore;
-use crate::{ConnState, Event, Media, MediaEvent, NetCommand, discovery};
+use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
 
 pub enum ToNet {
     Cmd(NetCommand),
@@ -45,7 +44,7 @@ pub struct Params {
     pub secrets: Arc<dyn SecretStore>,
     pub media: Option<Arc<dyn Media>>,
     /// chadd session, reused until it expires.
-    pub session: Option<Session>,
+    pub session: Arc<tokio::sync::Mutex<Option<Session>>>,
 }
 
 enum End {
@@ -115,7 +114,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                     match rx.recv().await {
                         Some(ToNet::Cmd(NetCommand::SignIn { password })) => {
                             p.password = Some(password);
-                            p.session = None;
+                            p.session = Default::default();
                             p.save_password = true;
                             backoff.reset();
                             break;
@@ -172,6 +171,12 @@ async fn discover(net: &mut Net) -> Result<Discovery, String> {
     };
     net.info.name = d.name.clone();
     net.info.icon = d.icon.clone();
+    net.info.uploads = d
+        .chadd
+        .uploads
+        .as_ref()
+        .filter(|_| !net.guest)
+        .map(|u| u.max_bytes);
     Ok(d)
 }
 
@@ -243,7 +248,10 @@ async fn session(
             auth_started = true;
             // Before CAP END, so the reattach burst includes everyone's value.
             if net.caps.enabled("draft/metadata-2") {
-                out.push(Message::new("METADATA", ["*", "SUB", VOICE_KEY]));
+                out.push(Message::new(
+                    "METADATA",
+                    ["*", "SUB", VOICE_KEY, DISPLAY_NAME_KEY, AVATAR_KEY],
+                ));
             }
             if p.guest {
                 out.push(net.caps.end());
@@ -326,6 +334,12 @@ async fn session(
 
     net.attach(&nick);
     backoff.reset();
+    let client = Arc::new(chadd::Client::new(
+        d.chadd.api.clone(),
+        p.account.clone(),
+        (!p.guest).then(|| password.to_owned()),
+        p.session.clone(),
+    ));
     // Dropping `call` hangs up.
     let mut call: Option<mpsc::UnboundedReceiver<MediaEvent>> = None;
     let mut token: Option<JoinHandle<TokenResult>> = None;
@@ -333,13 +347,7 @@ async fn session(
         if let Some(channel) = net.voice_request.take() {
             call = None;
             if p.media.is_some() {
-                token = Some(tokio::spawn(voice_token(
-                    d.chadd.api.clone(),
-                    p.account.clone(),
-                    password.to_owned(),
-                    p.session.clone(),
-                    channel,
-                )));
+                token = Some(tokio::spawn(voice_token(client.clone(), channel)));
             } else {
                 net.voice_ended(Some("Voice isn't available in this app.".into()));
             }
@@ -371,8 +379,7 @@ async fn session(
             },
             r = async { token.as_mut().expect("guarded").await }, if token.is_some() => {
                 token = None;
-                let Ok((session, channel, res)) = r else { continue };
-                p.session = session;
+                let Ok((channel, res)) = r else { continue };
                 let wanted = net.voice.as_ref().is_some_and(|v| v.channel == channel);
                 match (res, &p.media) {
                     (Ok(t), Some(media)) if wanted => {
@@ -396,7 +403,11 @@ async fn session(
                 }
             }
             cmd = rx.recv() => match cmd {
-                Some(ToNet::Cmd(c)) => net.command(c),
+                Some(ToNet::Cmd(c)) => {
+                    if let Some(c) = fetch(c, net, &client, sink) {
+                        net.command(c);
+                    }
+                }
                 Some(ToNet::Remove) => {
                     let _ = ws.send(&Message::new("QUIT", ["bye"])).await;
                     return End::Remove;
@@ -433,32 +444,106 @@ async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
     }
 }
 
-type TokenResult = (Option<Session>, String, Result<VoiceTokenResponse, String>);
+type TokenResult = (String, Result<VoiceTokenResponse, String>);
 
-/// A LiveKit token for `channel`, logging in to chadd first if the session
-/// is missing, expired or refused.
-async fn voice_token(
-    api: Url,
-    account: String,
-    password: String,
-    session: Option<Session>,
-    channel: String,
-) -> TokenResult {
-    if let Some(s) = session.filter(|s| s.until > Instant::now()) {
-        match chadd::voice_token(&api, &s.token, &channel).await {
-            Ok(t) => return (Some(s), channel, Ok(t)),
-            Err(chadd::Error::Unauthorized(_)) => {}
-            Err(e) => return (Some(s), channel, Err(e.message())),
+/// A LiveKit token for `channel`.
+async fn voice_token(client: Arc<chadd::Client>, channel: String) -> TokenResult {
+    let r = client
+        .call(|api, t| {
+            let channel = channel.clone();
+            async move { chadd::voice_token(&api, &t, &channel).await }
+        })
+        .await;
+    (channel, r)
+}
+
+/// Starts the chadd calls in the background, so a big upload doesn't hold up
+/// the chat; any other command comes back.
+fn fetch(
+    cmd: NetCommand,
+    net: &Net,
+    client: &Arc<chadd::Client>,
+    sink: &Sink,
+) -> Option<NetCommand> {
+    let network = net.info.network.clone();
+    let (client, sink) = (client.clone(), sink.clone());
+    match cmd {
+        NetCommand::Upload {
+            target,
+            name,
+            bytes,
+        } => {
+            let max = net.info.uploads;
+            tokio::spawn(async move {
+                let result = match max {
+                    None => Err("This server doesn't take uploads.".into()),
+                    Some(max) if bytes.0.len() as u64 > max => Err(format!(
+                        "That file is too big. The limit here is {} MB.",
+                        max >> 20
+                    )),
+                    Some(_) => {
+                        client
+                            .call(|api, t| {
+                                let (name, bytes) = (name.clone(), bytes.0.to_vec());
+                                async move { chadd::upload(&api, &t, &name, bytes).await }
+                            })
+                            .await
+                    }
+                };
+                sink.send([Event::Uploaded {
+                    network,
+                    target,
+                    result,
+                }]);
+            });
         }
+        NetCommand::Preview { url } => {
+            tokio::spawn(async move {
+                let preview = client
+                    .call(|api, t| {
+                        let url = url.clone();
+                        async move { chadd::preview(&api, &t, &url).await }
+                    })
+                    .await
+                    .ok();
+                sink.send([Event::Preview {
+                    network,
+                    url,
+                    preview,
+                }]);
+            });
+        }
+        NetCommand::Media { url } => {
+            tokio::spawn(async move {
+                // Our own uploads: same server, nothing new learns our IP.
+                let own = Url::parse(&url)
+                    .ok()
+                    .zip(Url::parse(&network).ok())
+                    .is_some_and(|(u, n)| u.origin() == n.origin());
+                let result = if own {
+                    discovery::get(&url, chadd::MAX_MEDIA)
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|b| b.ok_or_else(|| "That image is too big.".into()))
+                } else {
+                    client
+                        .call(|api, t| {
+                            let url = url.clone();
+                            async move { chadd::media(&api, &t, &url).await }
+                        })
+                        .await
+                };
+                let result = result.map(|b| Blob(b.into()));
+                sink.send([Event::Media {
+                    network,
+                    url,
+                    result,
+                }]);
+            });
+        }
+        cmd => return Some(cmd),
     }
-    let s = match chadd::login(&api, &account, &password).await {
-        Ok(s) => s,
-        Err(e) => return (None, channel, Err(e.message())),
-    };
-    let r = chadd::voice_token(&api, &s.token, &channel)
-        .await
-        .map_err(chadd::Error::message);
-    (Some(s), channel, r)
+    None
 }
 
 /// A line we built from server-supplied names may not serialize; skip it

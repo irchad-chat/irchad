@@ -9,15 +9,21 @@ pub const CORNERS_IN: &str = "\u{E1CE}";
 pub const CORNERS_OUT: &str = "\u{E1D0}";
 pub const DOTS_THREE: &str = "\u{E1FE}";
 pub const EYE: &str = "\u{E220}";
+pub const FILE: &str = "\u{E230}";
 pub const GEAR: &str = "\u{E270}";
 pub const HEADPHONES: &str = "\u{E2A6}";
 pub const MICROPHONE: &str = "\u{E326}";
 pub const MICROPHONE_SLASH: &str = "\u{E328}";
 pub const MONITOR: &str = "\u{E32E}";
+pub const MOON: &str = "\u{E330}";
+pub const PAPERCLIP: &str = "\u{E39A}";
 pub const PHONE_DISCONNECT: &str = "\u{E3BC}";
+pub const PLAY: &str = "\u{E3D0}";
 pub const SCREENCAST: &str = "\u{E404}";
+pub const SMILEY: &str = "\u{E436}";
 pub const SPEAKER_HIGH: &str = "\u{E44A}";
 pub const TRASH: &str = "\u{E4A6}";
+pub const USER_CIRCLE: &str = "\u{E4C4}";
 pub const X: &str = "\u{E4F6}";
 
 /// Adds the icon font as a lowest-priority proportional fallback, so icons mix

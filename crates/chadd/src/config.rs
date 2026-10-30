@@ -26,6 +26,21 @@ pub struct Config {
     pub endpoints: Endpoints,
     pub ergo: Ergo,
     pub livekit: Livekit,
+    /// Leave out to turn uploads off.
+    pub uploads: Option<Uploads>,
+}
+
+/// Files go to `<dir>/<id>/<name>` and are served at `<origin>/uploads/…`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Uploads {
+    pub dir: std::path::PathBuf,
+    #[serde(default = "default_max_bytes")]
+    pub max_bytes: u64,
+}
+
+fn default_max_bytes() -> u64 {
+    25 << 20
 }
 
 /// ergo's HTTP API, for checking passwords (`docs/notes/ergo-api.md`).
@@ -125,6 +140,9 @@ impl Config {
             },
             chadd: discovery::Chadd {
                 api: or(&self.endpoints.chadd_api, &self.origin, "/api")?,
+                uploads: self.uploads.as_ref().map(|u| discovery::Uploads {
+                    max_bytes: u.max_bytes,
+                }),
             },
             livekit: discovery::Livekit {
                 url: or(&self.endpoints.livekit, &ws_origin, "/livekit")?,

@@ -5,12 +5,16 @@
 //! any height change above the viewport shifts the scroll offset by the same
 //! amount, so what you're reading stays put.
 
+use std::collections::HashMap;
+
 use chad_core::{ChatMessage, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
+use url::Url;
 
 use crate::format;
 use crate::icons::{self, Tip};
+use crate::media::{self, Kind, Media};
 
 const ROW_GAP: f32 = 2.0;
 /// Room left of each row for the mention bar.
@@ -18,14 +22,57 @@ const GUTTER: f32 = 8.0;
 /// A new header after this much quiet, even from the same person.
 const GROUP_GAP_MS: i64 = 5 * 60 * 1000;
 pub const QUICK_REACTIONS: [&str; 4] = ["👍", "❤", "😂", "😮"];
+const AVATAR: f32 = 32.0;
+/// Inline images per message.
+const MAX_IMAGES: usize = 3;
+
+/// Someone's metadata, keyed by `app::key(nick)`.
+#[derive(Debug, Clone, Default)]
+pub struct Profile {
+    pub display_name: Option<String>,
+    pub avatar: Option<Url>,
+}
+
+/// What rows need besides the messages.
+pub struct Extras<'a> {
+    pub profiles: &'a HashMap<String, Profile>,
+    pub media: &'a mut Media,
+    /// The network's origin, to tell its own uploads apart.
+    pub network: &'a str,
+    /// Load images, previews and avatars without asking.
+    pub auto_media: bool,
+}
+
+/// The name to show for `nick`: their display name if they set one.
+pub fn shown<'a>(profiles: &'a HashMap<String, Profile>, nick: &'a str) -> &'a str {
+    profiles
+        .get(&nick.to_ascii_lowercase())
+        .and_then(|p| p.display_name.as_deref())
+        .unwrap_or(nick)
+}
 
 pub enum Action {
     Reply(usize),
-    React { msgid: String, emoji: String },
-    Unreact { msgid: String, emoji: String },
-    Delete { msgid: String },
-    Jump { msgid: String },
+    React {
+        msgid: String,
+        emoji: String,
+    },
+    Unreact {
+        msgid: String,
+        emoji: String,
+    },
+    Delete {
+        msgid: String,
+    },
+    Jump {
+        msgid: String,
+    },
     OpenDm(String),
+    /// Open the emoji picker to react to `msgid`, near `at`.
+    PickReaction {
+        msgid: String,
+        at: egui::Pos2,
+    },
 }
 
 #[derive(Default)]
@@ -187,7 +234,13 @@ impl ChatLog {
     }
 
     /// `highlights` is off in DMs, where every message is for you anyway.
-    pub fn ui(&mut self, ui: &mut egui::Ui, own_nick: &str, highlights: bool) -> Output {
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        own_nick: &str,
+        highlights: bool,
+        extras: &mut Extras,
+    ) -> Output {
         let line = ui.text_style_height(&egui::TextStyle::Body) + 2.0;
         self.set_width(ui.available_width() - 16.0, line);
         self.rebuild_prefix();
@@ -257,6 +310,7 @@ impl ChatLog {
                             own_nick,
                             highlights,
                             dark,
+                            extras,
                             &mut out.actions,
                         )
                     },
@@ -340,6 +394,7 @@ fn row_ui(
     own_nick: &str,
     highlights: bool,
     dark: bool,
+    extras: &mut Extras,
     actions: &mut Vec<Action>,
 ) {
     let new_day = prev.is_none_or(|p| day(p.time) != day(m.time));
@@ -361,81 +416,111 @@ fn row_ui(
 
     let bg = ui.painter().add(egui::Shape::Noop);
     let top = ui.cursor().min;
-    if header && m.kind != MessageKind::Action {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            let name = RichText::new(&m.nick)
-                .strong()
-                .color(nick_color(&m.nick, dark));
-            if ui
-                .add(egui::Label::new(name).sense(Sense::click()))
-                .on_hover_text(m.account.as_deref().unwrap_or("not logged in"))
-                .clicked()
-                && !m.own
-            {
-                actions.push(Action::OpenDm(m.nick.clone()));
+    let name = shown(extras.profiles, &m.nick);
+    ui.horizontal_top(|ui| {
+        let (avatar, _) = ui.allocate_exact_size(vec2(AVATAR, 1.0), Sense::hover());
+        ui.vertical(|ui| {
+            if header && m.kind != MessageKind::Action {
+                ui.add_space(4.0);
+                let at = Rect::from_min_size(
+                    egui::pos2(avatar.left(), ui.cursor().top()),
+                    vec2(AVATAR, AVATAR),
+                );
+                let profile = extras.profiles.get(&m.nick.to_ascii_lowercase());
+                extras.media.avatar(
+                    ui,
+                    at,
+                    name,
+                    profile.and_then(|p| p.avatar.as_ref()),
+                    extras.auto_media,
+                );
+                ui.horizontal(|ui| {
+                    let label = RichText::new(name)
+                        .strong()
+                        .color(nick_color(&m.nick, dark));
+                    let who = match &m.account {
+                        Some(a) if name != m.nick => format!("{} · account {a}", m.nick),
+                        Some(a) => format!("account {a}"),
+                        None => format!("{} · not logged in", m.nick),
+                    };
+                    if ui
+                        .add(egui::Label::new(label).sense(Sense::click()))
+                        .on_hover_text(who)
+                        .clicked()
+                        && !m.own
+                    {
+                        actions.push(Action::OpenDm(m.nick.clone()));
+                    }
+                    ui.label(RichText::new(clock(m.time)).weak().small());
+                });
             }
-            ui.label(RichText::new(clock(m.time)).weak().small());
-        });
-    }
-    if m.reply_to.is_some() {
-        let text = match parent {
-            Some(p) if p.redacted => {
-                format!("{} {}: (deleted)", icons::ARROW_BEND_DOWN_RIGHT, p.nick)
-            }
-            Some(p) => format!(
-                "{} {}: {}",
-                icons::ARROW_BEND_DOWN_RIGHT,
-                p.nick,
-                snippet(&format::strip(&p.text), 80)
-            ),
-            None => format!("{} Earlier message", icons::ARROW_BEND_DOWN_RIGHT),
-        };
-        let r = ui.add(
-            egui::Label::new(RichText::new(text).weak().small())
-                .sense(Sense::click())
-                .truncate(),
-        );
-        if r.on_hover_text("Jump to the message").clicked()
-            && let Some(id) = &m.reply_to
-        {
-            actions.push(Action::Jump { msgid: id.clone() });
-        }
-    }
-
-    if m.redacted {
-        ui.label(RichText::new("This message was deleted.").italics().weak());
-    } else {
-        body_ui(ui, m, dark);
-    }
-    if let SendStatus::Failed(why) = &m.status {
-        ui.label(
-            RichText::new(format!("Not sent: {why}"))
-                .small()
-                .color(ui.visuals().error_fg_color),
-        );
-    }
-    if !m.reactions.is_empty() && !m.redacted {
-        ui.horizontal_wrapped(|ui| {
-            for r in &m.reactions {
-                let mine = r.nicks.iter().any(|n| n == own_nick);
-                let chip = egui::Button::new(format!("{} {}", r.emoji, r.nicks.len()))
-                    .small()
-                    .selected(mine);
-                let resp = ui.add(chip).on_hover_text(r.nicks.join(", "));
-                if resp.clicked()
-                    && let Some(id) = &m.msgid
+            if m.reply_to.is_some() {
+                let text = match parent {
+                    Some(p) if p.redacted => {
+                        format!(
+                            "{} {}: (deleted)",
+                            icons::ARROW_BEND_DOWN_RIGHT,
+                            shown(extras.profiles, &p.nick)
+                        )
+                    }
+                    Some(p) => format!(
+                        "{} {}: {}",
+                        icons::ARROW_BEND_DOWN_RIGHT,
+                        shown(extras.profiles, &p.nick),
+                        snippet(&format::strip(&p.text), 80)
+                    ),
+                    None => format!("{} Earlier message", icons::ARROW_BEND_DOWN_RIGHT),
+                };
+                let r = ui.add(
+                    egui::Label::new(RichText::new(text).weak().small())
+                        .sense(Sense::click())
+                        .truncate(),
+                );
+                if r.on_hover_text("Jump to the message").clicked()
+                    && let Some(id) = &m.reply_to
                 {
-                    let (msgid, emoji) = (id.clone(), r.emoji.clone());
-                    actions.push(if mine {
-                        Action::Unreact { msgid, emoji }
-                    } else {
-                        Action::React { msgid, emoji }
-                    });
+                    actions.push(Action::Jump { msgid: id.clone() });
                 }
             }
+
+            if m.redacted {
+                ui.label(RichText::new("This message was deleted.").italics().weak());
+            } else {
+                body_ui(ui, m, name, dark);
+                links_ui(ui, m, extras);
+            }
+            if let SendStatus::Failed(why) = &m.status {
+                ui.label(
+                    RichText::new(format!("Not sent: {why}"))
+                        .small()
+                        .color(ui.visuals().error_fg_color),
+                );
+            }
+            if !m.reactions.is_empty() && !m.redacted {
+                ui.horizontal_wrapped(|ui| {
+                    for r in &m.reactions {
+                        let mine = r.nicks.iter().any(|n| n == own_nick);
+                        let chip = egui::Button::new(format!("{} {}", r.emoji, r.nicks.len()))
+                            .small()
+                            .selected(mine);
+                        let who: Vec<&str> =
+                            r.nicks.iter().map(|n| shown(extras.profiles, n)).collect();
+                        let resp = ui.add(chip).on_hover_text(who.join(", "));
+                        if resp.clicked()
+                            && let Some(id) = &m.msgid
+                        {
+                            let (msgid, emoji) = (id.clone(), r.emoji.clone());
+                            actions.push(if mine {
+                                Action::Unreact { msgid, emoji }
+                            } else {
+                                Action::React { msgid, emoji }
+                            });
+                        }
+                    }
+                });
+            }
         });
-    }
+    });
 
     let rect = Rect::from_min_max(
         top - vec2(GUTTER, 0.0),
@@ -497,6 +582,13 @@ fn toolbar(
                                 });
                             }
                         }
+                        let more = ui.small_button(icons::SMILEY).tip("Add a reaction");
+                        if more.clicked() {
+                            actions.push(Action::PickReaction {
+                                msgid: id.clone(),
+                                at: more.rect.left_bottom(),
+                            });
+                        }
                         if ui
                             .small_button(icons::ARROW_BEND_UP_LEFT)
                             .tip("Reply")
@@ -514,13 +606,35 @@ fn toolbar(
         .rect
 }
 
-fn body_ui(ui: &mut egui::Ui, m: &ChatMessage, dark: bool) {
+/// Images inline, videos and files as cards, and a preview of the first page.
+fn links_ui(ui: &mut egui::Ui, m: &ChatMessage, extras: &mut Extras) {
+    if m.kind == MessageKind::Notice {
+        return;
+    }
+    let (mut images, mut previewed) = (0, false);
+    for span in format::parse(&m.text).into_iter().filter(|s| s.link) {
+        match media::kind(&span.text, extras.network) {
+            Some(Kind::Image) if images < MAX_IMAGES => {
+                images += 1;
+                extras.media.image(ui, &span.text, extras.auto_media);
+            }
+            Some(k @ (Kind::Video | Kind::File)) => Media::card(ui, &span.text, k),
+            Some(Kind::Page) if !previewed => {
+                previewed = true;
+                extras.media.link_preview(ui, &span.text, extras.auto_media);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn body_ui(ui: &mut egui::Ui, m: &ChatMessage, name: &str, dark: bool) {
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         if m.kind == MessageKind::Action {
             ui.label(
-                RichText::new(format!("{} ", m.nick))
+                RichText::new(format!("{name} "))
                     .italics()
                     .strong()
                     .color(nick_color(&m.nick, dark)),

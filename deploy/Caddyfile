@@ -19,6 +19,9 @@
 	handle /api/* {
 		reverse_proxy {args[1]}:8080
 	}
+	handle /uploads/* {
+		reverse_proxy {args[1]}:8080
+	}
 	handle /irc {
 		reverse_proxy {args[0]}:8097
 	}

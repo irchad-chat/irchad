@@ -12,3 +12,4 @@ They might be visual improvements, bugs, or features that are somewhat incomplet
 - [x] Message Reactions: The emoji reaction bar is too close to the message itself; it needs to snap to the right.
 - [x] Settings: the "Text Size" slider makes the whole UI super twitchy as you drag it.
 - [ ] When switching channels/DMs, the app ought to focus the input box. Otherwise, the user must left click it after a switch.
+- [ ] User List appears broken in some channels (doesn't show any users or incomplete users, even missing self for some channels)

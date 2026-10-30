@@ -8,6 +8,7 @@ fn net() -> Net {
         icon: None,
         nick: "bob".into(),
         state: ConnState::Connecting,
+        uploads: None,
     };
     let mut n = Net::new(Store::memory(), info);
     let caps = "batch echo-message labeled-response draft/chathistory draft/read-marker \
@@ -715,5 +716,64 @@ fn guests_get_no_voice() {
         events(&mut n)
             .iter()
             .any(|e| matches!(e, Event::Error { .. }))
+    );
+}
+
+#[test]
+fn profiles_and_away() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * LS :draft/metadata-2"));
+    n.caps.handle(&line("CAP * ACK :draft/metadata-2"));
+    n.command(NetCommand::SetAway {
+        message: Some("lunch".into()),
+    });
+    n.attach("bob");
+    let sent = out(&mut n);
+    assert_eq!(sent[0], "AWAY lunch");
+    feed(&mut n, ":s 761 * Alice display-name * :Alice \x07 Smith");
+    feed(&mut n, ":s 761 * alice avatar * :javascript:alert(1)");
+    let ev = events(&mut n);
+    let profile = |ev: &[Event]| {
+        ev.iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::Profile {
+                    display_name,
+                    avatar,
+                    ..
+                } => Some((display_name.clone(), avatar.clone())),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(profile(&ev), (Some("Alice  Smith".into()), None));
+    feed(&mut n, ":s 761 * alice avatar * https://x/a.png");
+    feed(&mut n, ":s 766 * alice display-name :not set");
+    let (name, avatar) = profile(&events(&mut n));
+    assert_eq!((name, avatar.unwrap().as_str()), (None, "https://x/a.png"));
+
+    // Someone joining later: ask once.
+    feed(&mut n, ":bob!u@h JOIN #dev bob :bob");
+    out(&mut n);
+    feed(&mut n, ":carol!u@h JOIN #dev * :c");
+    feed(&mut n, ":carol!u@h PART #dev");
+    feed(&mut n, ":carol!u@h JOIN #dev * :c");
+    assert_eq!(out(&mut n), ["METADATA carol GET display-name avatar"]);
+
+    n.command(NetCommand::SetDisplayName {
+        name: "  Bobby  ".into(),
+    });
+    n.command(NetCommand::SetAvatar { url: String::new() });
+    n.command(NetCommand::SetAvatar {
+        url: "file:///etc/passwd".into(),
+    });
+    n.command(NetCommand::SetAway { message: None });
+    assert_eq!(
+        out(&mut n),
+        [
+            "METADATA * SET display-name Bobby",
+            "METADATA * SET avatar",
+            "AWAY"
+        ]
     );
 }

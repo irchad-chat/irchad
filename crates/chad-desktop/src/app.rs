@@ -3,13 +3,13 @@
 //! Layout, left to right: network rail, channel list (with the voice panel at
 //! its foot during a call), chat (topic, log, composer), member list.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chad_core::{
-    Auth, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, Event, Member, NetCommand,
-    NetworkInfo, SendStatus, Typing, VoiceState, invite,
+    Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, Event, Member,
+    NetCommand, NetworkInfo, SendStatus, Typing, VoiceState, invite,
 };
 use chad_media::{InputMode, Voice};
 use egui::{
@@ -19,22 +19,28 @@ use egui::{
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
-use crate::chatlog::{self, Action, ChatLog};
-use crate::format;
+use crate::chatlog::{self, Action, ChatLog, Extras, Profile};
 use crate::icons::{self, Tip};
+use crate::media::Media;
+use crate::platform::idle::Idle;
 use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
+use crate::{emoji, format, update};
 
 const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
 /// Only messages this fresh notify; gap-fill after a restart stays quiet.
 const NOTIFY_WINDOW_MS: i64 = 60_000;
+/// The AWAY reason other clients show.
+const AWAY: &str = "Away";
 
 /// A network's decoded icon, or `None` if it couldn't be had.
 type IconMsg = (String, Option<egui::ColorImage>);
+/// A file from the file dialog: (network, buffer or `None` for an avatar, path).
+type Picked = (String, Option<String>, std::path::PathBuf);
 
 pub struct App {
     core: Core,
@@ -63,6 +69,37 @@ pub struct App {
     binding_ptt: bool,
     share_dialog: Option<ShareDialog>,
     stage: Stage,
+    picker: Option<Picker>,
+    switcher: Option<Switcher>,
+    profile: Option<ProfileDialog>,
+    files: (mpsc::Sender<Picked>, mpsc::Receiver<Picked>),
+    idle: Idle,
+    /// Whether the networks were last told we're away.
+    away_sent: bool,
+    update: mpsc::Receiver<(String, String)>,
+    /// A newer release: (version, page).
+    new_version: Option<(String, String)>,
+}
+
+/// The emoji picker, for the composer or a reaction.
+struct Picker {
+    react: Option<(String, String, String)>,
+    at: egui::Pos2,
+    query: String,
+    /// Shown for a frame already: the click that opened it is no "click elsewhere".
+    shown: bool,
+}
+
+/// Ctrl+K: jump to any channel or DM by name.
+#[derive(Default)]
+struct Switcher {
+    query: String,
+    sel: usize,
+}
+
+struct ProfileDialog {
+    network: String,
+    name: String,
 }
 
 /// How a watched screen share is shown (what is watched lives in `Voice`).
@@ -79,6 +116,9 @@ struct Network {
     /// Key of the buffer on screen.
     selected: Option<String>,
     icon: Icon,
+    /// By `key(nick)`.
+    profiles: HashMap<String, Profile>,
+    media: Media,
 }
 
 enum Icon {
@@ -105,6 +145,8 @@ struct Buffer {
     jump: Option<String>,
     /// Who's in the channel's voice room (metadata).
     voice: Vec<String>,
+    /// Names of files on their way up.
+    uploads: Vec<String>,
 }
 
 #[derive(Default)]
@@ -206,6 +248,7 @@ impl App {
         for (id, v) in &settings.volumes {
             voice.set_volume(id, *v);
         }
+        let settings_check_updates = settings.check_updates;
         let mut app = Self {
             core,
             events,
@@ -230,6 +273,29 @@ impl App {
             binding_ptt: false,
             share_dialog: None,
             stage: Stage::default(),
+            picker: None,
+            switcher: None,
+            profile: None,
+            files: mpsc::channel(),
+            idle: Idle::start({
+                let ctx = cc.egui_ctx.clone();
+                move || ctx.request_repaint()
+            }),
+            away_sent: false,
+            new_version: None,
+            update: {
+                let (tx, rx) = mpsc::channel();
+                if settings_check_updates {
+                    let ctx = cc.egui_ctx.clone();
+                    tokio::spawn(async move {
+                        if let Some(r) = update::check().await {
+                            let _ = tx.send(r);
+                            ctx.request_repaint();
+                        }
+                    });
+                }
+                rx
+            },
         };
         app.restart_ptt(&cc.egui_ctx);
         if let Some(url) = open {
@@ -257,6 +323,66 @@ impl App {
             network: network.to_owned(),
             cmd,
         });
+    }
+
+    /// Queued for `poll`, which reads and uploads it.
+    fn upload_file(&self, network: &str, target: Option<String>, path: std::path::PathBuf) {
+        let _ = self.files.0.send((network.to_owned(), target, path));
+    }
+
+    /// Sends a file to chadd; the URL lands in the buffer's draft.
+    fn upload(&mut self, network: &str, target: Option<String>, name: String, bytes: Vec<u8>) {
+        let Some(max) = self
+            .net_idx(network)
+            .and_then(|i| self.nets[i].info.uploads)
+        else {
+            return self.toast("This network doesn't take uploads.".into());
+        };
+        if bytes.len() as u64 > max {
+            return self.toast(format!(
+                "{name} is too big. The limit here is {} MB.",
+                max >> 20
+            ));
+        }
+        if let Some(b) = target.as_deref().and_then(|t| self.buffer_mut(network, t)) {
+            b.uploads.push(name.clone());
+        }
+        let bytes = Blob(bytes.into());
+        self.send(
+            network,
+            NetCommand::Upload {
+                target,
+                name,
+                bytes,
+            },
+        );
+    }
+
+    /// The network and buffer on screen.
+    fn on_screen(&self) -> Option<(String, String)> {
+        let n = &self.nets[self.current.as_deref().and_then(|c| self.net_idx(c))?];
+        let b = &n.buffers[n.selected.as_deref().and_then(|k| n.buffer(k))?];
+        Some((n.info.network.clone(), b.info.target.clone()))
+    }
+
+    /// Alt+Up/Down: the previous or next buffer, as listed.
+    fn step_buffer(&mut self, step: isize) {
+        let Some(ni) = self.current.as_deref().and_then(|c| self.net_idx(c)) else {
+            return;
+        };
+        let n = &mut self.nets[ni];
+        let len = n.buffers.len() as isize;
+        if len == 0 {
+            return;
+        }
+        let at = n
+            .selected
+            .as_deref()
+            .and_then(|k| n.buffer(k))
+            .map_or(-1, |i| i as isize);
+        let next = (at + step).rem_euclid(len) as usize;
+        let k = n.buffers[next].key.clone();
+        n.select(&k);
     }
 
     fn toast(&mut self, text: String) {
@@ -313,12 +439,20 @@ impl App {
                         }
                         n.info = info;
                     }
-                    None => self.nets.push(Network {
-                        info,
-                        buffers: Vec::new(),
-                        selected: None,
-                        icon: Icon::None,
-                    }),
+                    None => {
+                        if self.away_sent {
+                            let message = Some(AWAY.to_owned());
+                            self.send(&origin, NetCommand::SetAway { message });
+                        }
+                        self.nets.push(Network {
+                            info,
+                            buffers: Vec::new(),
+                            selected: None,
+                            icon: Icon::None,
+                            profiles: HashMap::new(),
+                            media: Media::default(),
+                        });
+                    }
                 }
                 let i = self.net_idx(&origin).unwrap_or_default();
                 let waiting = matches!(
@@ -390,6 +524,7 @@ impl App {
                             reply: None,
                             jump: None,
                             voice: Vec::new(),
+                            uploads: Vec::new(),
                         });
                         n.buffers.sort_by(|a, b| {
                             (a.info.kind == BufferKind::Dm, &a.key)
@@ -440,9 +575,10 @@ impl App {
                     let m = &messages[i];
                     b.typing.retain(|(nick, _)| nick != &m.nick);
                     if !viewing && should_notify(self.settings.notify, m) {
+                        let who = chatlog::shown(&n.profiles, &m.nick);
                         let summary = match b.info.kind {
-                            BufferKind::Dm => m.nick.clone(),
-                            BufferKind::Channel => format!("{} in {}", m.nick, b.info.target),
+                            BufferKind::Dm => who.to_owned(),
+                            BufferKind::Channel => format!("{who} in {}", b.info.target),
                         };
                         platform::notify(summary, chatlog::snippet(&format::strip(&m.text), 200));
                     }
@@ -503,6 +639,66 @@ impl App {
                     .map_or(network, |i| self.nets[i].info.name.clone());
                 self.toast(format!("{name}: {error}"));
             }
+            Event::Uploaded {
+                network,
+                target,
+                result,
+            } => {
+                match (&target, result) {
+                    (Some(t), Ok(url)) => {
+                        if let Some(b) = self.buffer_mut(&network, t) {
+                            if !b.draft.is_empty() && !b.draft.ends_with(char::is_whitespace) {
+                                b.draft.push(' ');
+                            }
+                            b.draft.push_str(url.as_str());
+                        }
+                    }
+                    (None, Ok(url)) => self.send(
+                        &network,
+                        NetCommand::SetAvatar {
+                            url: url.to_string(),
+                        },
+                    ),
+                    (_, Err(e)) => self.toast(format!("Upload failed: {e}")),
+                }
+                if let Some(b) = target.and_then(|t| self.buffer_mut(&network, &t))
+                    && !b.uploads.is_empty()
+                {
+                    b.uploads.remove(0);
+                }
+            }
+            Event::Profile {
+                network,
+                nick,
+                display_name,
+                avatar,
+            } => {
+                if let Some(i) = self.net_idx(&network) {
+                    let p = Profile {
+                        display_name,
+                        avatar,
+                    };
+                    self.nets[i].profiles.insert(key(&nick), p);
+                }
+            }
+            Event::Preview {
+                network,
+                url,
+                preview,
+            } => {
+                if let Some(i) = self.net_idx(&network) {
+                    self.nets[i].media.preview(url, preview);
+                }
+            }
+            Event::Media {
+                network,
+                url,
+                result,
+            } => {
+                if let Some(i) = self.net_idx(&network) {
+                    self.nets[i].media.bytes(url, result, ctx);
+                }
+            }
         }
     }
 
@@ -533,6 +729,57 @@ impl App {
             let bind = p.bind;
             self.voice
                 .set_ptt(ctx.input(|i| i.focused && bind.down(i)) && !self.binding_ptt);
+        }
+        for n in &mut self.nets {
+            n.media.poll(ctx);
+            for cmd in n.media.wanted.drain(..) {
+                self.core.send(Command::Net {
+                    network: n.info.network.clone(),
+                    cmd,
+                });
+            }
+        }
+        while let Ok((network, target, path)) = self.files.1.try_recv() {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".into());
+            let max = self
+                .net_idx(&network)
+                .and_then(|i| self.nets[i].info.uploads)
+                .unwrap_or(0);
+            match read_file(&path, max) {
+                Ok(bytes) => self.upload(&network, target, name, bytes),
+                Err(e) => self.toast(format!("{name}: {e}")),
+            }
+        }
+        if let Ok((version, url)) = self.update.try_recv() {
+            self.new_version = Some((version, url));
+        }
+        let input = ctx.input(|i| {
+            i.raw.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key { .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::PointerButton { .. }
+                        | egui::Event::PointerMoved(_)
+                        | egui::Event::MouseWheel { .. }
+                )
+            })
+        });
+        let idle = self.idle.idle_for(input);
+        let after = Duration::from_secs(60 * u64::from(self.settings.away_after));
+        let away = self.settings.away || (self.settings.away_after > 0 && idle >= after);
+        if away != self.away_sent {
+            self.away_sent = away;
+            for n in &self.nets {
+                let message = away.then(|| AWAY.to_owned());
+                self.send(&n.info.network, NetCommand::SetAway { message });
+            }
+        }
+        if !idle.is_zero() && !away {
+            ctx.request_repaint_after(Duration::from_secs(30));
         }
         while let Ok((origin, img)) = self.icons.1.try_recv() {
             if let Some(i) = self.net_idx(&origin) {
@@ -619,7 +866,7 @@ impl App {
                 if !matches!(n.info.state, ConnState::Connected) {
                     p.circle_filled(rect.right_top() + vec2(-4.0, 4.0), 5.0, Color32::GRAY);
                 }
-                if resp.on_hover_text(&n.info.name).clicked() {
+                if resp.tip(&n.info.name).clicked() {
                     pick = Some(n.info.network.clone());
                 }
                 ui.add_space(8.0);
@@ -715,11 +962,44 @@ impl App {
                 }
             }
         }
-        ui.label(
-            RichText::new(format!("Signed in as {}", self.nets[ni].info.nick))
-                .small()
-                .weak(),
-        );
+        let own = self.nets[ni].info.nick.clone();
+        let shown = chatlog::shown(&self.nets[ni].profiles, &own).to_owned();
+        let (dot, color) = if self.away_sent {
+            (icons::MOON, voice::AWAY)
+        } else {
+            ("●", voice::ONLINE)
+        };
+        let status = egui::Atoms::new((
+            RichText::new(dot).color(color).small(),
+            RichText::new(if shown == own {
+                own.clone()
+            } else {
+                format!("{shown} ({own})")
+            })
+            .small(),
+        ));
+        ui.menu_button(status, |ui| {
+            ui.radio_value(&mut self.settings.away, false, "Online");
+            ui.radio_value(&mut self.settings.away, true, "Away");
+            ui.separator();
+            if ui
+                .button(format!("{} Edit profile…", icons::USER_CIRCLE))
+                .clicked()
+            {
+                let name = self.nets[ni]
+                    .profiles
+                    .get(&key(&own))
+                    .and_then(|p| p.display_name.clone())
+                    .unwrap_or_default();
+                self.profile = Some(ProfileDialog {
+                    network: network.clone(),
+                    name,
+                });
+                ui.close();
+            }
+        })
+        .response
+        .tip("Your status and profile");
         ui.separator();
 
         let mut pick = None;
@@ -903,6 +1183,7 @@ impl App {
         let dark = ui.visuals().dark_mode;
         let network = self.nets[ni].info.network.clone();
         let own = self.nets[ni].info.nick.clone();
+        let profiles = &self.nets[ni].profiles;
         let Some(members) = &self.nets[ni].buffers[bi].members else {
             ui.add_space(8.0);
             ui.spinner();
@@ -924,7 +1205,8 @@ impl App {
                             .weak(),
                     );
                     for m in list {
-                        let mut t = RichText::new(format!("{}{}", m.prefix, m.nick))
+                        let name = chatlog::shown(profiles, &m.nick);
+                        let mut t = RichText::new(format!("{}{name}", m.prefix))
                             .color(chatlog::nick_color(&m.nick, dark));
                         if away {
                             t = t.weak();
@@ -932,8 +1214,8 @@ impl App {
                         let r = ui
                             .add(egui::Label::new(t).sense(Sense::click()).truncate())
                             .on_hover_text(match &m.account {
-                                Some(a) => format!("Account: {a}"),
-                                None => "Not logged in".into(),
+                                Some(a) => format!("{} · account {a}", m.nick),
+                                None => format!("{} · not logged in", m.nick),
                             });
                         if r.clicked() && m.nick != own {
                             dm = Some(m.nick.clone());
@@ -959,8 +1241,16 @@ impl App {
                 cmd,
             })
         };
-        let b = &mut self.nets[ni].buffers[bi];
+        let uploads = self.nets[ni].info.uploads.is_some();
+        let auto_media = self.settings.load_media;
+        let n = &mut self.nets[ni];
+        let (b, profiles, media) = (&mut n.buffers[bi], &n.profiles, &mut n.media);
         let target = b.info.target.clone();
+        // Set inside the panels, acted on once `b` is free again.
+        let mut attach = false;
+        let mut emoji_at = None;
+        let mut pick_reaction = None;
+        let mut pasted = Vec::new();
 
         if connected && b.info.kind == BufferKind::Channel && !b.members_asked {
             b.members_asked = true;
@@ -1003,6 +1293,12 @@ impl App {
                 ui.ctx().request_repaint_after(Duration::from_secs(1));
             }
             ui.label(RichText::new(typing).small().weak());
+            for name in &b.uploads {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new(format!("Uploading {name}…")).small());
+                });
+            }
             if let Some((_, nick)) = &b.reply {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
@@ -1013,14 +1309,74 @@ impl App {
                     b.reply = None;
                 }
             }
-            let resp = ui.add(
-                egui::TextEdit::multiline(&mut b.draft)
-                    .hint_text(format!("Message {target}"))
-                    .desired_rows(1)
-                    .desired_width(f32::INFINITY)
-                    .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                    .id_salt(("composer", &network, &b.key)),
-            );
+            let id = egui::Id::unique(("composer", &network, &b.key));
+            // Pasted images and files become uploads instead of text.
+            if ui.memory(|m| m.has_focus(id)) {
+                ui.input_mut(|i| {
+                    i.events.retain(|e| match e {
+                        egui::Event::PasteImage(img) => {
+                            pasted.push(Pasted::Image(img.clone()));
+                            false
+                        }
+                        egui::Event::Paste(text) => match pasted_files(text) {
+                            Some(paths) => {
+                                pasted.extend(paths.into_iter().map(Pasted::File));
+                                false
+                            }
+                            None => true,
+                        },
+                        _ => true,
+                    })
+                });
+            }
+            let resp = ui
+                .horizontal(|ui| {
+                    if uploads
+                        && ui
+                            .button(RichText::new(icons::PAPERCLIP).size(18.0))
+                            .tip("Upload a file")
+                            .clicked()
+                    {
+                        attach = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let e = ui
+                            .button(RichText::new(icons::SMILEY).size(18.0))
+                            .tip("Emoji");
+                        if e.clicked() {
+                            emoji_at = Some(e.rect.left_top());
+                        }
+                        ui.add(
+                            egui::TextEdit::multiline(&mut b.draft)
+                                .hint_text(format!("Message {target}"))
+                                .desired_rows(1)
+                                .desired_width(f32::INFINITY)
+                                .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                                .id(id),
+                        )
+                    })
+                    .inner
+                })
+                .inner;
+            // Screen readers get the hint as the field's name.
+            ui.ctx()
+                .accesskit_node_builder(resp.id, |n| n.set_label(format!("Message {target}")));
+            if resp.changed()
+                && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id)
+            {
+                let end = b.draft.chars().count();
+                let mut cursor = state
+                    .cursor
+                    .char_range()
+                    .map_or(end, |r| r.primary.index.into());
+                if emoji::replace_shortcodes(&mut b.draft, &mut cursor) {
+                    let c = egui::text::CCursor::new(cursor);
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(c)));
+                    state.store(ui.ctx(), id);
+                }
+            }
             if resp.changed() {
                 let state = if b.draft.trim().is_empty() {
                     Typing::Done
@@ -1055,7 +1411,15 @@ impl App {
                     ui.label(RichText::new(format!("No messages in {target} yet. Say hi!")).weak());
                 });
             }
-            let out = b.log.ui(ui, &own, b.info.kind == BufferKind::Channel);
+            let mut extras = Extras {
+                profiles,
+                media,
+                network: &network,
+                auto_media,
+            };
+            let out = b
+                .log
+                .ui(ui, &own, b.info.kind == BufferKind::Channel, &mut extras);
             if !out.at_bottom {
                 let pos = ui.max_rect().right_bottom() - vec2(16.0, 16.0);
                 egui::Area::new(egui::Id::unique("jump-latest"))
@@ -1127,6 +1491,7 @@ impl App {
                         }
                     },
                     Action::OpenDm(nick) => dm = Some(nick),
+                    Action::PickReaction { msgid, at } => pick_reaction = Some((msgid, at)),
                 }
             }
             dm
@@ -1134,6 +1499,43 @@ impl App {
         if let Some(nick) = dm.inner {
             send(NetCommand::OpenDm { nick: nick.clone() });
             self.nets[ni].select(&key(&nick));
+        }
+        if let Some((msgid, at)) = pick_reaction {
+            self.picker = Some(Picker {
+                react: Some((network.clone(), target.clone(), msgid)),
+                at,
+                query: String::new(),
+                shown: false,
+            });
+        }
+        if let Some(at) = emoji_at {
+            self.picker = Some(Picker {
+                react: None,
+                at,
+                query: String::new(),
+                shown: false,
+            });
+        }
+        if attach {
+            let (tx, ctx) = (self.files.0.clone(), ui.ctx().clone());
+            let (network, target) = (network.clone(), target.clone());
+            tokio::spawn(async move {
+                if let Some(f) = rfd::AsyncFileDialog::new().pick_file().await {
+                    let _ = tx.send((network, Some(target), f.path().to_owned()));
+                    ctx.request_repaint();
+                }
+            });
+        }
+        for p in pasted {
+            match p {
+                Pasted::File(path) => self.upload_file(&network, Some(target.clone()), path),
+                Pasted::Image(img) => match png(&img) {
+                    Some(bytes) => {
+                        self.upload(&network, Some(target.clone()), "pasted.png".into(), bytes)
+                    }
+                    None => self.toast("Couldn't paste that image.".into()),
+                },
+            }
         }
     }
 
@@ -1412,6 +1814,28 @@ impl App {
         }
         self.show_settings = open;
 
+        self.picker_ui(ctx);
+        self.switcher_ui(ctx);
+        self.profile_ui(ctx);
+        if let Some((version, url)) = self.new_version.clone() {
+            let mut close = false;
+            egui::Area::new(egui::Id::unique("update"))
+                .anchor(Align2::RIGHT_TOP, vec2(-16.0, 16.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(format!("IrChad {version} is out."));
+                            ui.hyperlink_to("Get it", url);
+                            close = ui.small_button(icons::X).tip("Dismiss").clicked();
+                        });
+                    });
+                });
+            if close {
+                self.new_version = None;
+            }
+        }
+
         self.toasts.retain(|(_, t)| t.elapsed() < TOAST_TTL);
         if !self.toasts.is_empty() {
             ctx.request_repaint_after(Duration::from_secs(1));
@@ -1437,6 +1861,196 @@ impl App {
                         !dismiss.contains(&(i - 1))
                     });
                 });
+        }
+    }
+}
+
+impl App {
+    fn picker_ui(&mut self, ctx: &egui::Context) {
+        let Some(p) = &mut self.picker else { return };
+        let mut picked = None;
+        let area = egui::Area::new(egui::Id::unique("emoji-picker"))
+            .fixed_pos(p.at)
+            .pivot(Align2::RIGHT_BOTTOM)
+            .constrain(true)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    picked = emoji::picker(ui, &mut p.query);
+                });
+            });
+        let close = (p.shown && area.response.clicked_elsewhere())
+            || ctx.input(|i| i.key_pressed(Key::Escape));
+        p.shown = true;
+        if let Some(e) = picked {
+            match p.react.clone() {
+                Some((network, target, msgid)) => {
+                    self.send(
+                        &network,
+                        NetCommand::React {
+                            target,
+                            msgid,
+                            emoji: e,
+                        },
+                    );
+                }
+                None => {
+                    if let Some((network, target)) = self.on_screen()
+                        && let Some(b) = self.buffer_mut(&network, &target)
+                    {
+                        b.draft.push_str(&e);
+                    }
+                }
+            }
+            self.picker = None;
+        } else if close {
+            self.picker = None;
+        }
+    }
+
+    fn switcher_ui(&mut self, ctx: &egui::Context) {
+        let Some(sw) = &mut self.switcher else { return };
+        let q = sw.query.trim().to_lowercase();
+        // (network, key, label), names starting with the query first.
+        let mut hits: Vec<(bool, String, String, String)> = self
+            .nets
+            .iter()
+            .flat_map(|n| {
+                n.buffers.iter().filter_map(|b| {
+                    let name = b.info.target.to_lowercase();
+                    let pos = name.trim_start_matches('#').find(&q)?;
+                    let label = format!("{}  ·  {}", b.info.target, n.info.name);
+                    Some((pos != 0, n.info.network.clone(), b.key.clone(), label))
+                })
+            })
+            .collect();
+        hits.sort_by(|a, b| (a.0, &a.3).cmp(&(b.0, &b.3)));
+        hits.truncate(10);
+        let mut go = None;
+        let (up, down, enter) = ctx.input_mut(|i| {
+            (
+                i.consume_key(Modifiers::NONE, Key::ArrowUp),
+                i.consume_key(Modifiers::NONE, Key::ArrowDown),
+                i.key_pressed(Key::Enter),
+            )
+        });
+        if !hits.is_empty() {
+            if up {
+                sw.sel = sw.sel.saturating_sub(1);
+            }
+            if down {
+                sw.sel = (sw.sel + 1).min(hits.len() - 1);
+            }
+            sw.sel = sw.sel.min(hits.len() - 1);
+        }
+        let modal = egui::Modal::new(egui::Id::unique("switcher")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut sw.query)
+                    .hint_text("Where to? Channel or person")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.ctx()
+                .accesskit_node_builder(r.id, |n| n.set_label("Where to? Channel or person"));
+            if !r.has_focus() && !r.lost_focus() {
+                r.request_focus();
+            }
+            if r.changed() {
+                sw.sel = 0;
+            }
+            for (i, (_, net, k, label)) in hits.iter().enumerate() {
+                let b = ui.add(egui::Button::selectable(i == sw.sel, label.as_str()));
+                if b.clicked() || (enter && i == sw.sel) {
+                    go = Some((net.clone(), k.clone()));
+                }
+            }
+            if hits.is_empty() {
+                ui.label(RichText::new("Nothing by that name.").weak());
+            }
+        });
+        if let Some((net, k)) = go {
+            if let Some(i) = self.net_idx(&net) {
+                self.current = Some(net);
+                self.nets[i].select(&k);
+            }
+            self.switcher = None;
+        } else if modal.should_close() {
+            self.switcher = None;
+        }
+    }
+
+    fn profile_ui(&mut self, ctx: &egui::Context) {
+        let Some(network) = self.profile.as_ref().map(|d| d.network.clone()) else {
+            return;
+        };
+        let Some(ni) = self.net_idx(&network) else {
+            self.profile = None;
+            return;
+        };
+        let Some(d) = &mut self.profile else { return };
+        let n = &mut self.nets[ni];
+        let own = n.info.nick.clone();
+        let avatar = n.profiles.get(&key(&own)).and_then(|p| p.avatar.clone());
+        let (mut save, mut close, mut choose, mut remove) = (false, false, false, false);
+        let modal = egui::Modal::new(egui::Id::unique("profile")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.heading(format!("Your profile on {}", n.info.name));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+                n.media.avatar(ui, rect, &own, avatar.as_ref(), true);
+                ui.vertical(|ui| {
+                    if n.info.uploads.is_some() {
+                        choose = ui.button("Choose a picture…").clicked();
+                    }
+                    if avatar.is_some() {
+                        remove = ui.button("Remove picture").clicked();
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            let l = ui.label("Display name");
+            ui.add(
+                egui::TextEdit::singleline(&mut d.name)
+                    .hint_text(&own)
+                    .char_limit(64)
+                    .desired_width(f32::INFINITY),
+            )
+            .labelled_by(l.id);
+            ui.label(
+                RichText::new(format!("People still see that you're {own}."))
+                    .small()
+                    .weak(),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                close = ui.button("Cancel").clicked();
+                save = ui.button("Save").clicked();
+            });
+        });
+        if save {
+            let name = d.name.trim().to_owned();
+            self.send(&network, NetCommand::SetDisplayName { name });
+        }
+        if remove {
+            self.send(&network, NetCommand::SetAvatar { url: String::new() });
+        }
+        if choose {
+            let (tx, ctx) = (self.files.0.clone(), ctx.clone());
+            let network = network.clone();
+            tokio::spawn(async move {
+                let pick = rfd::AsyncFileDialog::new()
+                    .add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp"])
+                    .pick_file()
+                    .await;
+                if let Some(f) = pick {
+                    let _ = tx.send((network, None, f.path().to_owned()));
+                    ctx.request_repaint();
+                }
+            });
+        }
+        if save || close || modal.should_close() {
+            self.profile = None;
         }
     }
 }
@@ -1504,6 +2118,45 @@ fn decode_icon(bytes: &[u8]) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()))
 }
 
+enum Pasted {
+    Image(std::sync::Arc<egui::ColorImage>),
+    File(std::path::PathBuf),
+}
+
+/// Files copied in a file manager paste as `file://` URIs, one per line.
+fn pasted_files(text: &str) -> Option<Vec<std::path::PathBuf>> {
+    let paths: Vec<_> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| Url::parse(l.trim()).ok()?.to_file_path().ok())
+        .collect::<Option<_>>()?;
+    (!paths.is_empty() && paths.iter().all(|p| p.is_file())).then_some(paths)
+}
+
+/// A clipboard image as PNG.
+fn png(img: &egui::ColorImage) -> Option<Vec<u8>> {
+    let [w, h] = img.size;
+    let raw: Vec<u8> = img
+        .pixels
+        .iter()
+        .flat_map(|c| c.to_srgba_unmultiplied())
+        .collect();
+    let buf = image::RgbaImage::from_raw(u32::try_from(w).ok()?, u32::try_from(h).ok()?, raw)?;
+    let mut out = Vec::new();
+    buf.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
+    Some(out)
+}
+
+/// The file, if it isn't over `max` bytes (checked before reading it).
+fn read_file(path: &std::path::Path, max: u64) -> Result<Vec<u8>, String> {
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    if len > max {
+        return Err(format!("too big; the limit here is {} MB.", max >> 20));
+    }
+    std::fs::read(path).map_err(|e| e.to_string())
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -1522,6 +2175,55 @@ impl eframe::App for App {
             egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &ctx));
             self.dialogs(&ctx);
             return;
+        }
+
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::K)))
+        {
+            self.switcher = Some(Switcher::default());
+        }
+        let step = ctx.input_mut(|i| {
+            let mut alt = |k| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::ALT, k));
+            if alt(Key::ArrowUp) {
+                -1
+            } else if alt(Key::ArrowDown) {
+                1
+            } else {
+                0
+            }
+        });
+        if step != 0 {
+            self.step_buffer(step);
+        }
+        // shortcut: winit 0.30 has no drag-and-drop on Wayland, so this only
+        // fires on X11 and Windows; paste and the paperclip work everywhere.
+        let (dropped, hovering) = ctx.input(|i| {
+            let paths: Vec<_> = i
+                .raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_owned())
+                .collect();
+            (paths, !i.raw.hovered_files.is_empty())
+        });
+        if let Some((network, target)) = self.on_screen() {
+            for path in dropped {
+                self.upload_file(&network, Some(target.clone()), path);
+            }
+            if hovering {
+                egui::Area::new(egui::Id::unique("drop-hint"))
+                    .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+                    .order(egui::Order::Foreground)
+                    .show(&ctx, |ui| {
+                        egui::Frame::popup(ui.style())
+                            .inner_margin(24.0)
+                            .show(ui, |ui| {
+                                ui.heading(format!(
+                                    "{} Drop to upload to {target}",
+                                    icons::PAPERCLIP
+                                ));
+                            });
+                    });
+            }
         }
 
         egui::Panel::left("rail")

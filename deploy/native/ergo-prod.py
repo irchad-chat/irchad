@@ -24,6 +24,7 @@ REPLACE = [
     ("    path: /ircd-bin/languages # irchad: path inside the official image", "    path: /opt/ergo/languages"),
     ('    listener: ":8089" # irchad: only reachable on the compose network', '    listener: "127.0.0.1:8089"'),
     ('        - "chad-dev-api-token" # irchad: dev only; must match chadd\'s config', f'        - "{token}"'),
+    ('        #"draft/FILEHOST": "https://example.com/filehost"', f'        "draft/FILEHOST": "https://{host}/api/upload"'),
 ]
 
 text = sys.stdin.read()

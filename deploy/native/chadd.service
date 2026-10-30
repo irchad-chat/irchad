@@ -8,6 +8,8 @@ User=chadd
 Group=chadd
 Environment=RUST_LOG=info
 ExecStart=/usr/local/bin/chadd /etc/chadd/chadd.toml
+# uploads.dir in chadd.toml: /var/lib/chadd/uploads
+StateDirectory=chadd
 Restart=on-failure
 NoNewPrivileges=yes
 ProtectSystem=strict

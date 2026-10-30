@@ -287,3 +287,106 @@ async fn voice_token_and_metadata() {
     })
     .await;
 }
+
+/// One core on both dev networks at once (`chat.localhost` and
+/// `chat2.localhost`), chatting on each, plus an upload and a profile on the
+/// first. Override the hosts with `IRCHAD_ORIGIN` / `IRCHAD_ORIGIN2`.
+#[tokio::test]
+#[ignore]
+async fn two_networks_upload_profile() {
+    let origins = [
+        std::env::var("IRCHAD_ORIGIN").unwrap_or("localhost:8443".into()),
+        std::env::var("IRCHAD_ORIGIN2").unwrap_or("chat2.localhost:8443".into()),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let (core, mut rx) = chad_core::start(Config {
+        data_dir: dir.path().to_owned(),
+        secrets: Arc::new(MemorySecrets::default()),
+        notify: Arc::new(|| {}),
+        media: None,
+    });
+    for origin in &origins {
+        core.send(Command::Join {
+            invite: origin.clone(),
+            auth: Auth::Login {
+                account: "alice".into(),
+                password: "alicepass".into(),
+            },
+        });
+        until(&mut rx, connected).await;
+    }
+    for origin in &origins {
+        let network = format!("https://{origin}");
+        let text = format!("hi from two networks, on {origin}");
+        core.send(Command::Net {
+            network: network.clone(),
+            cmd: NetCommand::Send {
+                target: "#general".into(),
+                text: text.clone(),
+                reply_to: None,
+            },
+        });
+        until(&mut rx, |e| match e {
+            Event::Messages {
+                network: n,
+                messages,
+                ..
+            } if *n == network => messages
+                .iter()
+                .any(|m| m.text == text && m.status == SendStatus::Sent)
+                .then_some(()),
+            _ => None,
+        })
+        .await;
+    }
+
+    let network = format!("https://{}", origins[0]);
+    let png = b"\x89PNG\r\n\x1a\nnot really".to_vec();
+    core.send(Command::Net {
+        network: network.clone(),
+        cmd: NetCommand::Upload {
+            target: Some("#general".into()),
+            name: "tiny pic.png".into(),
+            bytes: chad_core::Blob(png.clone().into()),
+        },
+    });
+    let url = until(&mut rx, |e| match e {
+        Event::Uploaded { result, .. } => Some(result.clone().expect("upload")),
+        _ => None,
+    })
+    .await;
+    assert!(url.path().ends_with("/tiny_pic.png"), "{url}");
+    // Our own upload comes back directly; the bytes are what we sent.
+    core.send(Command::Net {
+        network: network.clone(),
+        cmd: NetCommand::Media {
+            url: url.to_string(),
+        },
+    });
+    let got = until(&mut rx, |e| match e {
+        Event::Media { result, .. } => Some(result.clone().expect("media")),
+        _ => None,
+    })
+    .await;
+    assert_eq!(&got.0[..], &png[..]);
+
+    core.send(Command::Net {
+        network: network.clone(),
+        cmd: NetCommand::SetDisplayName {
+            name: "Alice Live".into(),
+        },
+    });
+    until(&mut rx, |e| match e {
+        Event::Profile {
+            nick, display_name, ..
+        } if nick == "alice" => (display_name.as_deref() == Some("Alice Live")).then_some(()),
+        _ => None,
+    })
+    .await;
+    core.send(Command::Net {
+        network,
+        cmd: NetCommand::SetDisplayName {
+            name: String::new(),
+        },
+    });
+}

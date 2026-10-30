@@ -5,6 +5,8 @@ use tracing_subscriber::EnvFilter;
 
 mod api;
 mod config;
+mod fetch;
+mod files;
 mod routes;
 
 use config::Config;

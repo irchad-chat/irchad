@@ -7,6 +7,17 @@ use serde::{Deserialize, Serialize};
 pub const LOGIN: &str = "login";
 /// `POST <api>/voice/token`, with `Authorization: Bearer <session token>`.
 pub const VOICE_TOKEN: &str = "voice/token";
+/// `POST <api>/upload`: the file is the body, its name in `Content-Disposition`.
+/// Auth is a Bearer session token or HTTP Basic with the IRC account, so it
+/// doubles as the soju-style `draft/FILEHOST`. `201 Created` with `Location`
+/// and an [`UploadResponse`].
+pub const UPLOAD: &str = "upload";
+/// `POST <api>/preview` with a [`PreviewRequest`] and a Bearer session token:
+/// chadd fetches the page, so posters never learn readers' IPs (D25).
+pub const PREVIEW: &str = "preview";
+/// `POST <api>/media` with a [`PreviewRequest`] and a Bearer session token:
+/// the image at `url`, fetched by chadd. The body is the image itself.
+pub const MEDIA: &str = "media";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
@@ -35,6 +46,27 @@ pub struct VoiceTokenResponse {
     /// LiveKit join token for the discovery document's `livekit.url`.
     pub token: String,
     pub room: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadResponse {
+    /// Where the file is served, ready to paste into a message.
+    pub url: url::Url,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreviewRequest {
+    pub url: String,
+}
+
+/// What a page says about itself (OpenGraph, else `<title>`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPreview {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub site: Option<String>,
+    /// Fetch through [`MEDIA`], not directly.
+    pub image: Option<url::Url>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

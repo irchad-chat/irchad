@@ -16,6 +16,7 @@ use crate::{
     BufferInfo, BufferKind, ChatMessage, ConnState, Event, Member, MessageKind, NetCommand,
     NetworkInfo, SendStatus, Typing, VoiceState, time,
 };
+use url::Url;
 
 /// Messages per CHATHISTORY request (ergo allows 1000).
 const PAGE: u32 = 100;
@@ -33,6 +34,10 @@ const MAX_PIECE: usize = 350;
 const TYPING_EVERY: Duration = Duration::from_secs(3);
 /// Metadata key for voice: a user's room (`#chan`), or `off` on a channel.
 pub const VOICE_KEY: &str = "chad/voice";
+/// De-facto metadata keys other clients read too.
+pub const DISPLAY_NAME_KEY: &str = "display-name";
+pub const AVATAR_KEY: &str = "avatar";
+const MAX_DISPLAY_NAME: usize = 64;
 
 #[derive(Debug)]
 enum Pending {
@@ -103,6 +108,16 @@ pub struct Net {
     voice_published: bool,
     /// Folded nick → (nick, folded channel) from their `chad/voice`.
     voice_of: HashMap<String, (String, String)>,
+    /// Folded nick → display name and avatar, from metadata.
+    profiles: HashMap<String, Profile>,
+    /// Our away message, sent again after every reconnect.
+    away: Option<String>,
+}
+
+#[derive(Debug, Default, Clone)]
+struct Profile {
+    display_name: Option<String>,
+    avatar: Option<Url>,
 }
 
 impl Net {
@@ -131,6 +146,8 @@ impl Net {
             voice_request: None,
             voice_published: false,
             voice_of: HashMap::new(),
+            profiles: HashMap::new(),
+            away: None,
         }
     }
 
@@ -191,6 +208,9 @@ impl Net {
         self.joined.clear();
         self.set_state(ConnState::Connected);
         self.persistent = !self.guest;
+        if let Some(m) = &self.away {
+            self.out.push(Message::new("AWAY", [m.as_str()]));
+        }
         if !self.guest && self.caps.enabled("draft/persistence") {
             self.out.push(Message::new("PERSISTENCE", ["GET"]));
         }
@@ -269,7 +289,62 @@ impl Net {
             }
             NetCommand::Verify { .. } | NetCommand::SignIn { .. } => {}
             NetCommand::LeaveVoice => self.voice_ended(None),
+            NetCommand::SetAway { message } => {
+                let message = message.map(|m| truncate(m.trim(), 200).to_owned());
+                // AWAY with an empty reason would mean "back".
+                let message = message.map(|m| if m.is_empty() { "Away".into() } else { m });
+                if self.away != message && self.connected {
+                    let mut m = Message::new("AWAY", [""; 0]);
+                    m.params.extend(message.clone());
+                    self.out.push(m);
+                }
+                self.away = message;
+            }
+            // `conn` runs these while connected; offline they fail at once.
+            NetCommand::Upload { target, .. } => {
+                let network = self.id();
+                self.events.push(Event::Uploaded {
+                    network,
+                    target,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
+            NetCommand::Preview { url } => {
+                let network = self.id();
+                self.events.push(Event::Preview {
+                    network,
+                    url,
+                    preview: None,
+                });
+            }
+            NetCommand::Media { url } => {
+                let network = self.id();
+                self.events.push(Event::Media {
+                    network,
+                    url,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
             _ if offline => self.error("You're offline right now."),
+            NetCommand::SetDisplayName { name } => {
+                let name: String = name
+                    .trim()
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(MAX_DISPLAY_NAME)
+                    .collect();
+                self.set_metadata(DISPLAY_NAME_KEY, &name);
+            }
+            NetCommand::SetAvatar { url } => {
+                let ok = url.is_empty()
+                    || (url.len() <= 300
+                        && Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "https" | "http")));
+                if ok {
+                    self.set_metadata(AVATAR_KEY, &url);
+                } else {
+                    self.error("That isn't an image link.");
+                }
+            }
             NetCommand::JoinVoice { channel } => self.join_voice(&channel),
             NetCommand::React {
                 target,
@@ -683,6 +758,18 @@ impl Net {
                 } else {
                     let account = m.param(1).filter(|a| *a != "*").map(str::to_owned);
                     self.member(&key, &from, |mem| mem.account = account);
+                    // Metadata isn't pushed for people who join after us.
+                    let folded = self.fold(&from);
+                    if self.caps.enabled("draft/metadata-2")
+                        && !self.profiles.contains_key(&folded)
+                        && self.profiles.len() < MAX_MEMBERS
+                    {
+                        self.profiles.insert(folded, Profile::default());
+                        self.out.push(Message::new(
+                            "METADATA",
+                            [from.as_str(), "GET", DISPLAY_NAME_KEY, AVATAR_KEY],
+                        ));
+                    }
                 }
             }
             "PART" | "KICK" => {
@@ -728,6 +815,10 @@ impl Net {
                     self.events.push(Event::Network(self.info.clone()));
                 }
                 let (old, newk) = (self.fold(&from), self.fold(new));
+                if let Some(p) = self.profiles.remove(&old) {
+                    self.profiles.insert(newk.clone(), p);
+                    self.emit_profile(new);
+                }
                 if let Some((_, ch)) = self.voice_of.remove(&old) {
                     self.voice_of
                         .insert(newk.clone(), (new.to_owned(), ch.clone()));
@@ -803,6 +894,37 @@ impl Net {
                 if let Some(target) = m.param(1) {
                     self.voice_metadata(target, value.unwrap_or_default());
                 }
+            }
+            "761" | "766"
+                if matches!(m.param(2), Some(DISPLAY_NAME_KEY | AVATAR_KEY))
+                    && m.param(1)
+                        .is_some_and(|t| valid_name(t) && !self.is_channel(t)) =>
+            {
+                let value = if m.command == "761" { m.param(4) } else { None };
+                let (Some(nick), Some(key)) = (m.param(1), m.param(2)) else {
+                    return;
+                };
+                let folded = self.fold(nick);
+                if !self.profiles.contains_key(&folded) && self.profiles.len() >= MAX_MEMBERS {
+                    return;
+                }
+                let p = self.profiles.entry(folded).or_default();
+                if key == DISPLAY_NAME_KEY {
+                    p.display_name = value
+                        .map(|v| {
+                            v.chars()
+                                .filter(|c| !c.is_control())
+                                .take(MAX_DISPLAY_NAME)
+                                .collect::<String>()
+                        })
+                        .map(|v| v.trim().to_owned())
+                        .filter(|v| !v.is_empty());
+                } else {
+                    p.avatar = value
+                        .and_then(|v| Url::parse(v).ok())
+                        .filter(|u| matches!(u.scheme(), "https" | "http"));
+                }
+                self.emit_profile(nick);
             }
             "PERSISTENCE" if m.param(0) == Some("STATUS") => {
                 self.persistent = m.param(2) != Some("OFF");
@@ -1062,6 +1184,32 @@ impl Net {
         if let Some(e) = error {
             self.error(e);
         }
+    }
+
+    /// `METADATA * SET key [value]`; an empty value deletes the key.
+    fn set_metadata(&mut self, key: &str, value: &str) {
+        if !self.caps.enabled("draft/metadata-2") {
+            return self.error("This server can't store profiles.");
+        }
+        let mut m = Message::new("METADATA", ["*", "SET", key]);
+        if !value.is_empty() {
+            m.params.push(value.to_owned());
+        }
+        self.out.push(m);
+    }
+
+    fn emit_profile(&mut self, nick: &str) {
+        let Some(p) = self.profiles.get(&self.fold(nick)) else {
+            return;
+        };
+        let (display_name, avatar) = (p.display_name.clone(), p.avatar.clone());
+        let network = self.id();
+        self.events.push(Event::Profile {
+            network,
+            nick: nick.to_owned(),
+            display_name,
+            avatar,
+        });
     }
 
     fn set_own_voice(&mut self, channel: Option<&str>) {

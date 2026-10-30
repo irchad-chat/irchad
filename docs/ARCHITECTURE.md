@@ -6,7 +6,8 @@
                  https://chat.example.com  (Caddy, :443, auto TLS)
                  ├── /.well-known/irchad.json  → chadd   discovery
                  ├── / and /invite/*           → chadd   landing page
-                 ├── /api/*                    → chadd   auth, LiveKit tokens, (later) uploads
+                 ├── /api/*                    → chadd   auth, LiveKit tokens, uploads, link previews
+                 ├── /uploads/*                → chadd   uploaded files (D26)
                  ├── /irc                      → ergo    IRC over WebSocket
                  └── /livekit                  → livekit signalling (media: UDP direct / TURN)
 
@@ -36,7 +37,7 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
   "name": "Chad Network",
   "icon": "https://chat.example.com/icon.png",
   "irc":     { "websocket": "wss://chat.example.com/irc" },
-  "chadd":   { "api": "https://chat.example.com/api" },
+  "chadd":   { "api": "https://chat.example.com/api", "uploads": { "max_bytes": 26214400 } },
   "livekit": { "url": "wss://chat.example.com/livekit" },
   "registration": "open"
 }
@@ -55,8 +56,10 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
 - Credentials are stored per network in the OS secret store.
 - **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs.
 - **chadd session (D18):** the client POSTs the account and password to `chadd /api/login`. chadd checks them with ergo's `/v1/check_auth` and returns a 1 h signed session token.
-  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it only allows publishing the microphone.
-  Request and response types live in `chad_proto::chadd`.
+  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone and a screen share with its audio.
+  `POST /api/upload` (raw body, Bearer or HTTP Basic, also advertised as ISUPPORT `draft/FILEHOST`) stores a file (D26).
+  `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
+  Request and response types live in `chad_proto::chadd`. Calls share one session per network, and the client logs in again on a 401.
 
 ## Client crates
 
@@ -91,7 +94,9 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | Text channel | IRC channel. Auto-join everything in `LIST` on first login, and after that always-on keeps it. |
 | Voice room | Every channel has one, named `<casefolded channel>`. Ops disable it by setting channel metadata `chad/voice=off`, which the client enforces (D19). |
 | Who's in voice | User metadata `chad/voice=<#channel>`, set by the client and cleared on leave, media loss and app exit. ergo keeps it for disconnected always-on users, so the client also clears a stale value on reconnect (D16). Clients `METADATA * SUB chad/voice` before `CAP END` and `SYNC` each channel they join. LiveKit is the authority once you're inside a room. |
-| Display name / avatar | Metadata `display-name`, `avatar` (de-facto keys) |
+| Display name / avatar | Metadata `display-name`, `avatar` (de-facto keys), subscribed with `chad/voice` before `CAP END`. For people who join later, the client sends `METADATA <nick> GET`. The avatar is an upload's URL (D26). |
+| Away | `AWAY`, from the status menu or desktop idle time (D28), re-sent after reconnects |
+| Images and link previews | Plain URLs in the message. The client shows images and video/file cards inline, and previews the first other link through chadd (D25). |
 | Typing | `+typing` |
 | Replies / reactions | `+draft/reply`, `+draft/react` |
 | Edit | Not in IRCv3. Parked. |
@@ -119,7 +124,8 @@ Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query
 | Single instance / URL forwarding | D-Bus name `party.gentoo.IrChad` serving `org.freedesktop.Application` (`Open`/`Activate`) (`zbus`) | same |
 | `irchad://` scheme | user `.desktop` file with `x-scheme-handler/irchad`, written at startup unless a packaged one exists | same |
 | Fallback fonts (CJK, emoji) | eframe `system_fonts` (fontique → fontconfig), on demand | same |
-| Idle → away | `ext-idle-notify-v1` | XScreenSaver extension |
+| Idle → away | `ext-idle-notify-v1` (none: our own window's input) | XScreenSaver extension |
+| File drag-and-drop | Not in winit 0.30. Paste (`Ctrl+V` of files or images) and the FileChooser portal (the paperclip) instead. | XDND via winit |
 
 Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback for app audio), `GetAsyncKeyState` polling for PTT (raw input later), toast notifications, Credential Manager, and a named pipe for single instance.
 

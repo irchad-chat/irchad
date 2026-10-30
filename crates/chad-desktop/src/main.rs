@@ -1,12 +1,15 @@
 mod app;
 mod chatlog;
+mod emoji;
 mod format;
 mod icons;
+mod media;
 mod platform;
 mod screen;
 mod settings;
 #[cfg(all(test, target_os = "linux"))]
 mod shots;
+mod update;
 mod voice;
 
 use std::path::PathBuf;

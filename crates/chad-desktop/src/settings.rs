@@ -24,6 +24,13 @@ pub struct Settings {
     /// The ScreenCast portal's token for the last thing shared, so it doesn't
     /// ask again.
     pub restore_token: Option<String>,
+    /// Images, previews and avatars load by themselves; off, each waits for a click.
+    pub load_media: bool,
+    /// Away after this many idle minutes; 0 never.
+    pub away_after: u32,
+    /// Away by choice, on every network.
+    pub away: bool,
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -37,6 +44,10 @@ impl Default for Settings {
             volumes: HashMap::new(),
             screen: ScreenSettings::default(),
             restore_token: None,
+            load_media: true,
+            away_after: 10,
+            away: false,
+            check_updates: true,
         }
     }
 }
@@ -82,12 +93,14 @@ impl Settings {
                 });
                 ui.end_row();
 
-                ui.label("Text size");
-                let r = ui.add(
-                    egui::Slider::new(&mut self.font_size, 10.0..=24.0)
-                        .step_by(1.0)
-                        .fixed_decimals(0),
-                );
+                let l = ui.label("Text size");
+                let r = ui
+                    .add(
+                        egui::Slider::new(&mut self.font_size, 10.0..=24.0)
+                            .step_by(1.0)
+                            .fixed_decimals(0),
+                    )
+                    .labelled_by(l.id);
                 // Resizing mid-drag moves the slider under the pointer and feeds back into it.
                 dragging = r.dragged();
                 released = r.drag_stopped();
@@ -103,6 +116,26 @@ impl Settings {
                     );
                     ui.radio_value(&mut self.notify, Notify::Never, "Nothing");
                 });
+                ui.end_row();
+
+                ui.label("Images");
+                ui.checkbox(
+                    &mut self.load_media,
+                    "Show images, link previews and avatars without a click",
+                );
+                ui.end_row();
+
+                let l = ui.label("Away");
+                ui.horizontal(|ui| {
+                    ui.label("after");
+                    ui.add(egui::DragValue::new(&mut self.away_after).range(0..=240))
+                        .labelled_by(l.id);
+                    ui.label("idle minutes (0: never)");
+                });
+                ui.end_row();
+
+                ui.label("Updates");
+                ui.checkbox(&mut self.check_updates, "Tell me when a new version is out");
                 ui.end_row();
             });
         (*self != before && !dragging) || released

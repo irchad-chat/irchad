@@ -7,6 +7,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked -p chadd && cp target/release/chadd /chadd
 
 FROM docker.io/library/debian:trixie-slim
+# Link previews fetch arbitrary https sites.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /chadd /usr/local/bin/chadd
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/chadd", "/etc/chadd/chadd.toml"]

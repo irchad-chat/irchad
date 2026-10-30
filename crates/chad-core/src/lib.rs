@@ -22,8 +22,20 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
 
+pub use chad_proto::chadd::LinkPreview;
 pub use discovery::fetch_icon;
 pub use manager::start;
+
+/// File or image bytes; `Debug` shows only the length, so logging a command
+/// never dumps a file.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Blob(pub Arc<[u8]>);
+
+impl std::fmt::Debug for Blob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Blob({} bytes)", self.0.len())
+    }
+}
 
 pub struct Config {
     /// Per-user data directory; one SQLite cache per network lives under it.
@@ -172,6 +184,34 @@ pub enum NetCommand {
     SignIn {
         password: String,
     },
+    /// Upload through chadd; answered by `Event::Uploaded`. `target` is the
+    /// buffer it's for, `None` for an avatar.
+    Upload {
+        target: Option<String>,
+        name: String,
+        bytes: Blob,
+    },
+    /// Empty clears it. Other clients see it as metadata `display-name`.
+    SetDisplayName {
+        name: String,
+    },
+    /// An image URL (upload it first); empty clears it. Metadata `avatar`.
+    SetAvatar {
+        url: String,
+    },
+    /// `Some(reason)` to go away, `None` to come back. Kept across reconnects.
+    SetAway {
+        message: Option<String>,
+    },
+    /// What a link says about itself, fetched by chadd: `Event::Preview`.
+    Preview {
+        url: String,
+    },
+    /// An image's bytes: from this network's own uploads directly, anything
+    /// else through chadd (D25). Answered by `Event::Media`.
+    Media {
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +282,28 @@ pub enum Event {
         network: String,
         error: String,
     },
+    Uploaded {
+        network: String,
+        target: Option<String>,
+        result: Result<Url, String>,
+    },
+    /// Someone's display name or avatar (metadata), as far as we know it.
+    Profile {
+        network: String,
+        nick: String,
+        display_name: Option<String>,
+        avatar: Option<Url>,
+    },
+    Preview {
+        network: String,
+        url: String,
+        preview: Option<LinkPreview>,
+    },
+    Media {
+        network: String,
+        url: String,
+        result: Result<Blob, String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,6 +313,8 @@ pub struct NetworkInfo {
     pub icon: Option<Url>,
     pub nick: String,
     pub state: ConnState,
+    /// Largest upload chadd takes, if it takes them (and we have an account).
+    pub uploads: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

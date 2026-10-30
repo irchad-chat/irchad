@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=IrChad
+Comment=Chat, voice and screen share with your friends
+Exec=irchad %u
+Icon=party.gentoo.IrChad
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+Keywords=IRC;chat;voice;
+MimeType=x-scheme-handler/irchad;
+StartupWMClass=party.gentoo.IrChad

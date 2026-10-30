@@ -81,3 +81,16 @@ jobs:
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
             -F "attachment=@target/release/irchad.exe" `
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64.exe"
+
+      # NSIS on the runner: `choco install nsis` once, or this installs it.
+      - name: Installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
+          }
+          makensis /DVERSION=nightly /DEXE=..\..\target\release\irchad.exe packaging\windows\irchad.nsi
+          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
+            -F "attachment=@packaging/windows/irchad-setup.exe" `
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64-setup.exe"

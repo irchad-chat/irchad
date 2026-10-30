@@ -33,7 +33,7 @@ pub async fn fetch_icon(url: &Url) -> Result<Vec<u8>, String> {
 }
 
 /// `Ok(None)` when the body is over `max`.
-async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
+pub async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
     let resp = client(url)?.get(url).send().await?.error_for_status()?;
     body(resp, max).await
 }

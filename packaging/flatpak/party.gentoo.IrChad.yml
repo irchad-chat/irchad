@@ -1,0 +1,55 @@
+# Flatpak build of IrChad, for our own release bundle (not Flathub yet: the
+# build needs the network for cargo and webrtc-sys's prebuilt libwebrtc).
+#   flatpak-builder --user --force-clean --repo=repo build packaging/flatpak/party.gentoo.IrChad.yml
+#   flatpak build-bundle repo irchad.flatpak party.gentoo.IrChad
+id: party.gentoo.IrChad
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  # webrtc-sys needs clang >= 21.
+  - org.freedesktop.Sdk.Extension.llvm22
+command: irchad
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --share=network
+  # Voice and screen-share audio go straight to PipeWire.
+  - --filesystem=xdg-run/pipewire-0
+  # notify-rust talks to the notification daemon directly.
+  - --talk-name=org.freedesktop.Notifications
+  # Tray (StatusNotifierItem; the item itself uses our unique name).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # Secrets, screen capture, global shortcuts and file choosers are portals:
+  # no permissions needed. Single instance owns party.gentoo.IrChad, which is
+  # allowed by default.
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm22/lib
+  env:
+    CC: clang
+    CXX: clang++
+    LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
+    CARGO_HOME: /run/build/irchad/cargo
+  build-args:
+    - --share=network
+modules:
+  - name: irchad
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked -p chad-desktop
+      - install -Dm755 target/release/irchad /app/bin/irchad
+      - install -Dm644 packaging/linux/party.gentoo.IrChad.desktop /app/share/applications/party.gentoo.IrChad.desktop
+      - install -Dm644 packaging/linux/party.gentoo.IrChad.svg /app/share/icons/hicolor/scalable/apps/party.gentoo.IrChad.svg
+      - install -Dm644 packaging/linux/party.gentoo.IrChad.metainfo.xml /app/share/metainfo/party.gentoo.IrChad.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - .git
+          - android
+          - packaging/flatpak/.flatpak-builder

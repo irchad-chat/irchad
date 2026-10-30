@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Json, Router,
+    extract::DefaultBodyLimit,
     extract::{Path, Query, State},
     http::{HeaderMap, header},
     response::Html,
@@ -10,8 +11,9 @@ use axum::{
 use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
-use crate::api;
 use crate::config::Config;
+use crate::{api, fetch, files};
+use tower_http::services::ServeDir;
 
 pub struct AppState {
     pub config: Config,
@@ -21,6 +23,11 @@ pub struct AppState {
     /// of chadd (not IRC), and clients just log in again.
     pub session_secret: String,
     pub throttle: api::Throttle,
+    pub uploads: api::Throttle,
+    /// Previews and proxied images, per account.
+    pub fetches: api::Throttle,
+    /// Public addresses only (`fetch::client`).
+    pub fetcher: reqwest::Client,
 }
 
 impl AppState {
@@ -36,12 +43,22 @@ impl AppState {
             discovery,
             http,
             session_secret: key.iter().map(|b| format!("{b:02x}")).collect(),
-            throttle: api::Throttle::default(),
+            throttle: api::Throttle::new(api::MAX_ATTEMPTS),
+            uploads: api::Throttle::new(30),
+            fetches: api::Throttle::new(120),
+            fetcher: fetch::client()?,
         })
     }
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
+    let mut files = Router::new();
+    if let Some(u) = &state.config.uploads {
+        files = files
+            .nest_service("/uploads", ServeDir::new(&u.dir))
+            .layer(axum::middleware::from_fn(files::headers));
+    }
+    let max_upload = state.config.uploads.as_ref().map_or(0, |u| u.max_bytes);
     Router::new()
         .route(discovery::WELL_KNOWN_PATH, get(well_known))
         .route("/", get(invite))
@@ -50,6 +67,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/invite/{code}", get(invite_code))
         .route("/api/login", post(api::login))
         .route("/api/voice/token", post(api::voice_token))
+        .route(
+            "/api/upload",
+            post(files::upload).layer(DefaultBodyLimit::max(
+                usize::try_from(max_upload).unwrap_or(usize::MAX),
+            )),
+        )
+        .route("/api/preview", post(fetch::preview))
+        .route("/api/media", post(fetch::media))
+        .merge(files)
         .with_state(state)
 }
 
@@ -114,7 +140,7 @@ const PLATFORMS: [(&str, Option<&str>, &str, &str); 3] = [
     ("Android", None, ANDROID, "Android"),
     (
         "Windows",
-        Some("irchad-windows-x86_64.exe"),
+        Some("irchad-windows-x86_64-setup.exe"),
         WINDOWS,
         "Windows",
     ),
@@ -323,7 +349,7 @@ mod tests {
 
         let (_, body) = get_as("/", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{nightly}/irchad-windows-x86_64.exe""#
+            r#"class="btn secondary" href="{nightly}/irchad-windows-x86_64-setup.exe""#
         )));
 
         let (_, body) = get_as("/", "Mozilla/5.0 (Linux; Android 14)").await;

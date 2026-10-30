@@ -24,12 +24,12 @@ const SESSION_TTL: Duration = Duration::from_secs(3600);
 /// Only has to last until the join; LiveKit refreshes it from then on.
 const VOICE_TTL: Duration = Duration::from_secs(600);
 /// Login attempts per IP and per account per window.
-const MAX_ATTEMPTS: u32 = 10;
+pub const MAX_ATTEMPTS: u32 = 10;
 const WINDOW: Duration = Duration::from_secs(60);
 
 pub type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
-fn fail(status: StatusCode, error: &str) -> (StatusCode, Json<ApiError>) {
+pub fn fail(status: StatusCode, error: &str) -> (StatusCode, Json<ApiError>) {
     (
         status,
         Json(ApiError {
@@ -39,13 +39,23 @@ fn fail(status: StatusCode, error: &str) -> (StatusCode, Json<ApiError>) {
 }
 
 /// Fixed-window counters; ergo's own login throttle only covers IRC.
-#[derive(Default)]
-pub struct Throttle(Mutex<HashMap<String, (Instant, u32)>>);
+pub struct Throttle {
+    limit: u32,
+    map: Mutex<HashMap<String, (Instant, u32)>>,
+}
 
 impl Throttle {
+    /// `limit` calls per key per minute.
+    pub fn new(limit: u32) -> Self {
+        Self {
+            limit,
+            map: Mutex::default(),
+        }
+    }
+
     /// Counts an attempt; false once `key` is over the limit.
-    fn allow(&self, key: String) -> bool {
-        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+    pub fn allow(&self, key: String) -> bool {
+        let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         if map.len() > 10_000 {
             map.retain(|_, (start, _)| now - *start < WINDOW);
@@ -55,7 +65,7 @@ impl Throttle {
             (*start, *n) = (now, 0);
         }
         *n += 1;
-        *n <= MAX_ATTEMPTS
+        *n <= self.limit
     }
 }
 
@@ -71,23 +81,35 @@ pub async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> ApiResult<LoginResponse> {
+    let account = check_password(&state, &headers, &req.account, &req.password).await?;
+    let token = AccessToken::with_api_key(SESSION_ISSUER, &state.session_secret)
+        .with_identity(&account)
+        .with_ttl(SESSION_TTL)
+        .to_jwt()
+        .map_err(|e| internal(&e))?;
+    Ok(Json(LoginResponse {
+        token,
+        account,
+        expires_in: SESSION_TTL.as_secs(),
+    }))
+}
+
+/// The account as ergo spells it, if the password is right. Throttled.
+pub async fn check_password(
+    state: &AppState,
+    headers: &HeaderMap,
+    account: &str,
+    password: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
     // ergo's check_auth doesn't strip SASL device IDs (`docs/notes/ergo-api.md`).
-    let account = req.account.split('@').next().unwrap_or_default().trim();
-    if account.is_empty() || account.len() > 64 || req.password.len() > 1024 {
+    let account = account.split('@').next().unwrap_or_default().trim();
+    if account.is_empty() || account.len() > 64 || password.len() > 1024 {
         return Err(fail(
             StatusCode::UNAUTHORIZED,
             "Wrong username or password.",
         ));
     }
-    // Caddy sets X-Forwarded-For; without it every request looks the same.
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.rsplit(',').next())
-        .unwrap_or("direct")
-        .trim()
-        .to_owned();
-    let throttled = !state.throttle.allow(format!("ip:{ip}"))
+    let throttled = !state.throttle.allow(format!("ip:{}", client_ip(headers)))
         | !state
             .throttle
             .allow(format!("account:{}", account.to_ascii_lowercase()));
@@ -104,7 +126,7 @@ pub async fn login(
         .http
         .post(url)
         .bearer_auth(&ergo.token)
-        .json(&serde_json::json!({ "accountName": account, "passphrase": req.password }))
+        .json(&serde_json::json!({ "accountName": account, "passphrase": password }))
         .send()
         .await
         .and_then(|r| r.error_for_status());
@@ -118,36 +140,35 @@ pub async fn login(
             return Err(unavailable());
         }
     };
-    let account = match check {
+    match check {
         CheckAuth {
             success: true,
             account_name: Some(a),
-        } => a,
-        _ => {
-            return Err(fail(
-                StatusCode::UNAUTHORIZED,
-                "Wrong username or password.",
-            ));
-        }
-    };
-    let token = AccessToken::with_api_key(SESSION_ISSUER, &state.session_secret)
-        .with_identity(&account)
-        .with_ttl(SESSION_TTL)
-        .to_jwt()
-        .map_err(|e| internal(&e))?;
-    Ok(Json(LoginResponse {
-        token,
-        account,
-        expires_in: SESSION_TTL.as_secs(),
-    }))
+        } => Ok(a),
+        _ => Err(fail(
+            StatusCode::UNAUTHORIZED,
+            "Wrong username or password.",
+        )),
+    }
 }
 
-pub async fn voice_token(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(req): Json<VoiceTokenRequest>,
-) -> ApiResult<VoiceTokenResponse> {
-    let account = headers
+/// Caddy sets X-Forwarded-For; without it every request looks the same.
+pub fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .unwrap_or("direct")
+        .trim()
+        .to_owned()
+}
+
+/// The account behind a Bearer session token.
+pub fn session_account(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
@@ -158,7 +179,15 @@ pub async fn voice_token(
         })
         .map(|c| c.sub)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| fail(StatusCode::UNAUTHORIZED, "Sign in again."))?;
+        .ok_or_else(|| fail(StatusCode::UNAUTHORIZED, "Sign in again."))
+}
+
+pub async fn voice_token(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<VoiceTokenRequest>,
+) -> ApiResult<VoiceTokenResponse> {
+    let account = session_account(&state, &headers)?;
     let room = voice_room(&req.channel)
         .ok_or_else(|| fail(StatusCode::BAD_REQUEST, "That isn't a channel."))?;
     // shortcut: ergo's API can't read channel metadata, so `chad/voice=off` is
@@ -234,7 +263,7 @@ mod tests {
 
     #[test]
     fn throttle() {
-        let t = Throttle::default();
+        let t = Throttle::new(MAX_ATTEMPTS);
         for _ in 0..MAX_ATTEMPTS {
             assert!(t.allow("a".into()));
         }
@@ -244,7 +273,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod http_tests {
+pub mod http_tests {
     use axum::{Router, body::Body, http::Request, routing::post};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
@@ -254,7 +283,7 @@ mod http_tests {
     use crate::routes::router;
 
     /// ergo's check_auth: only alice/alicepass passes.
-    async fn fake_ergo() -> String {
+    pub async fn fake_ergo() -> String {
         let app = Router::new().route(
             "/v1/check_auth",
             post(|Json(v): Json<serde_json::Value>| async move {

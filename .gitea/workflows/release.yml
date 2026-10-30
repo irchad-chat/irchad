@@ -1,0 +1,151 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (matching the workspace version) to publish a release:
+# Linux binary, tarball and Flatpak bundle, the Windows installer, and the
+# chadd container image at git.gentoo.party/sam/chadd:<version>.
+# Before tagging, run docs/release.md's checklist (fuzzing stays out of CI).
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.create.outputs.id }}
+      version: ${{ steps.create.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: create
+        env:
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          AUTH: "Authorization: token ${{ github.token }}"
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          # The update check compares the tag with the version built in.
+          [ "$tag" = "v$version" ] || { echo "tag $tag != v$version in Cargo.toml"; exit 1; }
+          id=$(curl -fsS -X POST -H "$AUTH" -H "Content-Type: application/json" "$API/releases" \
+            -d "{\"tag_name\":\"$tag\",\"name\":\"IrChad $version\",\"draft\":true}" | jq -r .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      CC: clang-21
+      CXX: clang++-21
+      LIBCLANG_PATH: /usr/lib/llvm-21/lib
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same toolchain setup as ci.yaml.
+      - name: Install system packages
+        run: |
+          SUDO=$(command -v sudo || true)
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends \
+            libpipewire-0.3-dev libfontconfig-dev pkg-config wget gnupg lsb-release software-properties-common
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          $SUDO bash /tmp/llvm.sh 21
+          $SUDO apt-get install -y --no-install-recommends libclang-21-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked -p chad-desktop
+
+      - name: Tarball
+        run: |
+          d=irchad-${{ needs.release.outputs.version }}-linux-x86_64
+          mkdir "$d"
+          cp target/release/irchad packaging/linux/install.sh packaging/linux/party.gentoo.IrChad.* "$d/"
+          tar czf "$d.tar.gz" "$d"
+
+      - name: Upload assets
+        env:
+          URL: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets
+          AUTH: "Authorization: token ${{ github.token }}"
+        run: |
+          curl -fsS -X POST -H "$AUTH" -F "attachment=@target/release/irchad" "$URL?name=irchad-linux-x86_64"
+          curl -fsS -X POST -H "$AUTH" -F "attachment=@irchad-${{ needs.release.outputs.version }}-linux-x86_64.tar.gz" \
+            "$URL?name=irchad-${{ needs.release.outputs.version }}-linux-x86_64.tar.gz"
+
+  flatpak:
+    needs: release
+    runs-on: ubuntu-latest
+    # flatpak-builder needs bubblewrap's namespaces: the act_runner must allow
+    # privileged job containers (`container.privileged: true` in its config).
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build bundle
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo \
+            build packaging/flatpak/party.gentoo.IrChad.yml
+          flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            repo irchad.flatpak party.gentoo.IrChad
+      - name: Upload asset
+        run: |
+          curl -fsS -X POST -H "Authorization: token ${{ github.token }}" -F "attachment=@irchad.flatpak" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-${{ needs.release.outputs.version }}-x86_64.flatpak"
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release --locked -p chad-desktop
+
+      - name: Installer and upload
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
+          }
+          $v = "${{ needs.release.outputs.version }}"
+          makensis /DVERSION=$v /DEXE=..\..\target\release\irchad.exe packaging\windows\irchad.nsi
+          $url = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets"
+          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
+            -F "attachment=@packaging/windows/irchad-setup.exe" "$url?name=irchad-windows-x86_64-setup.exe"
+          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
+            -F "attachment=@target/release/irchad.exe" "$url?name=irchad-windows-x86_64.exe"
+
+  chadd-image:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # REGISTRY_TOKEN: a Gitea token with package write access (the job token
+      # can't push packages).
+      - name: Build and push
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          registry=git.gentoo.party
+          image=$registry/sam/chadd
+          echo "$TOKEN" | docker login "$registry" -u sam --password-stdin
+          docker build -f deploy/chadd.Dockerfile -t "$image:${{ needs.release.outputs.version }}" -t "$image:latest" .
+          docker push "$image:${{ needs.release.outputs.version }}"
+          docker push "$image:latest"
+
+  publish:
+    needs: [release, linux, flatpak, windows, chadd-image]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft
+        run: |
+          curl -fsS -X PATCH -H "Authorization: token ${{ github.token }}" -H "Content-Type: application/json" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}" \
+            -d '{"draft":false}'

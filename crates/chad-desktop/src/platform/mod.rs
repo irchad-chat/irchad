@@ -3,6 +3,11 @@
 
 use std::sync::{Arc, OnceLock, mpsc};
 
+pub mod idle;
+#[cfg(target_os = "linux")]
+mod idle_linux;
+#[cfg(windows)]
+mod idle_windows;
 pub mod ptt;
 #[cfg(target_os = "linux")]
 mod ptt_linux;

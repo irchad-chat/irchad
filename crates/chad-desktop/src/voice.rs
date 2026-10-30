@@ -286,7 +286,7 @@ pub fn settings(
                 ("Microphone", &mut s.audio.input, &devices.inputs),
                 ("Speakers", &mut s.audio.output, &devices.outputs),
             ] {
-                ui.label(label);
+                let l = ui.label(label);
                 let shown = current
                     .as_ref()
                     .map(|id| {
@@ -303,7 +303,9 @@ pub fn settings(
                         for d in list {
                             ui.selectable_value(current, Some(d.id.clone()), &d.name);
                         }
-                    });
+                    })
+                    .response
+                    .labelled_by(l.id);
                 ui.end_row();
             }
 
@@ -320,7 +322,7 @@ pub fn settings(
 
             match s.audio.mode {
                 InputMode::VoiceActivity => {
-                    ui.label("Sensitivity");
+                    let l = ui.label("Sensitivity");
                     ui.vertical(|ui| {
                         meter(ui, voice, Some(s.audio.vad_threshold_db));
                         ui.add(
@@ -328,7 +330,8 @@ pub fn settings(
                                 .suffix(" dB")
                                 .step_by(1.0)
                                 .fixed_decimals(0),
-                        );
+                        )
+                        .labelled_by(l.id);
                     });
                     ui.end_row();
                 }
@@ -362,8 +365,9 @@ pub fn settings(
                         _ => ui.spinner(),
                     };
                     ui.end_row();
-                    ui.label("Release delay");
-                    ui.add(egui::Slider::new(&mut s.audio.ptt_release_ms, 0..=1000).suffix(" ms"));
+                    let l = ui.label("Release delay");
+                    ui.add(egui::Slider::new(&mut s.audio.ptt_release_ms, 0..=1000).suffix(" ms"))
+                        .labelled_by(l.id);
                     ui.end_row();
                 }
             }
@@ -372,8 +376,9 @@ pub fn settings(
             ui.checkbox(&mut s.audio.rnnoise, "Extra noise suppression (RNNoise)");
             ui.end_row();
 
-            ui.label("Quality");
+            let l = ui.label("Quality");
             ui.add(egui::Slider::new(&mut s.audio.bitrate_kbps, 16..=128).suffix(" kbps"))
+                .labelled_by(l.id)
                 .on_hover_text("Takes effect the next time you join voice.");
             ui.end_row();
 

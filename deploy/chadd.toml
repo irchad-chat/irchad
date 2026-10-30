@@ -12,3 +12,7 @@ token = "chad-dev-api-token"
 [livekit]
 key = "devkey"
 secret = "chad-dev-livekit-secret-0123456789abcdef"
+
+[uploads]
+dir = "/var/lib/chadd/uploads"
+max_bytes = 26214400

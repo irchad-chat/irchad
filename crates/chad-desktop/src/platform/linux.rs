@@ -120,6 +120,14 @@ pub fn register_scheme() {
         return;
     };
     let entry = desktop_entry(&exe.to_string_lossy());
+    let icon = dir.join(format!("../icons/hicolor/scalable/apps/{APP_ID}.svg"));
+    if !icon.exists() {
+        let svg = include_str!("../../../../packaging/linux/party.gentoo.IrChad.svg");
+        let r = icon.parent().map_or(Ok(()), std::fs::create_dir_all);
+        if let Err(e) = r.and_then(|()| std::fs::write(&icon, svg)) {
+            tracing::warn!("installing {}: {e}", icon.display());
+        }
+    }
     let path = dir.join(&file);
     if std::fs::read_to_string(&path).is_ok_and(|s| s == entry) {
         return;
@@ -149,7 +157,7 @@ fn desktop_entry(exe: &str) -> String {
     quoted.push('"');
     format!(
         "[Desktop Entry]\nType=Application\nName=IrChad\nComment=Chat with your friends\n\
-         Exec={quoted} %u\nIcon=internet-chat\nTerminal=false\n\
+         Exec={quoted} %u\nIcon={APP_ID}\nTerminal=false\n\
          Categories=Network;Chat;InstantMessaging;\nMimeType=x-scheme-handler/irchad;\n\
          StartupWMClass={APP_ID}\n"
     )
@@ -224,7 +232,9 @@ impl Tray {
             unread: false,
             mentions: 0,
         };
-        match sni.spawn().await {
+        // Flatpak can't own `StatusNotifierItem-<pid>-<n>`; watchers take the unique name.
+        let sandboxed = std::env::var_os("FLATPAK_ID").is_some();
+        match sni.disable_dbus_name(sandboxed).spawn().await {
             Ok(h) => Self(Some(h)),
             Err(e) => {
                 tracing::info!("no tray: {e}");

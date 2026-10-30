@@ -114,3 +114,31 @@ The first production box (`chat.gentoo.party`, Debian 13, 1 vCPU / 2 GB) runs er
 Every service is a single binary, so containers bought us little, and Docker's bridge NAT and per-port `docker-proxy` sit in LiveKit's UDP media path.
 Persistent history stays in ergo's SQLite (no MariaDB), to save RAM on a small box.
 `deploy/compose.yaml` stays the dev stack. `deploy/native/ergo-prod.py` derives the production `ircd.yaml` from `deploy/ergo.yaml`, so the two can't drift silently.
+
+## D25: Link previews and remote images are fetched by chadd (2026-10-30)
+Fetching a posted link from the client would tell whoever posted it the IP of everyone who read it. That's a cheap way to find out where people are.
+chadd fetches instead: `POST /api/preview {url}` returns the page's OpenGraph title, description, site and image, and `POST /api/media {url}` returns an image's bytes (sniffed as PNG, JPEG, GIF or WebP, ≤ 8 MB).
+Both need a session token and are throttled per account (120 a minute), so chadd isn't an open proxy. Links come from anyone on the network, so chadd only connects to public unicast addresses: the resolver drops private, loopback, link-local, CGNAT and reserved ranges, IP-literal URLs are checked the same way, and so is every redirect hop.
+The client fetches its own network's uploads directly (same origin, nothing new learns its IP), and everything else goes through chadd: inline images, preview images and avatars. Guests have no session, so they only see the network's own uploads.
+There's still a "load images and previews automatically" setting (on by default). Turned off, each one waits for a click.
+This costs the operator bandwidth, and it makes the server's IP the one sites see. Both are acceptable for a small self-hosted network.
+
+## D26: Uploads live on chadd's disk and double as `draft/FILEHOST` (2026-10-30)
+`POST /api/upload` takes the raw body and the name from `Content-Disposition`, and answers `201 Created` with `Location` and `{url}`. Files are stored at `<uploads.dir>/<random id>/<sanitized name>` and served by chadd at `/uploads/…`.
+The type comes from the bytes, never the client. Only PNG, JPEG, GIF, WebP, MP4 and WebM get a media extension and are served inline. Anything else is `application/octet-stream` with `Content-Disposition: attachment`, and every response has `nosniff` and `Content-Security-Policy: default-src 'none'; sandbox`, so an upload can't run script on the network's origin.
+Auth is a Bearer session token or HTTP Basic with the IRC account. That makes it the soju-style `draft/FILEHOST` that plain clients such as goguma and gamja understand. ergo advertises it through `server.additional-isupport` (compose env in dev, `ergo-prod.py` in production), so plain IRC users can upload too.
+Discovery's `chadd.uploads.max_bytes` (default 25 MB) says uploads are on. Leave `[uploads]` out of chadd.toml to turn them off.
+Avatars are uploads too: the client uploads the image, then sets metadata `avatar` to its URL. Display names are metadata `display-name`. Both are the de-facto keys other clients read.
+No quotas and no expiry yet. Operators prune by hand (`docs/hosting.md`).
+
+## D27: Distribution: a Flatpak bundle, a tarball and a per-user NSIS installer (2026-10-30)
+Tagged releases (`.gitea/workflows/release.yml`) ship a Flatpak bundle built on `org.freedesktop.Platform` 26.08, a tarball with an `install.sh`, the bare binaries, a Windows NSIS installer, and the chadd image.
+The Flatpak build needs the network, for cargo and for webrtc-sys's prebuilt libwebrtc, so it isn't Flathub-ready. Vendoring both is the job for a later Flathub submission.
+The NSIS installer installs per user, under `%LOCALAPPDATA%\Programs` with HKCU keys (no admin prompt), and registers `irchad://` before the first run. It's NSIS rather than WiX because it builds anywhere with no toolset beyond `makensis`.
+There's no AppImage. The bare binary already writes its own `.desktop` entry, icon and scheme handler on first run, so the tarball's `install.sh` just puts it on `PATH`.
+The client checks `git.gentoo.party`'s latest release at startup (a setting, on by default) and shows a notice with a link. It never downloads or installs anything itself.
+
+## D28: Auto-away comes from the desktop's idle time (2026-10-30)
+Away is IRC `AWAY`, sent to every network when the user picks Away or has been idle for the configured minutes (10 by default, 0 for never). `Net` re-sends it after reconnects.
+Idle time is the whole desktop's, not just our window's. On Wayland it comes from `ext-idle-notify-v1`: a notification at 60 s, so "idle since" is a minute before it fires, and any threshold of a minute or more works without re-arming. On X11 it comes from the XScreenSaver extension, and on Windows from `GetLastInputInfo`.
+On a Wayland compositor without the protocol (GNOME before 48), we don't fall back to XWayland, which only sees X clients' input. Input to our own window is the signal there.

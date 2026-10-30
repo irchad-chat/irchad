@@ -60,7 +60,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         db_path,
         secrets: cfg.secrets.clone(),
         media: cfg.media.clone(),
-        session: None,
+        session: Default::default(),
     };
 
     let mut nets: HashMap<String, mpsc::UnboundedSender<ToNet>> = HashMap::new();
@@ -190,6 +190,7 @@ fn spawn_with(
         icon: None,
         nick: p.account.clone(),
         state: ConnState::Connecting,
+        uploads: None,
     };
     let mut net = Net::new(store, info);
     net.invite_channel = invite_channel;

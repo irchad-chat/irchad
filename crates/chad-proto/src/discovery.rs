@@ -26,6 +26,15 @@ pub struct Irc {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chadd {
     pub api: Url,
+    /// Set when chadd takes uploads (`POST <api>/upload`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uploads: Option<Uploads>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Uploads {
+    /// Largest file accepted, in bytes.
+    pub max_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

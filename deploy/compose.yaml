@@ -7,6 +7,9 @@ services:
     image: ghcr.io/ergochat/ergo:v2.19.1
     init: true
     restart: unless-stopped
+    environment:
+      # Lets plain IRC clients (goguma, gamja) upload through chadd.
+      ERGO__SERVER__ADDITIONAL_ISUPPORT: '{"draft/FILEHOST": "https://${IRCHAD_HOST:-chat.localhost}:${IRCHAD_HTTPS_PORT:-8443}/api/upload"}'
     volumes:
       - ergo-data:/ircd
       - ./ergo.yaml:/ircd/ircd.yaml:ro
@@ -24,6 +27,7 @@ services:
     environment:
       ERGO__NETWORK__NAME: ChadDev2
       ERGO__SERVER__NAME: chat2.localhost
+      ERGO__SERVER__ADDITIONAL_ISUPPORT: '{"draft/FILEHOST": "https://${IRCHAD_HOST2:-chat2.localhost}:${IRCHAD_HTTPS_PORT:-8443}/api/upload"}'
     volumes:
       - ergo2-data:/ircd
       - ./ergo.yaml:/ircd/ircd.yaml:ro
@@ -52,6 +56,7 @@ services:
       RUST_LOG: "${RUST_LOG:-info}"
     volumes:
       - ./chadd.toml:/etc/chadd/chadd.toml:ro
+      - chadd-uploads:/var/lib/chadd/uploads
     networks: [chad]
 
   chadd2:
@@ -64,6 +69,7 @@ services:
       RUST_LOG: "${RUST_LOG:-info}"
     volumes:
       - ./chadd2.toml:/etc/chadd/chadd.toml:ro
+      - chadd2-uploads:/var/lib/chadd/uploads
     networks: [chad]
 
   caddy:
@@ -84,6 +90,8 @@ volumes:
   ergo-data:
   ergo2-data:
   caddy-data:
+  chadd-uploads:
+  chadd2-uploads:
 
 networks:
   chad:

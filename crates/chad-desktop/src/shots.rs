@@ -31,7 +31,7 @@ impl Shots {
         let harness = Harness::builder()
             .with_size([1100.0, 720.0])
             // shortcut: some fields lack accessible names; re-enable once labelled.
-            .with_accessibility_check(false)
+            .with_accessibility_check(true)
             .wgpu()
             .build_eframe(move |cc| {
                 // eframe adds this for the real window; kittest doesn't.
@@ -138,7 +138,7 @@ fn live() {
     s.type_into("Username", "alice");
     s.type_into("Password", "alicepass");
     s.click("Log in");
-    s.wait_for("Signed in as alice");
+    s.wait_for("Your status and profile");
     s.settle(3);
     s.shot("live_general");
     s.click("Settings");
@@ -162,7 +162,13 @@ fn live() {
     s.click("Disconnect");
     s.click("#general");
     s.settle(1);
-    s.harness.get_all_by_label("hi").next().unwrap().hover();
+    // Not `type_into`: the log is still scrolling, so `run()` wouldn't settle.
+    s.harness.get_by_label("Message #general").focus();
+    s.settle(1);
+    s.harness.get_by_label("Message #general").type_text("hi");
+    s.harness.key_press(egui::Key::Enter);
+    s.settle(2);
+    s.harness.get_all_by_label("hi").last().unwrap().hover();
     s.harness.run();
     s.shot("live_hover");
     s.click("Reply");
@@ -182,4 +188,51 @@ fn live() {
     s.click("#dev");
     s.settle(1);
     s.shot("live_light");
+}
+
+/// Phase 5: an inline image and a link preview, the profile dialog, the
+/// quick switcher and the emoji picker. Same setup as `live`; set
+/// `IRCHAD_SHOTS_IMAGE` to an uploaded image's URL.
+#[test]
+#[ignore]
+fn live_polish() {
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
+    let image = std::env::var("IRCHAD_SHOTS_IMAGE").unwrap_or_default();
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", "alice");
+    s.type_into("Password", "alicepass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(2);
+    s.type_into(
+        "Message #general",
+        &format!("look {image} and https://www.rust-lang.org/"),
+    );
+    s.harness.key_press(egui::Key::Enter);
+    s.settle(5);
+    s.shot("polish_media");
+    s.click("Emoji");
+    s.shot("polish_emoji");
+    s.harness.key_press(egui::Key::Escape);
+    s.click("Your status and profile");
+    s.click("\u{E4C4} Edit profile…");
+    s.settle(1);
+    s.shot("polish_profile");
+    s.type_into("Display name", "Alice A.");
+    s.click("Save");
+    s.settle(1);
+    s.type_into("Message #general", "now with a name");
+    s.harness.key_press(egui::Key::Enter);
+    s.settle(2);
+    s.shot("polish_named");
+    s.harness
+        .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    s.harness.run();
+    s.harness
+        .get_by_label("Where to? Channel or person")
+        .type_text("de");
+    s.harness.run();
+    s.shot("polish_switcher");
 }
