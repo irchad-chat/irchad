@@ -30,7 +30,7 @@ use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
-use crate::{emoji, format, update};
+use crate::{complete, emoji, format, update};
 
 const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -153,6 +153,8 @@ struct Buffer {
     older_asked: Option<Instant>,
     mark_sent: bool,
     draft: String,
+    /// The Tab completion in progress in the draft.
+    tab: Option<complete::Tab>,
     /// (msgid, nick) of the message being replied to.
     reply: Option<(String, String)>,
     /// A message to scroll to once `LoadAround` brings it in.
@@ -186,6 +188,24 @@ enum JoinMode {
 /// Buffer names compare under ergo's `ascii` casemapping.
 fn key(target: &str) -> String {
     target.to_ascii_lowercase()
+}
+
+/// The nicks a buffer's composer completes: the channel's members, or the
+/// other side of a DM.
+fn completable(
+    members: &Option<Vec<Member>>,
+    log: &ChatLog,
+    info: &BufferInfo,
+    own: &str,
+) -> Vec<String> {
+    let recent = log.msgs.iter().rev().map(|m| m.nick.as_str());
+    match members {
+        Some(ms) => complete::candidates(ms.iter().map(|m| m.nick.as_str()), recent, own),
+        None if info.kind == BufferKind::Dm => {
+            complete::candidates([info.target.as_str()], recent, own)
+        }
+        None => Vec::new(),
+    }
 }
 
 fn state_text(state: &ConnState) -> Option<(String, bool)> {
@@ -713,6 +733,7 @@ impl App {
                             older_asked: None,
                             mark_sent: false,
                             draft: String::new(),
+                            tab: None,
                             reply: None,
                             jump: None,
                             voice: Vec::new(),
@@ -1627,17 +1648,32 @@ impl App {
                     ui.label(RichText::new(format!("Uploading {name}…")).small());
                 });
             }
+            let id = egui::Id::unique(("composer", &network, &b.key));
+            // The `@` list was open last frame, so Tab, Enter and Escape are its.
+            let open_id = id.with("completing");
+            let completing = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
             if let Some((_, nick)) = &b.reply {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("Replying to {nick}")).small());
                     cancel = ui.small_button(icons::X).tip("Cancel reply").clicked();
                 });
-                if cancel || ui.input(|i| i.key_pressed(Key::Escape)) {
+                if cancel || (!completing && ui.input(|i| i.key_pressed(Key::Escape))) {
                     b.reply = None;
                 }
             }
-            let id = egui::Id::unique(("composer", &network, &b.key));
+            // Tab completes nicks rather than moving focus (Shift+Tab goes back).
+            let mut tab = None;
+            if ui.memory(|m| m.has_focus(id)) {
+                ui.input_mut(|i| {
+                    // Plain Tab is left to the open list, which accepts with it.
+                    if i.consume_key(Modifiers::SHIFT, Key::Tab) {
+                        tab = (!completing).then_some(true);
+                    } else if !completing && i.consume_key(Modifiers::NONE, Key::Tab) {
+                        tab = Some(false);
+                    }
+                });
+            }
             // Pasted images and files become uploads instead of text.
             if ui.memory(|m| m.has_focus(id)) {
                 ui.input_mut(|i| {
@@ -1657,7 +1693,7 @@ impl App {
                     })
                 });
             }
-            let resp = ui
+            let out = ui
                 .horizontal(|ui| {
                     if uploads
                         && ui
@@ -1674,25 +1710,40 @@ impl App {
                         if e.clicked() {
                             emoji_at = Some(e.rect.left_top());
                         }
-                        ui.add(
-                            egui::TextEdit::multiline(&mut b.draft)
-                                .hint_text(format!("Message {target}"))
-                                .desired_rows(1)
-                                .desired_width(f32::INFINITY)
-                                .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-                                .id(id),
-                        )
+                        let edit = egui::TextEdit::multiline(&mut b.draft)
+                            .hint_text(format!("Message {target}"))
+                            .desired_rows(1)
+                            .desired_width(f32::INFINITY)
+                            .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
+                            .lock_focus(true);
+                        let (members, log, info) = (&b.members, &b.log, &b.info);
+                        egui::CompletionPopup::new(id).show(ui, edit, |q| {
+                            if !q.word.starts_with('@') {
+                                return Vec::new();
+                            }
+                            let nicks = completable(members, log, info, &own);
+                            let list = complete::suggest(&nicks, q.word).unwrap_or_default();
+                            list.into_iter()
+                                .map(|n| {
+                                    egui::Suggestion::new(complete::insert(n, q.is_at_start()))
+                                        .content(n.to_owned())
+                                })
+                                .collect()
+                        })
                     })
                     .inner
                 })
                 .inner;
+            ui.data_mut(|d| d.insert_temp(open_id, out.is_open));
+            let resp = out.text_edit.response.response;
             if focus {
                 resp.request_focus();
             }
             // Screen readers get the hint as the field's name.
             ui.ctx()
                 .accesskit_node_builder(resp.id, |n| n.set_label(format!("Message {target}")));
-            if resp.changed()
+            let mut changed = resp.changed() || out.accepted.is_some();
+            if (changed || tab.is_some())
                 && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id)
             {
                 let end = b.draft.chars().count();
@@ -1700,7 +1751,17 @@ impl App {
                     .cursor
                     .char_range()
                     .map_or(end, |r| r.primary.index.into());
-                if emoji::replace_shortcodes(&mut b.draft, &mut cursor) {
+                let mut moved = false;
+                if let Some(back) = tab {
+                    let nicks = completable(&b.members, &b.log, &b.info, &own);
+                    if let Some(c) = complete::tab(&mut b.draft, cursor, &mut b.tab, &nicks, back) {
+                        (cursor, moved, changed) = (c, true, true);
+                    }
+                }
+                if changed && emoji::replace_shortcodes(&mut b.draft, &mut cursor) {
+                    moved = true;
+                }
+                if moved {
                     let c = egui::text::CCursor::new(cursor);
                     state
                         .cursor
@@ -1708,7 +1769,7 @@ impl App {
                     state.store(ui.ctx(), id);
                 }
             }
-            if resp.changed() {
+            if changed {
                 let state = if b.draft.trim().is_empty() {
                     Typing::Done
                 } else {

@@ -3,6 +3,7 @@
 
 mod app;
 mod chatlog;
+mod complete;
 mod emoji;
 mod format;
 mod icons;

@@ -174,6 +174,14 @@ fn live() {
     s.click("Reply");
     s.shot("live_reply");
     s.harness.key_press(egui::Key::Escape);
+    // `@` lists nicks to mention; Tab takes the highlighted one.
+    s.harness.get_by_label("Message #general").focus();
+    s.harness.run_steps(2);
+    s.harness.get_by_label("Message #general").type_text("@b");
+    s.harness.run_steps(4);
+    s.shot("live_mention");
+    s.harness.key_press(egui::Key::Tab);
+    s.shot("live_mention_done");
     s.click("bob");
     s.settle(2);
     s.shot("live_dm");
