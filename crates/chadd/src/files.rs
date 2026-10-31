@@ -290,7 +290,7 @@ mod tests {
             key = "devkey"
             secret = "0123456789abcdef0123456789abcdef"
             [uploads]
-            dir = "{}"
+            dir = '{}'
             max_bytes = 64
             "#,
             crate::api::http_tests::fake_ergo().await,
