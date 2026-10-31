@@ -27,12 +27,12 @@ jobs:
         env:
           TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
-          registry=git.gentoo.party
+          # Gitea over the LAN, not git.gentoo.party: Cloudflare rejects
+          # layers over 100 MB. Plain HTTP, so the runner host's dockerd
+          # lists it in insecure-registries.
+          registry=192.0.2.7:3000
           image=$registry/sam/irchad-ci
           echo "$TOKEN" | docker login "$registry" -u sam --password-stdin
           docker build --pull -f deploy/ci.Dockerfile -t "$image:latest" -t "$image:${GITHUB_SHA:0:9}" deploy
-          # Uncompressed sizes; Cloudflare rejects any layer over 100 MB
-          # compressed (413), so keep an eye on the big ones.
-          docker history --format '{{.Size}}\t{{.CreatedBy}}' "$image:latest" | cut -c1-120
           docker push "$image:latest"
           docker push "$image:${GITHUB_SHA:0:9}"
