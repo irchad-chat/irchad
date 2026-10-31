@@ -171,3 +171,12 @@ The answer is `{result, data: {data: [..], has_next}}`. chadd posts `file.md.gif
 `[gifs]` no longer takes `provider`. KLIPY is the only provider, and the picker's "Search KLIPY" placeholder is required by KLIPY's attribution rules.
 Open question: KLIPY's integration requirements ask that requests and media loads come from the end-user client unless KLIPY approves otherwise in writing. Proxying through chadd (D25, D30) needs that approval.
 `customer_id` isn't sent, since it's optional and would identify users to KLIPY.
+
+## D32: Linux CI jobs run in a prebuilt image (2026-10-31)
+Every Linux build job used to spend minutes on `apt-get` and `llvm.sh 21` before cargo started. `deploy/ci.Dockerfile` bakes that in (PipeWire headers, lavapipe, clang 21 with `CC`/`CXX`/`LIBCLANG_PATH` set, node for JS actions, rustup with stable), and `ci.yaml`, `nightly.yml` and `release.yml` run their Linux jobs in `192.0.2.7:3000/sam/irchad-ci:latest` as the job `container:`.
+`ci-image.yml` rebuilds it weekly, by hand, and on changes to the Dockerfile. The jobs still run `dtolnay/rust-toolchain@stable`, so a stale image costs one toolchain download, not a stale compiler.
+The image goes through Gitea's registry over the LAN, not `git.gentoo.party`. Cloudflare in front of that host rejects any request over 100 MB, and `docker push` sends each layer in one request, so the clang and gcc layers can't get through.
+The LAN registry is plain HTTP, so the Linux runner host's dockerd lists `192.0.2.7:3000` in `insecure-registries`. A new Linux runner needs that too, and has to be on the same LAN.
+Only clang and libclang are installed, not everything `llvm.sh` installs (lldb, lld, clangd, Python), since nothing uses the rest.
+It's Ubuntu 24.04, the same as the runner's `ubuntu-latest`, so release binaries keep the same glibc floor. Changing the base changes which distros can run the Linux binary.
+Windows jobs, and the jobs that only call the Gitea API or Docker, stay on the runner's defaults.

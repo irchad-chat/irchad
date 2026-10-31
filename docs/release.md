@@ -14,10 +14,9 @@
    join from an invite link in a browser, chat, upload by paste and by the paperclip, a call, a screen share with audio, notifications and the tray.
 4. **Bump** `version` in the root `Cargo.toml` and the `<releases>` entry in `packaging/linux/party.gentoo.IrChad.metainfo.xml`, then commit.
 5. **Tag:** `git tag v0.2.0 && git push origin v0.2.0`. `.gitea/workflows/release.yml` builds everything into a draft release and publishes it once every job passes:
-   - `irchad-<v>-x86_64.flatpak` (install: `flatpak install --user irchad-<v>-x86_64.flatpak`)
    - `irchad-<v>-linux-x86_64.tar.gz` (binary plus `install.sh`) and the bare `irchad-linux-x86_64`
    - `irchad-windows-x86_64-setup.exe` (per-user, no admin) and the bare `irchad-windows-x86_64.exe`
    - the image `git.gentoo.party/sam/chadd:<v>` and `:latest`
 
-Runner prerequisites: the Linux act_runner must allow privileged job containers (flatpak-builder),
-the Windows runner needs NSIS (or Chocolatey to install it), and the repo needs a `REGISTRY_TOKEN` secret with package write access.
+The Flatpak job is disabled for now (`if: false`); re-enabling it needs the Linux act_runner to allow privileged job containers (flatpak-builder).
+Runner prerequisites: the Windows runner needs NSIS (or Chocolatey to install it), the repo needs a `REGISTRY_TOKEN` secret with package write access, and the Linux job container `192.0.2.7:3000/sam/irchad-ci` must exist (`ci-image.yml`, D32).

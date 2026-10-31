@@ -24,28 +24,13 @@ jobs:
   linux:
     # Must match a label on a Linux act_runner.
     runs-on: ubuntu-latest
-    env:
-      # webrtc-sys needs clang >= 21 (libwebrtc ships a hermetic libc++).
-      CC: clang-21
-      CXX: clang++-21
-      LIBCLANG_PATH: /usr/lib/llvm-21/lib
+    # PipeWire headers, lavapipe for the wgpu screenshot tests and clang 21
+    # for webrtc-sys (CC/CXX/LIBCLANG_PATH set) and Rust, preinstalled.
+    # Built by ci-image.yml from deploy/ci.Dockerfile.
+    container:
+      image: 192.0.2.7:3000/sam/irchad-ci:latest
     steps:
       - uses: actions/checkout@v4
-
-      # PipeWire headers for pipewire-sys; lavapipe (software Vulkan) so the
-      # wgpu screenshot tests find an adapter; clang 21 from apt.llvm.org for
-      # webrtc-sys and bindgen.
-      - name: Install system packages
-        run: |
-          SUDO=$(command -v sudo || true)
-          $SUDO apt-get update
-          $SUDO apt-get install -y --no-install-recommends \
-            libpipewire-0.3-dev libfontconfig-dev pkg-config \
-            mesa-vulkan-drivers libvulkan1 wget gnupg lsb-release software-properties-common
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          $SUDO bash /tmp/llvm.sh 21
-          $SUDO apt-get install -y --no-install-recommends libclang-21-dev
-          clang++-21 --version
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -53,7 +38,13 @@ jobs:
           components: rustfmt, clippy
 
       # Also caches libwebrtc: webrtc-sys downloads its prebuilt into target/.
+      # rust-cache keys on the job id alone, and nightly/release reuse these
+      # ids for release builds, so name the key. Save on failure too: a red
+      # clippy still compiled every dependency.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-linux
+          cache-on-failure: true
 
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
@@ -69,6 +60,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-windows
+          cache-on-failure: true
 
       - run: cargo build --locked
       - run: cargo test --locked
