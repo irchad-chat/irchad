@@ -1620,8 +1620,10 @@ impl App {
         let mut close = false;
         // Set inside the panels, acted on once `b` is free again.
         let mut attach = false;
-        // Where the picker opens, and whether on the GIF tab.
+        // Where the picker opens, and whether on the GIF tab (searching
+        // `gif_query`, from `/gif`).
         let mut emoji_at = None;
+        let (mut gif_query, mut no_gifs) = (String::new(), false);
         let mut pick_reaction = None;
         let mut pasted = Vec::new();
 
@@ -1884,7 +1886,16 @@ impl App {
             let enter = ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
             if resp.has_focus() && enter {
                 let text = b.draft.trim_end().to_owned();
-                if !text.trim().is_empty() {
+                if let Some(q) = gifs::command(&text) {
+                    // `/gif [search]` opens the GIF tab instead of sending.
+                    if gifs {
+                        emoji_at = Some((resp.rect.right_top(), true));
+                        gif_query = q.to_owned();
+                        b.draft.clear();
+                    } else {
+                        no_gifs = true;
+                    }
+                } else if !text.trim().is_empty() {
                     let reply_to = b.reply.take().map(|(id, _)| id);
                     send(NetCommand::Send {
                         target: target.clone(),
@@ -2011,8 +2022,11 @@ impl App {
                 query: String::new(),
                 shown: false,
                 gif_tab,
-                gifs: Default::default(),
+                gifs: gifs::Gifs::searching(gif_query),
             });
+        }
+        if no_gifs {
+            self.toast("This network doesn't have GIFs.".into());
         }
         if attach {
             let (tx, ctx) = (self.files.0.clone(), ui.ctx().clone());

@@ -90,8 +90,6 @@ From a checkout of this repo, copy the files over and fill them in:
   [gifs]
   key = "<KLIPY_API_KEY>"
   # content_filter = "medium"      # off, low, medium or high
-  # api = "https://api.klipy.com/v2/"  # any Tenor v2-shaped API
-  # provider = "KLIPY"             # shown as "Powered by …"
   ```
 - **systemd:** copy `deploy/native/*.service` to `/etc/systemd/system/`, then
   `systemctl daemon-reload && systemctl enable --now ergo livekit chadd caddy`.

@@ -9,8 +9,8 @@
 - [x] Inline image, GIF and video-thumbnail rendering for links, with a size cap and a click-to-load setting for privacy.
 - [x] Link previews. Decide whether they're fetched client-side, which leaks the user's IP, or by chadd as a proxy, and record a decision. (D25: chadd proxy.)
 - [x] Emoji picker and shortcodes (`:smile:`), plus reactions from the picker.
-- [x] GIF picker: a GIF tab in the composer's picker (and a GIF button), searching KLIPY through chadd (D30). Clicking one sends its URL.
-  Checked by unit tests only. Still to do: a live run against KLIPY to confirm its response matches Tenor v2, a screenshot scenario, and the attribution assets from KLIPY's branding guidelines.
+- [x] GIF picker: a GIF tab in the composer's picker, a GIF button and `/gif [search]`, searching KLIPY's native API through chadd (D30, D31). Clicking one sends its URL.
+  The required "Search KLIPY" placeholder is in. Still to do: a screenshot scenario, KLIPY's logo for the optional "Powered by KLIPY" mark, and KLIPY's written OK for the server-side proxy (see D31).
 - [x] Away status from idle (ext-idle-notify / XScreenSaver / Windows), and manual status.
 - [x] Keyboard navigation (Ctrl+K quick switcher, Alt+↑/↓ for channels), and accessibility via AccessKit.
 

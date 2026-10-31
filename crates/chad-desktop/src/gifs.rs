@@ -35,7 +35,22 @@ pub enum Action {
     Pick(Gif),
 }
 
+/// The search in a `/gif [search]` command, if `text` is one.
+pub fn command(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let (cmd, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+    cmd.eq_ignore_ascii_case("/gif").then(|| rest.trim())
+}
+
 impl Gifs {
+    /// Opens on `query`'s results (trending when empty).
+    pub fn searching(query: String) -> Self {
+        Self {
+            query,
+            ..Self::default()
+        }
+    }
+
     /// The core's answer. Stale ones (the search moved on) are dropped.
     pub fn page(&mut self, query: &str, pos: Option<&str>, result: Result<GifPage, String>) {
         let current = self
@@ -216,6 +231,16 @@ mod tests {
             gifs: ids.iter().map(|i| gif(i)).collect(),
             next: next.map(str::to_owned),
         })
+    }
+
+    #[test]
+    fn gif_command() {
+        assert_eq!(command("/gif"), Some(""));
+        assert_eq!(command("  /GIF  happy cat "), Some("happy cat"));
+        assert_eq!(command("/gif\tdance"), Some("dance"));
+        assert_eq!(command("/giffy"), None);
+        assert_eq!(command("gif me"), None);
+        assert_eq!(command("look /gif"), None);
     }
 
     #[test]

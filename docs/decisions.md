@@ -164,3 +164,10 @@ Going through chadd keeps searches and IPs away from the provider, as in D25, an
 KLIPY is the default (`api.klipy.com/v2/`) because its API is a drop-in for Tenor's, which Google has been winding down for third parties. `api` can point at any Tenor v2-shaped API.
 The answer is hostile like any other (D14): it's capped at 256 KB and 40 items, and each item is kept only with an https URL on a hostname whose path ends in an image extension. The posted rendition is `mediumgif`, else `gif` when it's at most `/api/media`'s 8 MB. Thumbnails and the GIF itself load through `/api/media`, so that throttle went from 120 to 300 a minute to fit a page of 20 thumbnails.
 Sending a GIF sends its URL as a plain message. Plain IRC clients see a link, and nothing new goes on the wire.
+
+## D31: chadd uses KLIPY's native API, not its Tenor shim (2026-10-31)
+Supersedes D30's choice of API, but not its proxy design. In production the Tenor-compatible `api.klipy.com/v2/{featured,search}` answered 404, so chadd now calls `GET <api>/<app key>/gifs/{search,trending}` (default `api` is `https://api.klipy.com/api/v1/`) with `page`, `per_page`, `content_filter` and `format_filter=gif`.
+The answer is `{result, data: {data: [..], has_next}}`. chadd posts `file.md.gif` (else `hd` when it's at most 8 MB), previews `sm`, then `xs`, then `md`, skips items whose `type` isn't `gif` (ads), and hands out the next page number as the opaque `pos`. The answer cap went up to 1 MB because items carry inline blurred previews.
+`[gifs]` no longer takes `provider`. KLIPY is the only provider, and the picker's "Search KLIPY" placeholder is required by KLIPY's attribution rules.
+Open question: KLIPY's integration requirements ask that requests and media loads come from the end-user client unless KLIPY approves otherwise in writing. Proxying through chadd (D25, D30) needs that approval.
+`customer_id` isn't sent, since it's optional and would identify users to KLIPY.

@@ -32,29 +32,22 @@ pub struct Config {
     pub gifs: Option<Gifs>,
 }
 
-/// A Tenor v2-shaped GIF API (KLIPY's by default), searched on behalf of
-/// clients (D30).
+/// KLIPY's GIF API, searched on behalf of clients (D30, D31).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Gifs {
-    /// The provider's API key. Stays on the server.
+    /// KLIPY's app key. Stays on the server.
     pub key: String,
+    /// Requests go to `<api>/<key>/gifs/{search,trending}`.
     #[serde(default = "default_gifs_api")]
     pub api: Url,
-    /// Shown in the picker's attribution.
-    #[serde(default = "default_gifs_provider")]
-    pub provider: String,
-    /// Tenor's `contentfilter`: `off`, `low`, `medium` or `high`.
+    /// `off`, `low`, `medium` or `high`.
     #[serde(default = "default_content_filter")]
     pub content_filter: String,
 }
 
 fn default_gifs_api() -> Url {
-    Url::parse("https://api.klipy.com/v2/").expect("static URL")
-}
-
-fn default_gifs_provider() -> String {
-    "KLIPY".into()
+    Url::parse("https://api.klipy.com/api/v1/").expect("static URL")
 }
 
 fn default_content_filter() -> String {
@@ -184,8 +177,8 @@ impl Config {
                 uploads: self.uploads.as_ref().map(|u| discovery::Uploads {
                     max_bytes: u.max_bytes,
                 }),
-                gifs: self.gifs.as_ref().map(|g| discovery::Gifs {
-                    provider: g.provider.clone(),
+                gifs: self.gifs.as_ref().map(|_| discovery::Gifs {
+                    provider: "KLIPY".into(),
                 }),
             },
             livekit: discovery::Livekit {
