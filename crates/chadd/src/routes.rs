@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, fetch, files};
+use crate::{api, fetch, files, gifs};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -26,6 +26,8 @@ pub struct AppState {
     pub uploads: api::Throttle,
     /// Previews and proxied images, per account.
     pub fetches: api::Throttle,
+    /// GIF searches, per account.
+    pub gifs: api::Throttle,
     /// Public addresses only (`fetch::client`).
     pub fetcher: reqwest::Client,
 }
@@ -45,7 +47,9 @@ impl AppState {
             session_secret: key.iter().map(|b| format!("{b:02x}")).collect(),
             throttle: api::Throttle::new(api::MAX_ATTEMPTS),
             uploads: api::Throttle::new(30),
-            fetches: api::Throttle::new(120),
+            // A page of the GIF picker is 20 thumbnails.
+            fetches: api::Throttle::new(300),
+            gifs: api::Throttle::new(60),
             fetcher: fetch::client()?,
         })
     }
@@ -75,6 +79,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/api/preview", post(fetch::preview))
         .route("/api/media", post(fetch::media))
+        .route("/api/gifs", post(gifs::search))
         .merge(files)
         .with_state(state)
 }

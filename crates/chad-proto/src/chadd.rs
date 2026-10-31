@@ -18,6 +18,10 @@ pub const PREVIEW: &str = "preview";
 /// `POST <api>/media` with a [`PreviewRequest`] and a Bearer session token:
 /// the image at `url`, fetched by chadd. The body is the image itself.
 pub const MEDIA: &str = "media";
+/// `POST <api>/gifs` with a [`GifSearch`] and a Bearer session token: a page
+/// of GIFs from the provider chadd is set up with, which never learns who
+/// searched (D30). Fetch `preview` through [`MEDIA`], not directly.
+pub const GIFS: &str = "gifs";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
@@ -67,6 +71,37 @@ pub struct LinkPreview {
     pub site: Option<String>,
     /// Fetch through [`MEDIA`], not directly.
     pub image: Option<url::Url>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GifSearch {
+    /// Empty for what's trending.
+    pub query: String,
+    /// A previous page's `next`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pos: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GifPage {
+    pub gifs: Vec<Gif>,
+    /// Pass as `pos` for the next page; `None` at the end.
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Gif {
+    pub id: String,
+    /// For hover text and screen readers; may be empty.
+    pub title: String,
+    /// A small rendition for the picker.
+    pub preview: url::Url,
+    /// What goes in the message. Its path ends in an image extension, so
+    /// clients show it inline.
+    pub url: url::Url,
+    /// Of `preview`, in pixels.
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

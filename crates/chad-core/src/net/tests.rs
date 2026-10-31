@@ -10,6 +10,7 @@ fn net() -> Net {
         nick: "bob".into(),
         state: ConnState::Connecting,
         uploads: None,
+        gifs: None,
     };
     let mut n = Net::new(Store::memory(), info);
     let caps = "batch echo-message labeled-response draft/chathistory draft/read-marker \

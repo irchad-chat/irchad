@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chad_proto::chadd::{
-    self, ApiError, LinkPreview, LoginRequest, LoginResponse, PreviewRequest, UploadResponse,
-    VoiceTokenRequest, VoiceTokenResponse,
+    self, ApiError, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse, PreviewRequest,
+    UploadResponse, VoiceTokenRequest, VoiceTokenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
@@ -15,6 +15,8 @@ use url::Url;
 use crate::discovery;
 
 const MAX_BODY: usize = 16 << 10;
+/// A page of GIFs: a few URLs each, 40 at most.
+const MAX_GIFS: usize = 256 << 10;
 /// chadd's own cap on proxied images.
 pub const MAX_MEDIA: usize = 8 << 20;
 
@@ -168,6 +170,32 @@ pub async fn media(api: &Url, session: &str, url: &str) -> Result<Vec<u8>, Error
         MAX_MEDIA,
     )
     .await
+}
+
+/// A page of GIFs from chadd's provider.
+pub async fn gifs(
+    api: &Url,
+    session: &str,
+    query: String,
+    pos: Option<String>,
+) -> Result<GifPage, Error> {
+    let req = GifSearch { query, pos };
+    let json = serde_json::to_vec(&req).map_err(|e| Error::Other(e.to_string()))?;
+    let mut page: GifPage =
+        parse(&request(api, chadd::GIFS, Some(session), Body::Json(json), MAX_GIFS).await?)?;
+    page.gifs.truncate(40);
+    page.gifs
+        .retain(|g| g.url.scheme() == "https" && g.preview.scheme() == "https" && g.id.len() <= 64);
+    for g in &mut page.gifs {
+        g.title = g
+            .title
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(300)
+            .collect();
+    }
+    page.next = page.next.filter(|n| n.len() <= 128);
+    Ok(page)
 }
 
 enum Body {

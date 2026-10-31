@@ -191,6 +191,7 @@ fn spawn_with(
         nick: p.account.clone(),
         state: ConnState::Connecting,
         uploads: None,
+        gifs: None,
     };
     let mut net = Net::new(store, info);
     net.invite_channel = invite_channel;

@@ -192,6 +192,42 @@ impl Media {
         }
     }
 
+    /// A clickable tile of `size` points for a picker. Fetched once it's in
+    /// view, whatever the auto-load setting: the user asked for these, and
+    /// they come through chadd like any other image.
+    pub fn thumb(
+        &mut self,
+        ui: &mut egui::Ui,
+        url: &str,
+        size: Vec2,
+        label: &str,
+    ) -> egui::Response {
+        let (rect, r) = ui.allocate_exact_size(size, Sense::click());
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+        if !ui.is_rect_visible(rect) {
+            return r;
+        }
+        self.want_image(url);
+        let radius = CornerRadius::same(4);
+        match self.images.get(url) {
+            Some(Img::Ready(f)) => {
+                egui::Image::new((frame_at(f, ui).id(), size))
+                    .corner_radius(radius)
+                    .paint_at(ui, rect);
+            }
+            _ => {
+                ui.painter()
+                    .rect_filled(rect, radius, ui.visuals().faint_bg_color);
+            }
+        }
+        if r.hovered() || r.has_focus() {
+            let stroke = egui::Stroke::new(2.0, ui.visuals().selection.stroke.color);
+            ui.painter()
+                .rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
+        }
+        r
+    }
+
     /// A card for a video or file link: there's no player, so it opens outside.
     pub fn card(ui: &mut egui::Ui, url: &str, kind: Kind) {
         let name = Url::parse(url)

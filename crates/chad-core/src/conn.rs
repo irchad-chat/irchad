@@ -183,6 +183,12 @@ async fn discover(net: &mut Net) -> Result<Discovery, String> {
         .as_ref()
         .filter(|_| !net.guest)
         .map(|u| u.max_bytes);
+    net.info.gifs = d
+        .chadd
+        .gifs
+        .as_ref()
+        .filter(|_| !net.guest)
+        .map(|g| g.provider.chars().take(40).collect());
     Ok(d)
 }
 
@@ -589,6 +595,22 @@ fn fetch(
                 sink.send([Event::Media {
                     network,
                     url,
+                    result,
+                }]);
+            });
+        }
+        NetCommand::Gifs { query, pos } => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| {
+                        let (query, pos) = (query.clone(), pos.clone());
+                        async move { chadd::gifs(&api, &t, query, pos).await }
+                    })
+                    .await;
+                sink.send([Event::Gifs {
+                    network,
+                    query,
+                    pos,
                     result,
                 }]);
             });

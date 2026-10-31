@@ -28,6 +28,37 @@ pub struct Config {
     pub livekit: Livekit,
     /// Leave out to turn uploads off.
     pub uploads: Option<Uploads>,
+    /// Leave out to turn the GIF picker off.
+    pub gifs: Option<Gifs>,
+}
+
+/// A Tenor v2-shaped GIF API (KLIPY's by default), searched on behalf of
+/// clients (D30).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Gifs {
+    /// The provider's API key. Stays on the server.
+    pub key: String,
+    #[serde(default = "default_gifs_api")]
+    pub api: Url,
+    /// Shown in the picker's attribution.
+    #[serde(default = "default_gifs_provider")]
+    pub provider: String,
+    /// Tenor's `contentfilter`: `off`, `low`, `medium` or `high`.
+    #[serde(default = "default_content_filter")]
+    pub content_filter: String,
+}
+
+fn default_gifs_api() -> Url {
+    Url::parse("https://api.klipy.com/v2/").expect("static URL")
+}
+
+fn default_gifs_provider() -> String {
+    "KLIPY".into()
+}
+
+fn default_content_filter() -> String {
+    "medium".into()
 }
 
 /// Files go to `<dir>/<id>/<name>` and are served at `<origin>/uploads/…`.
@@ -116,6 +147,16 @@ impl Config {
             config.livekit.secret.len() >= 32,
             "livekit.secret must be at least 32 characters"
         );
+        if let Some(g) = &config.gifs {
+            anyhow::ensure!(
+                g.api.scheme() == "https" && !g.api.cannot_be_a_base(),
+                "gifs.api must be an https URL"
+            );
+            anyhow::ensure!(
+                matches!(g.content_filter.as_str(), "off" | "low" | "medium" | "high"),
+                "gifs.content_filter must be off, low, medium or high"
+            );
+        }
         Ok(())
     }
 
@@ -142,6 +183,9 @@ impl Config {
                 api: or(&self.endpoints.chadd_api, &self.origin, "/api")?,
                 uploads: self.uploads.as_ref().map(|u| discovery::Uploads {
                     max_bytes: u.max_bytes,
+                }),
+                gifs: self.gifs.as_ref().map(|g| discovery::Gifs {
+                    provider: g.provider.clone(),
                 }),
             },
             livekit: discovery::Livekit {

@@ -157,3 +157,10 @@ This refines the Phase 4 design (D8 still holds) where testing against ergo show
 - **Trust:** trust on first use per (nick, device). A device whose keys change is pinned again but flagged, and the DM warns until the user verifies or accepts.
   SAS runs over `TAGMSG +chad/e2e-verify`: request, accept with a SHA-256 commitment to the responder's key, both keys, then a MAC of each side's signing key once the people say the emoji match. Only another person's devices can be verified for now, not our own.
 - **Logging out** (leaving the network) deletes the record before quitting, and the cache and pickle key with it. A device that's removed while offline stays listed until someone deletes it by hand.
+
+## D30: GIF search goes through chadd, to KLIPY by default (2026-10-31)
+The composer's picker has a GIF tab. `POST /api/gifs {query, pos}` (session token, 60 a minute per account) asks a Tenor v2-shaped API and returns a checked page of `{id, title, preview, url, width, height}`. An empty query gets trending (`featured`).
+Going through chadd keeps searches and IPs away from the provider, as in D25, and keeps the API key on the server. `[gifs]` in chadd.toml turns it on, and discovery's `chadd.gifs.provider` tells clients, which show "Powered by <provider>".
+KLIPY is the default (`api.klipy.com/v2/`) because its API is a drop-in for Tenor's, which Google has been winding down for third parties. `api` can point at any Tenor v2-shaped API.
+The answer is hostile like any other (D14): it's capped at 256 KB and 40 items, and each item is kept only with an https URL on a hostname whose path ends in an image extension. The posted rendition is `mediumgif`, else `gif` when it's at most `/api/media`'s 8 MB. Thumbnails and the GIF itself load through `/api/media`, so that throttle went from 120 to 300 a minute to fit a page of 20 thumbnails.
+Sending a GIF sends its URL as a plain message. Plain IRC clients see a link, and nothing new goes on the wire.

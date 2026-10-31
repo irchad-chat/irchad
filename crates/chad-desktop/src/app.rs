@@ -30,7 +30,7 @@ use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, Layout, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
-use crate::{complete, emoji, format, update};
+use crate::{complete, emoji, format, gifs, update};
 
 const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
@@ -91,13 +91,16 @@ pub struct App {
     new_version: Option<(String, String)>,
 }
 
-/// The emoji picker, for the composer or a reaction.
+/// The emoji picker, for the composer or a reaction. The composer's has a
+/// GIF tab too, when the network searches GIFs.
 struct Picker {
     react: Option<(String, String, String)>,
     at: egui::Pos2,
     query: String,
     /// Shown for a frame already: the click that opened it is no "click elsewhere".
     shown: bool,
+    gif_tab: bool,
+    gifs: gifs::Gifs,
 }
 
 /// Ctrl+K: jump to any channel or DM by name.
@@ -1028,6 +1031,19 @@ impl App {
                     self.nets[i].media.bytes(url, result, ctx);
                 }
             }
+            Event::Gifs {
+                network,
+                query,
+                pos,
+                result,
+            } => {
+                let here = self.on_screen().is_some_and(|(n, _)| n == network);
+                if let Some(p) = &mut self.picker
+                    && here
+                {
+                    p.gifs.page(&query, pos.as_deref(), result);
+                }
+            }
         }
     }
 
@@ -1594,6 +1610,7 @@ impl App {
             })
         };
         let uploads = self.nets[ni].info.uploads.is_some();
+        let gifs = self.nets[ni].info.gifs.is_some();
         let auto_media = self.settings.load_media;
         let n = &mut self.nets[ni];
         let (b, profiles, media, devices) =
@@ -1603,6 +1620,7 @@ impl App {
         let mut close = false;
         // Set inside the panels, acted on once `b` is free again.
         let mut attach = false;
+        // Where the picker opens, and whether on the GIF tab.
         let mut emoji_at = None;
         let mut pick_reaction = None;
         let mut pasted = Vec::new();
@@ -1783,7 +1801,15 @@ impl App {
                             .button(RichText::new(icons::SMILEY).size(18.0))
                             .tip("Emoji");
                         if e.clicked() {
-                            emoji_at = Some(e.rect.left_top());
+                            emoji_at = Some((e.rect.left_top(), false));
+                        }
+                        if gifs {
+                            let g = ui
+                                .button(RichText::new("GIF").strong().size(13.0))
+                                .tip("GIFs");
+                            if g.clicked() {
+                                emoji_at = Some((g.rect.left_top(), true));
+                            }
                         }
                         let edit = egui::TextEdit::multiline(&mut b.draft)
                             .hint_text(format!("Message {target}"))
@@ -1974,14 +2000,18 @@ impl App {
                 at,
                 query: String::new(),
                 shown: false,
+                gif_tab: false,
+                gifs: Default::default(),
             });
         }
-        if let Some(at) = emoji_at {
+        if let Some((at, gif_tab)) = emoji_at {
             self.picker = Some(Picker {
                 react: None,
                 at,
                 query: String::new(),
                 shown: false,
+                gif_tab,
+                gifs: Default::default(),
             });
         }
         if attach {
@@ -2359,23 +2389,67 @@ impl App {
 
 impl App {
     fn picker_ui(&mut self, ctx: &egui::Context) {
+        let here = self.on_screen();
+        // GIFs only from the composer, on a network that searches them.
+        let gif_net = here
+            .as_ref()
+            .and_then(|(n, _)| self.net_idx(n))
+            .and_then(|i| Some((i, self.nets[i].info.gifs.clone()?)));
         let Some(p) = &mut self.picker else { return };
-        let mut picked = None;
+        let gif_net = gif_net.filter(|_| p.react.is_none());
+        let nets = &mut self.nets;
+        let (mut picked, mut gif) = (None, None);
         let area = egui::Area::new(egui::Id::unique("emoji-picker"))
             .fixed_pos(p.at)
             .pivot(Align2::RIGHT_BOTTOM)
             .constrain(true)
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    picked = emoji::picker(ui, &mut p.query);
+                egui::Frame::popup(ui.style()).show(ui, |ui| match &gif_net {
+                    Some((ni, provider)) => {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut p.gif_tab, false, "Emoji");
+                            ui.selectable_value(&mut p.gif_tab, true, "GIFs");
+                        });
+                        if p.gif_tab {
+                            gif = p.gifs.ui(ui, &mut nets[*ni].media, provider);
+                        } else {
+                            picked = emoji::picker(ui, &mut p.query);
+                        }
+                    }
+                    None => picked = emoji::picker(ui, &mut p.query),
                 });
             });
         let close = (p.shown && area.response.clicked_elsewhere())
             || ctx.input(|i| i.key_pressed(Key::Escape));
         p.shown = true;
+        let react = p.react.clone();
+        match (gif, here) {
+            (Some(gifs::Action::Fetch { query, pos }), Some((network, _))) => {
+                self.send(&network, NetCommand::Gifs { query, pos });
+            }
+            // Posted as a plain link: every client can open it, and IrChad
+            // shows it inline.
+            (Some(gifs::Action::Pick(g)), Some((network, target))) => {
+                if let Some(b) = self.buffer_mut(&network, &target) {
+                    let reply_to = b.reply.take().map(|(id, _)| id);
+                    b.log.scroll_to_bottom();
+                    self.send(
+                        &network,
+                        NetCommand::Send {
+                            target,
+                            text: g.url.into(),
+                            reply_to,
+                        },
+                    );
+                }
+                self.picker = None;
+                return;
+            }
+            _ => {}
+        }
         if let Some(e) = picked {
-            match p.react.clone() {
+            match react {
                 Some((network, target, msgid)) => {
                     self.send(
                         &network,

@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
 
-pub use chad_proto::chadd::LinkPreview;
+pub use chad_proto::chadd::{Gif, GifPage, LinkPreview};
 pub use discovery::fetch_icon;
 pub use manager::start;
 
@@ -212,6 +212,12 @@ pub enum NetCommand {
     Media {
         url: String,
     },
+    /// A page of GIFs through chadd (D30); empty `query` for trending.
+    /// Answered by `Event::Gifs`.
+    Gifs {
+        query: String,
+        pos: Option<String>,
+    },
     /// Someone's devices with encrypted DMs on, fetched again: `Event::Devices`.
     Devices {
         nick: String,
@@ -333,6 +339,13 @@ pub enum Event {
         url: String,
         result: Result<Blob, String>,
     },
+    /// For `NetCommand::Gifs` with this `query` and `pos`.
+    Gifs {
+        network: String,
+        query: String,
+        pos: Option<String>,
+        result: Result<GifPage, String>,
+    },
     /// Someone's devices with encrypted DMs on (ours, for our own nick).
     Devices {
         network: String,
@@ -377,6 +390,8 @@ pub struct NetworkInfo {
     pub state: ConnState,
     /// Largest upload chadd takes, if it takes them (and we have an account).
     pub uploads: Option<u64>,
+    /// Who chadd's GIF search comes from, if it has one (and we have an account).
+    pub gifs: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

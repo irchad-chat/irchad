@@ -7,6 +7,7 @@ mod api;
 mod config;
 mod fetch;
 mod files;
+mod gifs;
 mod routes;
 
 use config::Config;

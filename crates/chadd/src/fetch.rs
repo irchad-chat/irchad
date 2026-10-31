@@ -23,7 +23,7 @@ use crate::routes::AppState;
 
 /// Enough for any `<head>`.
 const MAX_PAGE: usize = 512 << 10;
-const MAX_IMAGE: usize = 8 << 20;
+pub const MAX_IMAGE: usize = 8 << 20;
 const MAX_FIELD: usize = 300;
 
 /// Global unicast only: no loopback, private, link-local, CGNAT, multicast or
@@ -121,15 +121,23 @@ async fn get(state: &AppState, url: &str, max: usize) -> Result<(Url, Vec<u8>), 
             StatusCode::BAD_GATEWAY
         })?;
     let url = res.url().clone();
+    let body = capped(&mut res, max)
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok((url, body))
+}
+
+/// At most `max` bytes of `res`'s body; the rest is never read.
+pub async fn capped(res: &mut reqwest::Response, max: usize) -> reqwest::Result<Vec<u8>> {
     let mut body = Vec::new();
-    while let Some(chunk) = res.chunk().await.map_err(|_| StatusCode::BAD_GATEWAY)? {
+    while let Some(chunk) = res.chunk().await? {
         let room = max - body.len();
         body.extend_from_slice(&chunk[..chunk.len().min(room)]);
         if body.len() >= max {
             break;
         }
     }
-    Ok((url, body))
+    Ok(body)
 }
 
 fn throttle(state: &AppState, headers: &HeaderMap) -> Result<String, (StatusCode, Json<ApiError>)> {
@@ -259,7 +267,7 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 }
 
 /// Entities decoded, whitespace collapsed, length capped.
-fn clean(s: &str) -> String {
+pub fn clean(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
     while let Some(i) = rest.find('&') {

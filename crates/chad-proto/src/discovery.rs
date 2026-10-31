@@ -29,12 +29,21 @@ pub struct Chadd {
     /// Set when chadd takes uploads (`POST <api>/upload`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uploads: Option<Uploads>,
+    /// Set when chadd searches GIFs for its users (`POST <api>/gifs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gifs: Option<Gifs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Uploads {
     /// Largest file accepted, in bytes.
     pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Gifs {
+    /// Who the GIFs come from, for the picker's attribution (e.g. `KLIPY`).
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

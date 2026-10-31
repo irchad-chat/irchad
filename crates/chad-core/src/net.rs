@@ -354,6 +354,15 @@ impl Net {
                     result: Err("You're offline right now.".into()),
                 });
             }
+            NetCommand::Gifs { query, pos } => {
+                let network = self.id();
+                self.events.push(Event::Gifs {
+                    network,
+                    query,
+                    pos,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
             _ if offline => self.error("You're offline right now."),
             NetCommand::SetDisplayName { name } => {
                 let name: String = name

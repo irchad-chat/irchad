@@ -84,6 +84,14 @@ From a checkout of this repo, copy the files over and fill them in:
   [uploads]
   dir = "/var/lib/chadd/uploads"
   max_bytes = 26214400             # 25 MB
+
+  # Optional: the GIF picker. Get a key at https://partner.klipy.com/api-keys
+  # (a test key allows 100 searches an hour across the whole network).
+  [gifs]
+  key = "<KLIPY_API_KEY>"
+  # content_filter = "medium"      # off, low, medium or high
+  # api = "https://api.klipy.com/v2/"  # any Tenor v2-shaped API
+  # provider = "KLIPY"             # shown as "Powered by …"
   ```
 - **systemd:** copy `deploy/native/*.service` to `/etc/systemd/system/`, then
   `systemctl daemon-reload && systemctl enable --now ergo livekit chadd caddy`.

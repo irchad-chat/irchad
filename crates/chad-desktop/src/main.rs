@@ -6,6 +6,7 @@ mod chatlog;
 mod complete;
 mod emoji;
 mod format;
+mod gifs;
 mod icons;
 mod media;
 mod platform;

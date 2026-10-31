@@ -59,6 +59,7 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
   `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone and a screen share with its audio.
   `POST /api/upload` (raw body, Bearer or HTTP Basic, also advertised as ISUPPORT `draft/FILEHOST`) stores a file (D26).
   `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
+  `POST /api/gifs {query, pos}` searches the GIF provider set up in chadd.toml (KLIPY by default), and discovery's `chadd.gifs` says it's on (D30).
   Request and response types live in `chad_proto::chadd`. Calls share one session per network, and the client logs in again on a 401.
 
 ## Client crates
@@ -99,6 +100,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | Display name / avatar | Metadata `display-name`, `avatar` (de-facto keys), subscribed with `chad/voice` before `CAP END`. For people who join later, the client sends `METADATA <nick> GET`. The avatar is an upload's URL (D26). |
 | Away | `AWAY`, from the status menu or desktop idle time (D28), re-sent after reconnects |
 | Images and link previews | Plain URLs in the message. The client shows images and video/file cards inline, and previews the first other link through chadd (D25). |
+| GIFs | The picker's GIF tab searches through chadd (D30) and sends the GIF's URL as a plain message, so it shows inline like any other image. |
 | Typing | `+typing` |
 | Replies / reactions | `+draft/reply`, `+draft/react` |
 | Edit | Not in IRCv3. Parked. |
