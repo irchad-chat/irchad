@@ -1246,6 +1246,15 @@ impl App {
                     self.share_dialog = Some(ShareDialog::new(&self.voice, ui.ctx()));
                 }
                 Some(voice::PanelAction::StopShare) => self.voice.stop_share(),
+                Some(voice::PanelAction::Preview) => {
+                    let me = self.voice.call().and_then(|c| {
+                        c.participants
+                            .into_iter()
+                            .find(|p| p.local)
+                            .map(|p| p.identity)
+                    });
+                    self.voice.watch(me);
+                }
                 None => {}
             }
         }

@@ -63,24 +63,43 @@ pub struct Rt {
     cue: Option<(Vec<i16>, usize)>,
 }
 
-/// Someone joined or left the call we're in (us included).
-#[derive(Clone, Copy)]
+/// A short sound in the call we're in.
+#[derive(Clone, Copy, Debug)]
 pub enum Cue {
+    /// Someone joined or left (us included).
     Join,
     Leave,
+    /// We muted or deafened, or undid it: the same sound for both.
+    Mute,
+    Unmute,
+    /// Someone (us included) started or stopped sharing their screen.
+    ShareStart,
+    ShareEnd,
+    /// Someone else started watching our share, or the share we watch.
+    Viewer,
 }
 
 impl Cue {
-    /// Two short notes, rising for a join and falling for a leave.
+    /// Two notes rising for a join and falling for a leave, two quick low
+    /// ones for mute, three for a share, two high taps for a viewer.
     fn samples(self) -> Vec<i16> {
-        let notes = match self {
-            Cue::Join => [659.25, 880.0],
-            Cue::Leave => [880.0, 659.25],
+        const HALF: usize = CUE_LEN / 2;
+        const THIRD: usize = CUE_LEN / 3;
+        const SHORT: usize = CUE_LEN / 5;
+        const TAP: usize = CUE_LEN / 6;
+        // (Hz, samples); 0 Hz rests.
+        let notes: &[(f32, usize)] = match self {
+            Cue::Join => &[(659.25, HALF), (880.0, HALF)],
+            Cue::Leave => &[(880.0, HALF), (659.25, HALF)],
+            Cue::Mute => &[(587.33, SHORT), (440.0, SHORT)],
+            Cue::Unmute => &[(440.0, SHORT), (587.33, SHORT)],
+            Cue::ShareStart => &[(523.25, THIRD), (659.25, THIRD), (783.99, THIRD)],
+            Cue::ShareEnd => &[(783.99, THIRD), (659.25, THIRD), (523.25, THIRD)],
+            Cue::Viewer => &[(1174.66, TAP), (0.0, TAP / 2), (1174.66, TAP)],
         };
-        let len = CUE_LEN / 2;
         notes
             .iter()
-            .flat_map(|&hz: &f32| {
+            .flat_map(|&(hz, len)| {
                 (0..len).map(move |i| {
                     let t = i as f32 / RATE as f32;
                     // Quick attack, then decay, so the notes don't click.
@@ -125,6 +144,8 @@ pub struct Shared {
     /// Identity whose screen we watch.
     pub watching: Mutex<Option<String>>,
     pub screen: Mutex<Option<Arc<ScreenFrame>>>,
+    /// We watch our own share: the encoder puts what it sends in `screen`.
+    pub preview: AtomicBool,
 }
 
 impl Shared {
@@ -150,6 +171,7 @@ impl Shared {
             ended: AtomicU64::new(0),
             watching: Mutex::default(),
             screen: Mutex::default(),
+            preview: AtomicBool::new(false),
         }
     }
 
@@ -159,10 +181,14 @@ impl Shared {
 
     pub fn set_share(&self, share: Share) {
         let mut s = lock(&self.share);
-        if self.ended.load(Relaxed) != share.id {
+        let stored = self.ended.load(Relaxed) != share.id;
+        if stored {
             *s = Some(share);
         }
         drop(s);
+        if stored {
+            self.play_cue(Cue::ShareStart);
+        }
         (self.notify)();
     }
 
@@ -211,13 +237,21 @@ impl Shared {
     }
 
     pub fn set_muted(&self, muted: bool) {
-        self.muted.store(muted, Relaxed);
+        let was = self.muted.swap(muted, Relaxed);
         self.mute_track();
+        self.mute_cue(was, muted);
     }
 
     pub fn set_deafened(&self, deafened: bool) {
-        self.deafened.store(deafened, Relaxed);
+        let was = self.deafened.swap(deafened, Relaxed);
         self.mute_track();
+        self.mute_cue(was, deafened);
+    }
+
+    fn mute_cue(&self, was: bool, now: bool) {
+        if was != now && lock(&self.call).is_some() {
+            self.play_cue(if now { Cue::Mute } else { Cue::Unmute });
+        }
     }
 
     /// Shows others our mute state too.
@@ -547,6 +581,28 @@ mod tests {
             heard += out.iter().filter(|&&x| x != 0).count();
         }
         assert!(heard > CUE_LEN * 9 / 10, "{heard}");
+        assert!(lock(&shared.rt).cue.is_none());
+    }
+
+    #[test]
+    fn cues_fit_the_leave_delay() {
+        use Cue::*;
+        for cue in [Join, Leave, Mute, Unmute, ShareStart, ShareEnd, Viewer] {
+            assert!(cue.samples().len() <= CUE_LEN, "{cue:?}");
+        }
+    }
+
+    #[test]
+    fn mute_cues_only_in_a_call_and_on_change() {
+        let shared = Shared::new(Arc::new(|| {}));
+        shared.set_muted(true);
+        assert!(lock(&shared.rt).cue.is_none());
+        shared.set_muted(false);
+        shared.set_call(0, Some(CallState::default()));
+        shared.set_deafened(true);
+        assert!(lock(&shared.rt).cue.is_some());
+        lock(&shared.rt).cue = None;
+        shared.set_deafened(true);
         assert!(lock(&shared.rt).cue.is_none());
     }
 

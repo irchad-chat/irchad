@@ -256,6 +256,14 @@ impl Voice {
         if let Some(share) = self.shared.take_share(id) {
             self.backend.capture_app(None);
             drop(share);
+            self.shared.play_cue(engine::Cue::ShareEnd);
+            if self
+                .shared
+                .preview
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                self.watch(None);
+            }
             (self.shared.notify)();
         }
     }

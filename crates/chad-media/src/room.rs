@@ -2,7 +2,7 @@
 //! The SDK reconnects by itself; a [`Call`] ends when the room is gone for good
 //! or when it's dropped.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::Duration;
@@ -154,7 +154,8 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
     let task = tokio::spawn(async move {
         let mut streams: HashMap<String, JoinHandle<()>> = HashMap::new();
         let mut stats = tokio::time::interval(Duration::from_secs(2));
-        snapshot(&shared, generation, &r);
+        let mut seen = None;
+        snapshot(&shared, generation, &r, &mut seen);
         let reason = loop {
             let ev = tokio::select! {
                 ev = events.recv() => ev,
@@ -220,7 +221,7 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 RoomEvent::Disconnected { reason } => break end_reason(reason),
                 _ => {}
             }
-            snapshot(&shared, generation, &r);
+            snapshot(&shared, generation, &r, &mut seen);
         };
         for (sid, h) in streams {
             h.abort();
@@ -272,17 +273,23 @@ pub fn watch(shared: &Shared, identity: Option<String>) {
         }
         w.clone_from(&identity);
     }
+    // Off before clearing, so the encoder can't put a frame of ours back.
+    shared.preview.store(false, Relaxed);
     *lock(&shared.screen) = None;
     let Some(room) = lock(&shared.room).clone() else {
         return;
     };
+    let own = identity.as_deref()
+        == Some(short(&room.local_participant().identity().to_string()).as_str());
+    shared.preview.store(own, Relaxed);
     for p in room.remote_participants().values() {
         let id = short(&p.identity().to_string());
         for publication in p.track_publications().values() {
             subscribe(shared, publication, &id);
         }
     }
-    // Tells the sharer how many watch (D22).
+    // Tells the sharer how many watch (D22). Previewing our own isn't watching.
+    let identity = identity.filter(|_| !own);
     tokio::spawn(async move {
         let attrs = HashMap::from([(WATCHING.to_owned(), identity.unwrap_or_default())]);
         if let Err(e) = room.local_participant().set_attributes(attrs).await {
@@ -319,23 +326,34 @@ async fn view(track: RemoteVideoTrack, shared: Arc<Shared>) {
     }
 }
 
+/// What the last snapshot saw of others, to cue what changed.
+struct Seen {
+    sharing: HashSet<String>,
+    /// Watchers per sharer, not counting us.
+    watchers: HashMap<String, u32>,
+}
+
 /// Rebuilds the participant list from the room.
-fn snapshot(shared: &Shared, generation: u64, room: &Room) {
+fn snapshot(shared: &Shared, generation: u64, room: &Room, seen: &mut Option<Seen>) {
     if !shared.current(generation) {
         return;
     }
     let local = room.local_participant();
     let local_id = short(&local.identity().to_string());
     let remotes = room.remote_participants();
-    let mut watchers: HashMap<String, u32> = HashMap::new();
-    let ours = lock(&shared.watching).clone();
+    let mut others: HashMap<String, u32> = HashMap::new();
     for w in remotes
         .values()
         .take(MAX_PARTICIPANTS)
         .filter_map(|p| p.attributes().get(WATCHING).map(|w| short(w)))
-        .chain(ours)
     {
-        *watchers.entry(w).or_default() += 1;
+        *others.entry(w).or_default() += 1;
+    }
+    // Our own preview doesn't count.
+    let ours = lock(&shared.watching).clone().filter(|w| *w != local_id);
+    let mut watchers = others.clone();
+    if let Some(w) = &ours {
+        *watchers.entry(w.clone()).or_default() += 1;
     }
     let mut participants = vec![Participant {
         speaking: local.is_speaking() && !shared.muted(),
@@ -367,6 +385,36 @@ fn snapshot(shared: &Shared, generation: u64, room: &Room) {
         })
         .collect();
     remote.sort_by(|a, b| a.identity.cmp(&b.identity));
+
+    let sharing: HashSet<String> = remote
+        .iter()
+        .filter(|p| p.sharing)
+        .map(|p| p.identity.clone())
+        .collect();
+    // Not on the first look, or joining would cue every share already up.
+    if let Some(prev) = seen {
+        // Someone leaving mid-share gets the leave cue instead.
+        let ended = prev
+            .sharing
+            .iter()
+            .any(|id| !sharing.contains(id) && remote.iter().any(|p| p.identity == *id));
+        let me = &participants[0];
+        let ours_shared = me.sharing.then_some(&me.identity);
+        let viewer = ours_shared.into_iter().chain(&ours).any(|id| {
+            others.get(id).copied().unwrap_or(0) > prev.watchers.get(id).copied().unwrap_or(0)
+        });
+        if !sharing.is_subset(&prev.sharing) {
+            shared.play_cue(Cue::ShareStart);
+        } else if ended {
+            shared.play_cue(Cue::ShareEnd);
+        } else if viewer {
+            shared.play_cue(Cue::Viewer);
+        }
+    }
+    *seen = Some(Seen {
+        sharing,
+        watchers: others,
+    });
     participants.extend(remote);
     let quality = match local.connection_quality() {
         ConnectionQuality::Excellent => Quality::Excellent,

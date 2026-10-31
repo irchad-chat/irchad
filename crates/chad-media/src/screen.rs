@@ -4,6 +4,7 @@
 //! someone else's share decodes into [`ScreenFrame`]s for the UI.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 
 use futures_util::FutureExt;
@@ -18,11 +19,11 @@ use livekit::webrtc::audio_source::{
 };
 use livekit::webrtc::native::yuv_helper;
 use livekit::webrtc::stats::RtcStats;
-use livekit::webrtc::video_frame::{I420Buffer, VideoFrame, VideoRotation};
+use livekit::webrtc::video_frame::{I420Buffer, VideoBuffer, VideoFrame, VideoRotation};
 use livekit::webrtc::video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource};
 use serde::{Deserialize, Serialize};
 
-use crate::engine::lock;
+use crate::engine::{Shared, lock};
 use crate::{RATE, Voice};
 
 /// Bigger than any real screen; D14 for what peers send us, sanity for what
@@ -235,7 +236,7 @@ pub(crate) async fn start(
         },
         true,
     );
-    let sink = encoder(source.clone(), settings.preset);
+    let sink = encoder(source.clone(), settings.preset, shared.clone());
     let v = voice.clone();
     let on_end: OnEnd = Box::new(move || v.end_share(id));
     let (capture, token): (Box<dyn ScreenSource>, Option<String>) = match target {
@@ -376,10 +377,12 @@ fn pattern(fps: u32, mut sink: FrameSink) -> Box<dyn ScreenSource> {
     Box::new(Pattern(stop))
 }
 
-/// Captured frames → I420 at the preset's size and rate → the video source.
-fn encoder(source: NativeVideoSource, preset: Preset) -> FrameSink {
+/// Captured frames → I420 at the preset's size and rate → the video source,
+/// and to our own preview while it's open.
+fn encoder(source: NativeVideoSource, preset: Preset, shared: Arc<Shared>) -> FrameSink {
     let interval = Duration::from_micros(1_000_000 / u64::from(preset.fps()));
     let mut next = Instant::now();
+    let mut seq = 0;
     Box::new(move |f: Frame<'_>| {
         let now = Instant::now();
         // A little slack, so a 60 Hz source isn't cut to 30.
@@ -410,6 +413,10 @@ fn encoder(source: NativeVideoSource, preset: Preset) -> FrameSink {
         if let Some((w, h)) = fit(f.width, f.height, preset.bounds()) {
             i420 = i420.scale(w as i32, h as i32);
         }
+        if shared.preview.load(Relaxed) {
+            seq += 1;
+            preview(&shared, &i420, seq);
+        }
         source.capture_frame(&VideoFrame {
             rotation: VideoRotation::VideoRotation0,
             timestamp_us: 0,
@@ -417,6 +424,28 @@ fn encoder(source: NativeVideoSource, preset: Preset) -> FrameSink {
             buffer: i420,
         });
     })
+}
+
+/// Our own share as we send it, for the preview.
+fn preview(shared: &Shared, b: &I420Buffer, seq: u64) {
+    let (sy, su, sv) = b.strides();
+    let (y, u, v) = b.data();
+    let frame = Arc::new(ScreenFrame {
+        width: b.width(),
+        height: b.height(),
+        y: y.to_vec(),
+        u: u.to_vec(),
+        v: v.to_vec(),
+        strides: [sy, su, sv],
+        seq,
+    });
+    let mut screen = lock(&shared.screen);
+    // Checked again under the lock: watching someone else turns it off first.
+    if shared.preview.load(Relaxed) {
+        *screen = Some(frame);
+    }
+    drop(screen);
+    (shared.notify)();
 }
 
 /// The size to scale to so `w`×`h` fits `bounds` (even, aspect kept), if smaller.

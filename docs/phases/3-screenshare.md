@@ -39,9 +39,12 @@
 - [ ] `LIBVA_DRIVER_NAME=nvidia` (hybrid Nvidia boxes) breaks VAAPI on the AMD/Intel node, and we silently get OpenH264. Consider choosing the Nvidia path when that variable is set.
 - [ ] NVENC is compiled only when CUDA headers exist at build time. The release build needs them, or Nvidia users get software AV1.
 - [ ] Windows: no GPU probe yet (VP9 in software). Probe the DXGI adapter vendor once NVENC builds there.
-- [ ] No self-preview of your own share.
+- [x] Self-preview: your own LIVE badge, or "Preview" in the voice panel, opens your share on the stage as it is sent (after scaling, before encoding). The encoder copies frames only while the preview is open. It doesn't count toward "N watching" and closes when the share ends.
 - [x] Choose where a watched share goes from its bar: fill the chat area (the default), float in a small movable, resizable window over the chat, tile as a pane in the pane grid (drag its title to swap it with a chat pane), or pop out. The choice is remembered (`Settings::stage`). Only "fill" stops watching when you open another buffer.
 - [ ] Live `shots` scenario for float and tile. It needs a share to watch, so it was checked headless with a fake watch only.
+- [x] Sound cues (`engine::Cue`, synthesised like join/leave). Mute and deafen share one cue: two low notes, falling when muting and rising when unmuting. Anyone starting or stopping a share gets a three-note rise or fall. Another viewer joining your share, or the share you watch, gets two high taps. Remote changes come from diffing room snapshots, and the first snapshot after joining is skipped. Someone who leaves mid-share gets the leave cue, not the share-ended cue.
+- [ ] Cues replace each other rather than mix. If two land at once, only the later one is heard.
+- [ ] Not heard live yet: only tested headless.
 - [x] A capture that ends between starting and being stored is remembered (`Shared::ended`), so the share is dropped rather than left without video.
 - [ ] Phase 2's "Done when" is still unverified; this phase was started on request anyway.
 

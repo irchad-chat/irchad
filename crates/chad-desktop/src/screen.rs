@@ -320,14 +320,19 @@ pub fn stage(
     tile: Option<usize>,
 ) -> Option<StageAction> {
     let who = voice.watching()?;
-    let watchers = voice
+    let (watchers, own) = voice
         .call()
         .and_then(|c| c.participants.into_iter().find(|p| p.identity == who))
-        .map_or(0, |p| p.watchers);
+        .map_or((0, false), |p| (p.watchers, p.local));
     let mut action = None;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button(icons::X).tip("Stop watching").clicked() {
+            let close = if own {
+                "Close preview"
+            } else {
+                "Stop watching"
+            };
+            if ui.button(icons::X).tip(close).clicked() {
                 action = Some(StageAction::Close);
             }
             let (icon, tip) = if fullscreen {
@@ -338,16 +343,19 @@ pub fn stage(
             if ui.button(icon).tip(tip).clicked() {
                 action = Some(StageAction::Fullscreen(!fullscreen));
             }
-            ui.menu_button(icons::SPEAKER_HIGH, |ui| {
-                let mut v = voice.screen_volume(&who);
-                let l = ui.label("Screen share volume");
-                if voice::volume_slider(ui, &mut v).labelled_by(l.id).changed() {
-                    voice.set_screen_volume(&who, v);
-                    action = Some(StageAction::Volume(who.clone(), v));
-                }
-            })
-            .response
-            .tip("Volume");
+            // Our own share's sound never plays here.
+            if !own {
+                ui.menu_button(icons::SPEAKER_HIGH, |ui| {
+                    let mut v = voice.screen_volume(&who);
+                    let l = ui.label("Screen share volume");
+                    if voice::volume_slider(ui, &mut v).labelled_by(l.id).changed() {
+                        voice.set_screen_volume(&who, v);
+                        action = Some(StageAction::Volume(who.clone(), v));
+                    }
+                })
+                .response
+                .tip("Volume");
+            }
             if !fullscreen {
                 ui.separator();
                 for (l, icon, tip) in Layout::ALL.into_iter().rev() {
@@ -358,7 +366,12 @@ pub fn stage(
             }
             // Whatever's left of the buttons, so a narrow tile truncates the title.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let title = RichText::new(format!("{} {who}'s screen", icons::SCREENCAST)).strong();
+                let title = if own {
+                    format!("{} Your screen", icons::SCREENCAST)
+                } else {
+                    format!("{} {who}'s screen", icons::SCREENCAST)
+                };
+                let title = RichText::new(title).strong();
                 match tile {
                     Some(i) => {
                         ui.dnd_drag_source(egui::Id::unique("screen-drag"), PaneDrag(i), |ui| {

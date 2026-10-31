@@ -51,6 +51,8 @@ pub enum PanelAction {
     Leave,
     Share,
     StopShare,
+    /// Watch our own share.
+    Preview,
 }
 
 /// Bottom of the channel list while in a call (on any network).
@@ -108,15 +110,24 @@ pub fn panel(
             .as_ref()
             .and_then(|c| c.participants.iter().find(|p| p.local))
             .map_or(0, |p| p.watchers);
-        ui.label(
-            RichText::new(format!(
-                "{} Sharing your screen · {} {watchers} watching",
-                icons::SCREENCAST,
-                icons::EYE
-            ))
-            .small()
-            .color(SPEAKING),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!(
+                    "{} Sharing your screen · {} {watchers} watching",
+                    icons::SCREENCAST,
+                    icons::EYE
+                ))
+                .small()
+                .color(SPEAKING),
+            );
+            if ui
+                .small_button("Preview")
+                .on_hover_text("See what you're sending")
+                .clicked()
+            {
+                action = Some(PanelAction::Preview);
+            }
+        });
     }
     ui.horizontal(|ui| {
         let (muted, deaf) = (voice.muted(), voice.deafened());
@@ -233,11 +244,11 @@ pub fn members(
                         vec2(36.0, r.rect.height()),
                     );
                     let tip = if p.local {
-                        "You're sharing your screen"
+                        "Preview your share"
                     } else {
                         "Watch"
                     };
-                    if ui.put(at, live).on_hover_text(tip).clicked() && !p.local {
+                    if ui.put(at, live).on_hover_text(tip).clicked() {
                         watch = Some(p.identity.clone());
                     }
                 }
