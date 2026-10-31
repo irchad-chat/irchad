@@ -27,7 +27,7 @@ use crate::media::Media;
 use crate::platform::idle::Idle;
 use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
-use crate::screen::{self, DialogOutcome, ShareDialog, StageAction};
+use crate::screen::{self, DialogOutcome, Layout, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
 use crate::{complete, emoji, format, update};
@@ -112,12 +112,13 @@ struct ProfileDialog {
     name: String,
 }
 
-/// How a watched screen share is shown (what is watched lives in `Voice`).
+/// How a watched screen share is shown (what is watched lives in `Voice`,
+/// where it goes in `Settings::stage`).
 #[derive(Default)]
 struct Stage {
-    /// In its own window rather than over the chat.
-    popped: bool,
     fullscreen: bool,
+    /// Its cell in the pane grid when tiled.
+    cell: usize,
 }
 
 struct Network {
@@ -223,8 +224,8 @@ fn pane_cols(n: usize) -> usize {
     (1..).find(|c| c * c >= n).unwrap_or(1)
 }
 
-/// Drag-and-drop payload: the index of the pane whose title is being dragged.
-struct PaneDrag(usize);
+/// Drag-and-drop payload: the grid cell of the pane whose title is being dragged.
+pub struct PaneDrag(pub usize);
 
 fn badge(n: u32) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
@@ -501,79 +502,140 @@ impl App {
         }
     }
 
-    /// A pane's title dropped on another pane: they trade places, and focus
-    /// stays with its buffer.
-    fn swap_panes(&mut self, a: usize, b: usize) {
-        self.panes.swap(a, b);
-        if self.pane == a {
-            self.pane = b;
-        } else if self.pane == b {
-            self.pane = a;
-        }
+    /// The share's cell in the pane grid, when it's tiled there. The chat
+    /// panes fill the other cells in order.
+    fn screen_cell(&self) -> Option<usize> {
+        (self.settings.stage == Layout::Tile && self.voice.watching().is_some())
+            .then(|| self.stage.cell.min(self.panes.len()))
     }
 
-    /// Ctrl+arrows: the pane next to the focused one in that direction.
+    /// A pane's title dropped on another pane: they trade places, and focus
+    /// stays with its buffer. The tiled share counts as a pane here.
+    fn swap_cells(&mut self, a: usize, b: usize) {
+        let focused = self.panes.get(self.pane).cloned();
+        let screen = self.screen_cell();
+        let mut cells: Vec<_> = std::mem::take(&mut self.panes)
+            .into_iter()
+            .map(Some)
+            .collect();
+        if let Some(s) = screen {
+            cells.insert(s, None);
+        }
+        if a < cells.len() && b < cells.len() {
+            cells.swap(a, b);
+        }
+        if let Some(s) = cells.iter().position(Option::is_none) {
+            self.stage.cell = s;
+        }
+        self.panes = cells.into_iter().flatten().collect();
+        self.pane = focused
+            .and_then(|f| self.panes.iter().position(|p| *p == f))
+            .unwrap_or(0);
+    }
+
+    /// Ctrl+arrows: the pane next to the focused one in that direction,
+    /// passing over the tiled share.
     fn step_pane(&mut self, k: Key) {
-        let n = self.panes.len();
+        let screen = self.screen_cell();
+        let n = self.panes.len() + usize::from(screen.is_some());
         let cols = pane_cols(n);
-        let (p, rows) = (self.pane, n.div_ceil(cols));
-        let to = match k {
-            Key::ArrowLeft if p % cols > 0 => p - 1,
-            Key::ArrowRight if p % cols + 1 < cols && p + 1 < n => p + 1,
-            Key::ArrowUp if p >= cols => p - cols,
-            // The last row can be short.
-            Key::ArrowDown if p / cols + 1 < rows => (p + cols).min(n - 1),
-            _ => return,
+        let rows = n.div_ceil(cols);
+        let mut c = match screen {
+            Some(s) if self.pane >= s => self.pane + 1,
+            _ => self.pane,
         };
-        self.focus_pane(to);
+        loop {
+            c = match k {
+                Key::ArrowLeft if c % cols > 0 => c - 1,
+                Key::ArrowRight if c % cols + 1 < cols && c + 1 < n => c + 1,
+                Key::ArrowUp if c >= cols => c - cols,
+                // The last row can be short.
+                Key::ArrowDown if c / cols + 1 < rows => (c + cols).min(n - 1),
+                _ => return,
+            };
+            if Some(c) != screen {
+                break;
+            }
+        }
+        self.focus_pane(match screen {
+            Some(s) if c > s => c - 1,
+            _ => c,
+        });
     }
 
     /// The open panes in a grid, rows filled left to right; a short last row
     /// stretches. The focused pane is outlined. Dragging a pane's title onto
-    /// another swaps them.
+    /// another swaps them. A tiled share takes a cell like a chat pane.
     fn tiles(&mut self, ui: &mut egui::Ui) {
-        let n = self.panes.len();
+        let screen = self.screen_cell();
+        let chats = self.panes.len();
+        let n = chats + usize::from(screen.is_some());
         let cols = pane_cols(n);
         let area = ui.available_rect_before_wrap();
         let h = area.height() / n.div_ceil(cols) as f32;
         let (mut close, mut focus, mut swap) = (None, None, None);
         let dragged = egui::DragAndDrop::payload::<PaneDrag>(ui.ctx()).map(|p| p.0);
-        for (i, (net, k)) in self.panes.clone().iter().enumerate() {
+        let panes = self.panes.clone();
+        for i in 0..n {
             let (row, col) = (i / cols, i % cols);
             let w = area.width() / cols.min(n - row * cols) as f32;
             let rect = egui::Rect::from_min_size(
                 area.min + vec2(col as f32 * w, row as f32 * h),
                 vec2(w, h),
             );
-            let Some(ni) = self.net_idx(net) else {
-                continue;
+            let p = match screen {
+                Some(s) if i == s => None,
+                Some(s) if i > s => Some(i - 1),
+                _ => Some(i),
             };
-            let Some(bi) = self.nets[ni].buffer(k) else {
-                continue;
-            };
-            let mut pane = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rect.shrink(2.0))
-                    .id_salt(("pane", net, k)),
-            );
-            pane.set_clip_rect(rect);
-            let active = i == self.pane;
-            if !active && ui.rect_contains_pointer(rect) && ui.input(|i| i.pointer.any_pressed()) {
-                focus = Some(i);
-            }
-            if self.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
-                egui::Panel::right("members")
-                    .default_size(200.0)
-                    .size_range(140.0..=360.0)
-                    .show(&mut pane, |ui| self.members(ui, ni, bi));
-            }
-            if self.chat(&mut pane, ni, bi, active, (n > 1).then_some(i)) {
-                close = Some(i);
-            }
-            if active && n > 1 {
-                let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
-                ui.painter()
-                    .rect_stroke(rect.shrink(1.0), 4.0, stroke, egui::StrokeKind::Inside);
+            if let Some(p) = p {
+                let (net, k) = &panes[p];
+                let Some(ni) = self.net_idx(net) else {
+                    continue;
+                };
+                let Some(bi) = self.nets[ni].buffer(k) else {
+                    continue;
+                };
+                let mut pane = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect.shrink(2.0))
+                        .id_salt(("pane", net, k)),
+                );
+                pane.set_clip_rect(rect);
+                let active = p == self.pane;
+                if !active
+                    && ui.rect_contains_pointer(rect)
+                    && ui.input(|i| i.pointer.any_pressed())
+                {
+                    focus = Some(p);
+                }
+                if self.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
+                    egui::Panel::right("members")
+                        .default_size(200.0)
+                        .size_range(140.0..=360.0)
+                        .show(&mut pane, |ui| self.members(ui, ni, bi));
+                }
+                if self.chat(&mut pane, ni, bi, active, (n > 1).then_some(i), chats > 1) {
+                    close = Some(p);
+                }
+                if active && chats > 1 {
+                    let stroke = egui::Stroke::new(2.0, ui.visuals().selection.bg_fill);
+                    ui.painter().rect_stroke(
+                        rect.shrink(1.0),
+                        4.0,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            } else {
+                let mut pane = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect.shrink(2.0))
+                        .id_salt("screen-tile"),
+                );
+                pane.set_clip_rect(rect);
+                let ctx = ui.ctx().clone();
+                self.stage_ui(&mut pane, &ctx, (n > 1).then_some(i));
             }
             if let Some(from) = dragged.filter(|&d| d != i && d < n)
                 && ui.rect_contains_pointer(rect)
@@ -587,7 +649,7 @@ impl App {
         }
         if let Some((a, b)) = swap {
             egui::DragAndDrop::clear_payload(ui.ctx());
-            self.swap_panes(a, b);
+            self.swap_cells(a, b);
         } else if let Some(i) = close {
             self.close_pane(i);
         } else if let Some(i) = focus {
@@ -1425,8 +1487,8 @@ impl App {
             });
         if let Some(k) = pick {
             self.nets[ni].select(&k);
-            // Back to the chat; a popped-out share keeps playing.
-            if !self.stage.popped {
+            // Back to the chat; a share that isn't in its place keeps playing.
+            if self.settings.stage == Layout::Fill {
                 self.voice.watch(None);
             }
         }
@@ -1495,9 +1557,9 @@ impl App {
     }
 
     /// One buffer's pane. `active`: the focused pane, which takes the
-    /// composer focus. `tile`: its index when it's one of several, which makes
-    /// it closable and its title a drag handle. Returns whether its close
-    /// button was clicked.
+    /// composer focus. `tile`: its cell when it's one of several, which makes
+    /// its title a drag handle. `closable`: it isn't the only chat pane.
+    /// Returns whether its close button was clicked.
     fn chat(
         &mut self,
         ui: &mut egui::Ui,
@@ -1505,8 +1567,8 @@ impl App {
         bi: usize,
         active: bool,
         tile: Option<usize>,
+        closable: bool,
     ) -> bool {
-        let closable = tile.is_some();
         let network = self.nets[ni].info.network.clone();
         let own = self.nets[ni].info.nick.clone();
         let connected = self.nets[ni].info.state == ConnState::Connected;
@@ -1948,18 +2010,18 @@ impl App {
         });
     }
 
-    /// The watched screen share; `ctx` is the window it's in.
-    fn stage_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let action = screen::stage(ui, &self.voice, self.stage.popped, self.stage.fullscreen);
-        match action {
+    /// The watched screen share; `ctx` is the window it's in. `tile`: its
+    /// cell, when it's one of several in the pane grid.
+    fn stage_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, tile: Option<usize>) {
+        let (layout, fullscreen) = (self.settings.stage, self.stage.fullscreen);
+        match screen::stage(ui, &self.voice, layout, fullscreen, tile) {
             Some(StageAction::Close) => {
                 if self.stage.fullscreen {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
                 }
                 self.voice.watch(None);
             }
-            Some(StageAction::PopOut) => self.stage.popped = true,
-            Some(StageAction::PopIn) => self.stage.popped = false,
+            Some(StageAction::Layout(l)) => self.settings.stage = l,
             Some(StageAction::Fullscreen(on)) => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
                 self.stage.fullscreen = on;
@@ -1978,11 +2040,27 @@ impl App {
             .with_inner_size([1280.0, 760.0]);
         ctx.show_viewport_immediate(id, builder, |ui, _| {
             let vctx = ui.ctx().clone();
-            egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &vctx));
+            egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &vctx, None));
             if vctx.input(|i| i.viewport().close_requested()) {
                 self.voice.watch(None);
             }
         });
+    }
+
+    /// The share in a small window over the chat; drag it anywhere, resize
+    /// it from the edges.
+    fn float(&mut self, ctx: &egui::Context) {
+        let size = vec2(480.0, 300.0);
+        egui::Window::new("Screen share")
+            .id(egui::Id::unique("screen-float"))
+            .title_bar(false)
+            .resizable(true)
+            .default_size(size)
+            .min_size(vec2(240.0, 150.0))
+            .pivot(Align2::RIGHT_BOTTOM)
+            .default_pos(ctx.content_rect().right_bottom() - vec2(16.0, 16.0))
+            .constrain(true)
+            .show(ctx, |ui| self.stage_ui(ui, ctx, None));
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
@@ -2675,16 +2753,17 @@ impl eframe::App for App {
         self.poll(&ctx);
 
         let watching = self.voice.watching().is_some();
-        if !watching && (self.stage.popped || self.stage.fullscreen) {
-            if self.stage.fullscreen && !self.stage.popped {
+        let layout = self.settings.stage;
+        if !watching && self.stage.fullscreen {
+            if layout != Layout::PopOut {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
             }
-            self.stage = Stage::default();
+            self.stage.fullscreen = false;
         }
-        if watching && self.stage.popped {
+        if watching && layout == Layout::PopOut {
             self.popout(&ctx);
         } else if watching && self.stage.fullscreen {
-            egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &ctx));
+            egui::CentralPanel::default().show(ui, |ui| self.stage_ui(ui, &ctx, None));
             self.dialogs(&ctx);
             return;
         }
@@ -2765,16 +2844,21 @@ impl eframe::App for App {
                 .size_range(160.0..=400.0)
                 .show(ui, |ui| self.channels(ui, ni));
         }
+        // Read again: the popped-out window may have just moved the share back.
+        let layout = self.settings.stage;
         egui::CentralPanel::default().show(ui, |ui| match ni {
-            _ if watching && !self.stage.popped => self.stage_ui(ui, &ctx),
+            _ if watching && layout == Layout::Fill => self.stage_ui(ui, &ctx, None),
             None => self.welcome(ui),
-            Some(_) if self.panes.is_empty() => {
+            Some(_) if self.panes.is_empty() && self.screen_cell().is_none() => {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new("No channels yet. Join one with + on the left.").weak());
                 });
             }
             Some(_) => self.tiles(ui),
         });
+        if watching && layout == Layout::Float {
+            self.float(&ctx);
+        }
 
         self.dialogs(&ctx);
         // Picks made while drawing show next frame.

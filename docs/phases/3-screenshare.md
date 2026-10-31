@@ -29,7 +29,7 @@
 
 ## View
 - [x] Decoded frames go to a wgpu texture with an I420 → RGB shader (`chad-desktop/src/screen.rs`, egui paint callback, BT.601 limited range).
-- [x] Stage view, fullscreen, pop-out window, and an "N watching" count (D22). Subscribe only while the viewer is visible, to save bandwidth: `auto_subscribe` is off, and opening another buffer stops watching unless popped out.
+- [x] Stage view, fullscreen, pop-out window, and an "N watching" count (D22). Subscribe only while the viewer is visible, to save bandwidth: `auto_subscribe` is off, and opening another buffer stops watching unless the share is floated, tiled or popped out.
 
 ## Discovered
 - [x] chadd's voice token grants `screen_share`, `screen_share_audio` and `canUpdateOwnMetadata` (D22).
@@ -40,6 +40,8 @@
 - [ ] NVENC is compiled only when CUDA headers exist at build time. The release build needs them, or Nvidia users get software AV1.
 - [ ] Windows: no GPU probe yet (VP9 in software). Probe the DXGI adapter vendor once NVENC builds there.
 - [ ] No self-preview of your own share.
+- [x] Choose where a watched share goes from its bar: fill the chat area (the default), float in a small movable, resizable window over the chat, tile as a pane in the pane grid (drag its title to swap it with a chat pane), or pop out. The choice is remembered (`Settings::stage`). Only "fill" stops watching when you open another buffer.
+- [ ] Live `shots` scenario for float and tile. It needs a share to watch, so it was checked headless with a fake watch only.
 - [x] A capture that ends between starting and being stored is remembered (`Shared::ended`), so the share is dropped rather than left without video.
 - [ ] Phase 2's "Done when" is still unverified; this phase was started on request anyway.
 

@@ -7,6 +7,7 @@ use egui::{FontId, ThemePreference};
 use serde::{Deserialize, Serialize};
 
 use crate::platform::ptt::PttBind;
+use crate::screen::Layout;
 
 pub const KEY: &str = "settings";
 
@@ -33,6 +34,8 @@ pub struct Settings {
     pub check_updates: bool,
     /// Opening a channel splits the window instead of replacing the one on screen.
     pub panes: bool,
+    /// Where a watched screen share goes.
+    pub stage: Layout,
 }
 
 impl Default for Settings {
@@ -51,6 +54,7 @@ impl Default for Settings {
             away: false,
             check_updates: true,
             panes: true,
+            stage: Layout::default(),
         }
     }
 }

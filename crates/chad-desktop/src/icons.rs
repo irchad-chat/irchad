@@ -1,6 +1,7 @@
 //! Phosphor icons (regular) for UI chrome. Reactions stay system emoji.
 //! Codepoints from <https://phosphoricons.com>; add more as needed.
 
+pub const APP_WINDOW: &str = "\u{E5DA}";
 pub const ARROW_BEND_DOWN_RIGHT: &str = "\u{E01A}";
 pub const ARROW_BEND_UP_LEFT: &str = "\u{E024}";
 pub const ARROW_DOWN: &str = "\u{E03E}";
@@ -20,11 +21,13 @@ pub const MONITOR: &str = "\u{E32E}";
 pub const MOON: &str = "\u{E330}";
 pub const PAPERCLIP: &str = "\u{E39A}";
 pub const PHONE_DISCONNECT: &str = "\u{E3BC}";
+pub const PICTURE_IN_PICTURE: &str = "\u{E64C}";
 pub const PLAY: &str = "\u{E3D0}";
 pub const SCREENCAST: &str = "\u{E404}";
 pub const SHIELD_CHECK: &str = "\u{E40C}";
 pub const SMILEY: &str = "\u{E436}";
 pub const SPEAKER_HIGH: &str = "\u{E44A}";
+pub const SQUARES_FOUR: &str = "\u{E464}";
 pub const TRASH: &str = "\u{E4A6}";
 pub const USER_CIRCLE: &str = "\u{E4C4}";
 pub const WARNING: &str = "\u{E4E0}";

@@ -8,7 +8,9 @@ use chad_media::{
 };
 use eframe::egui_wgpu::{self, wgpu};
 use egui::{RichText, vec2};
+use serde::{Deserialize, Serialize};
 
+use crate::app::PaneDrag;
 use crate::icons::{self, Tip};
 
 const SHADER: &str = r"
@@ -273,18 +275,46 @@ fn video(ui: &mut egui::Ui, frame: Arc<ScreenFrame>) {
 
 pub enum StageAction {
     Close,
-    PopOut,
-    PopIn,
+    Layout(Layout),
     Fullscreen(bool),
 }
 
+/// Where a watched share goes when it isn't full screen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Layout {
+    /// In place of the chat.
+    #[default]
+    Fill,
+    /// In a small window over the chat.
+    Float,
+    /// A pane beside the chat panes.
+    Tile,
+    /// In its own window.
+    PopOut,
+}
+
+impl Layout {
+    const ALL: [(Self, &str, &str); 4] = [
+        (Self::Fill, icons::APP_WINDOW, "Fill the window"),
+        (
+            Self::Float,
+            icons::PICTURE_IN_PICTURE,
+            "Float over the chat",
+        ),
+        (Self::Tile, icons::SQUARES_FOUR, "Tile beside the chat"),
+        (Self::PopOut, icons::ARROW_SQUARE_OUT, "Pop out"),
+    ];
+}
+
 /// Someone's screen share, filling `ui`: a bar with who and how many watch,
-/// then the video.
+/// then the video. `tile`: its cell when tiled, which makes its title a drag
+/// handle like a chat pane's.
 pub fn stage(
     ui: &mut egui::Ui,
     voice: &Voice,
-    popped: bool,
+    layout: Layout,
     fullscreen: bool,
+    tile: Option<usize>,
 ) -> Option<StageAction> {
     let who = voice.watching()?;
     let watchers = voice
@@ -293,8 +323,6 @@ pub fn stage(
         .map_or(0, |p| p.watchers);
     let mut action = None;
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{} {who}'s screen", icons::SCREENCAST)).strong());
-        ui.label(RichText::new(format!("{} {watchers} watching", icons::EYE)).weak());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button(icons::X).tip("Stop watching").clicked() {
                 action = Some(StageAction::Close);
@@ -308,15 +336,31 @@ pub fn stage(
                 action = Some(StageAction::Fullscreen(!fullscreen));
             }
             if !fullscreen {
-                let (a, tip) = if popped {
-                    (StageAction::PopIn, "Back into the main window")
-                } else {
-                    (StageAction::PopOut, "Pop out")
-                };
-                if ui.button(icons::ARROW_SQUARE_OUT).tip(tip).clicked() {
-                    action = Some(a);
+                ui.separator();
+                for (l, icon, tip) in Layout::ALL.into_iter().rev() {
+                    if ui.selectable_label(layout == l, icon).tip(tip).clicked() && layout != l {
+                        action = Some(StageAction::Layout(l));
+                    }
                 }
             }
+            // Whatever's left of the buttons, so a narrow tile truncates the title.
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let title = RichText::new(format!("{} {who}'s screen", icons::SCREENCAST)).strong();
+                match tile {
+                    Some(i) => {
+                        ui.dnd_drag_source(egui::Id::unique("screen-drag"), PaneDrag(i), |ui| {
+                            ui.add(egui::Label::new(title).truncate())
+                        })
+                        .response
+                        .on_hover_text("Drag onto a pane to swap them");
+                    }
+                    None => {
+                        ui.add(egui::Label::new(title).truncate());
+                    }
+                }
+                let watching = RichText::new(format!("{} {watchers} watching", icons::EYE)).weak();
+                ui.add(egui::Label::new(watching).truncate());
+            });
         });
     });
     if fullscreen && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
