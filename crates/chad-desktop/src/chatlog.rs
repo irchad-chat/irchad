@@ -337,10 +337,15 @@ impl ChatLog {
                 self.prefix_dirty = true;
             }
             // The toolbar stays while the pointer is on it, even past its row.
-            let pointer = ui
-                .ctx()
-                .pointer_hover_pos()
-                .filter(|p| ui.clip_rect().contains(*p));
+            // A window over the log hides it.
+            let (log, bar) = (ui.layer_id(), toolbar_layer(ui.layer_id()));
+            let pointer = ui.ctx().pointer_hover_pos().filter(|p| {
+                ui.clip_rect().contains(*p)
+                    && ui
+                        .ctx()
+                        .layer_id_at(*p)
+                        .is_none_or(|l| l == log || l == bar)
+            });
             let keep = self
                 .hover
                 .as_ref()
@@ -362,7 +367,7 @@ impl ChatLog {
                 if m.redacted {
                     return None;
                 }
-                let bar = toolbar(ui.ctx(), i, m, r, own_nick, &mut out.actions);
+                let bar = toolbar(ui.ctx(), ui.layer_id(), i, m, r, own_nick, &mut out.actions);
                 m.msgid.clone().map(|id| (id, bar))
             });
             viewport
@@ -567,10 +572,15 @@ fn row_ui(
     }
 }
 
+fn toolbar_layer(log: egui::LayerId) -> egui::LayerId {
+    egui::LayerId::new(log.order, egui::Id::unique("row-toolbar"))
+}
+
 /// Replies, quick reactions, delete; floats over the row's top-right corner
 /// so it never changes a row's height. Returns its rect.
 fn toolbar(
     ctx: &egui::Context,
+    log: egui::LayerId,
     index: usize,
     m: &ChatMessage,
     row: Rect,
@@ -580,8 +590,11 @@ fn toolbar(
     let Some(id) = &m.msgid else {
         return Rect::NOTHING;
     };
-    egui::Area::new(egui::Id::unique("row-toolbar"))
-        .order(egui::Order::Foreground)
+    // Stacked just above the log's own layer, so floating windows cover it.
+    let layer = toolbar_layer(log);
+    ctx.set_sublayer(log, layer);
+    egui::Area::new(layer.id)
+        .order(layer.order)
         .pivot(egui::Align2::RIGHT_TOP)
         .fixed_pos(row.right_top() - vec2(4.0, 12.0))
         .show(ctx, |ui| {
