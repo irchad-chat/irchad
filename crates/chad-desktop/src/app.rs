@@ -711,6 +711,7 @@ impl App {
                                 b.members = None;
                                 b.members_asked = false;
                             }
+                            n.media.retry_failed();
                         }
                         if n.info.icon != info.icon {
                             n.icon = Icon::None;

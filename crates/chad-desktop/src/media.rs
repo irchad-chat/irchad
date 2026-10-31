@@ -110,6 +110,13 @@ impl Media {
         });
     }
 
+    /// Forgets failed images and previews, so they're asked for again: on
+    /// (re)connecting, since the scrollback shown before that asked offline.
+    pub fn retry_failed(&mut self) {
+        self.images.retain(|_, i| !matches!(i, Img::Failed));
+        self.previews.retain(|_, p| !matches!(p, Prev::Failed));
+    }
+
     pub fn preview(&mut self, url: String, preview: Option<LinkPreview>) {
         let p = match preview {
             Some(p) if p.title.is_some() || p.description.is_some() => Prev::Ready(p),
