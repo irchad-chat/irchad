@@ -135,10 +135,16 @@ fn x11(since: &Since, wake: &(dyn Fn() + Send + Sync)) -> Result<(), Box<dyn std
         let now = (idle >= STEP)
             .then(|| Instant::now().checked_sub(idle))
             .flatten();
-        let mut s = since.lock().unwrap_or_else(|e| e.into_inner());
-        if s.is_some() != now.is_some() {
-            *s = now;
-            drop(s);
+        // Scoped: the UI locks this every frame, so never hold it across the sleep.
+        let changed = {
+            let mut s = since.lock().unwrap_or_else(|e| e.into_inner());
+            let changed = s.is_some() != now.is_some();
+            if changed {
+                *s = now;
+            }
+            changed
+        };
+        if changed {
             wake();
         }
         std::thread::sleep(Duration::from_secs(10));
