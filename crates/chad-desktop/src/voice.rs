@@ -184,14 +184,15 @@ pub fn panel(
 
 /// Who's in a channel's voice room, under its row in the sidebar. In our own
 /// call the live list (speaking, muted, sharing) replaces the metadata one.
-/// Volume changes land in `volumes`, which persist with the settings. Returns
-/// whose screen share was clicked, to watch.
+/// Volume changes land in `volumes` and `screen_volumes`, which persist with
+/// the settings. Returns whose screen share was clicked, to watch.
 pub fn members(
     ui: &mut egui::Ui,
     voice: &Voice,
     in_call: bool,
     nicks: &[String],
     volumes: &mut HashMap<String, f32>,
+    screen_volumes: &mut HashMap<String, f32>,
 ) -> Option<String> {
     let mut watch = None;
     let dark = ui.visuals().dark_mode;
@@ -245,14 +246,18 @@ pub fn members(
                 }
                 r.context_menu(|ui| {
                     let mut v = voice.volume(&p.identity);
-                    ui.label(format!("{} volume", p.identity));
-                    let s = ui.add(
-                        egui::Slider::new(&mut v, 0.0..=2.0)
-                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                    );
-                    if s.changed() {
+                    let l = ui.label(format!("{} volume", p.identity));
+                    if volume_slider(ui, &mut v).labelled_by(l.id).changed() {
                         voice.set_volume(&p.identity, v);
                         volumes.insert(p.identity.clone(), v);
+                    }
+                    if p.sharing {
+                        let mut v = voice.screen_volume(&p.identity);
+                        let l = ui.label("Screen share volume");
+                        if volume_slider(ui, &mut v).labelled_by(l.id).changed() {
+                            voice.set_screen_volume(&p.identity, v);
+                            screen_volumes.insert(p.identity.clone(), v);
+                        }
                     }
                 });
             }
@@ -308,6 +313,12 @@ pub fn settings(
                     .labelled_by(l.id);
                 ui.end_row();
             }
+
+            let l = ui.label("Input volume");
+            volume_slider(ui, &mut s.audio.input_gain)
+                .labelled_by(l.id)
+                .on_hover_text("How loud others hear you.");
+            ui.end_row();
 
             ui.label("Input");
             ui.vertical(|ui| {
@@ -401,6 +412,11 @@ pub fn settings(
     // The meter moves.
     ui.ctx().request_repaint_after(Duration::from_millis(50));
     (s.audio.clone(), s.ptt) != before
+}
+
+/// A 0–200% volume.
+pub fn volume_slider(ui: &mut egui::Ui, v: &mut f32) -> egui::Response {
+    ui.add(egui::Slider::new(v, 0.0..=2.0).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)))
 }
 
 /// Input level, with the voice activity threshold marked.

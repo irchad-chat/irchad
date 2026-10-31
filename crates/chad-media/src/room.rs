@@ -177,7 +177,8 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 } => {
                     let sid = publication.sid().to_string();
                     let identity = short(&participant.identity().to_string());
-                    if let Some(tx) = shared.add_source(&sid, &identity) {
+                    let screen = publication.source() == TrackSource::ScreenshareAudio;
+                    if let Some(tx) = shared.add_source(&sid, &identity, screen) {
                         let h = tokio::spawn(play(t, tx));
                         if let Some(old) = streams.insert(sid, h) {
                             old.abort();

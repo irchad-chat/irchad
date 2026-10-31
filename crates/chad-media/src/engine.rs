@@ -48,6 +48,8 @@ pub struct Source {
     /// Track SID, or `loopback`.
     pub key: String,
     pub identity: String,
+    /// Screen share audio, which has its own volume.
+    screen: bool,
     rx: Consumer<i16>,
     gain: f32,
 }
@@ -107,7 +109,8 @@ pub struct Shared {
     muted: AtomicBool,
     deafened: AtomicBool,
     loopback: AtomicBool,
-    volumes: Mutex<HashMap<String, f32>>,
+    /// (identity, screen share audio) → gain.
+    volumes: Mutex<HashMap<(String, bool), f32>>,
     pub mic: Mutex<Option<Mic>>,
     call: Mutex<Option<(u64, CallState)>>,
     /// Bumped by every join, so a stale call can't clobber a newer one.
@@ -237,23 +240,27 @@ impl Shared {
         self.loopback.store(on, Relaxed);
     }
 
-    pub fn volume(&self, identity: &str) -> f32 {
-        lock(&self.volumes).get(identity).copied().unwrap_or(1.0)
+    pub fn volume(&self, identity: &str, screen: bool) -> f32 {
+        lock(&self.volumes)
+            .get(&(identity.to_owned(), screen))
+            .copied()
+            .unwrap_or(1.0)
     }
 
-    pub fn set_volume(&self, identity: &str, gain: f32) {
-        lock(&self.volumes).insert(identity.to_owned(), gain);
+    pub fn set_volume(&self, identity: &str, screen: bool, gain: f32) {
+        lock(&self.volumes).insert((identity.to_owned(), screen), gain);
         for s in lock(&self.rt).sources.iter_mut() {
-            if s.identity == identity {
+            if s.identity == identity && s.screen == screen {
                 s.gain = gain;
             }
         }
     }
 
-    /// A ring for one remote track; the caller pushes its audio.
-    pub fn add_source(&self, key: &str, identity: &str) -> Option<Producer<i16>> {
+    /// A ring for one remote track; the caller pushes its audio. `screen`:
+    /// it's screen share audio rather than a microphone.
+    pub fn add_source(&self, key: &str, identity: &str, screen: bool) -> Option<Producer<i16>> {
         let (tx, rx) = RingBuffer::new(RING);
-        let gain = self.volume(identity);
+        let gain = self.volume(identity, screen);
         let mut rt = lock(&self.rt);
         if rt.sources.len() >= MAX_SOURCES {
             return None;
@@ -261,6 +268,7 @@ impl Shared {
         rt.sources.push(Source {
             key: key.to_owned(),
             identity: identity.to_owned(),
+            screen,
             rx,
             gain,
         });
@@ -416,6 +424,13 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
         let _ = apm.set_stream_delay_ms(STREAM_DELAY_MS);
         let _ = apm.process_stream(&mut frame, RATE as i32, 1);
+        // After the APM, so its gain control doesn't undo ours.
+        let gain = settings.input_gain.clamp(0.0, 2.0);
+        if gain != 1.0 {
+            frame
+                .iter_mut()
+                .for_each(|s| *s = (f32::from(*s) * gain).clamp(-32768.0, 32767.0) as i16);
+        }
 
         let db = dbfs(&frame);
         let now = Instant::now();
@@ -443,7 +458,7 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
 
         match (shared.loopback.load(Relaxed), &mut loopback) {
-            (true, None) => loopback = shared.add_source("loopback", ""),
+            (true, None) => loopback = shared.add_source("loopback", "", false),
             (false, Some(_)) => {
                 loopback = None;
                 shared.remove_source("loopback");
@@ -495,17 +510,22 @@ mod tests {
         let shared = Shared::new(Arc::new(|| {}));
         let (far_tx, mut far) = RingBuffer::new(RING);
         lock(&shared.rt).far = Some(far_tx);
-        let mut a = shared.add_source("a", "alice").unwrap();
-        let mut b = shared.add_source("b", "bob").unwrap();
-        shared.set_volume("bob", 0.5);
+        let mut a = shared.add_source("a", "alice", false).unwrap();
+        let mut b = shared.add_source("b", "bob", false).unwrap();
+        // Bob's screen share audio, turned down apart from his voice.
+        let mut c = shared.add_source("c", "bob", true).unwrap();
+        shared.set_volume("bob", false, 0.5);
+        shared.set_volume("bob", true, 0.25);
         for _ in 0..4 {
             a.push(1000).unwrap();
             b.push(1000).unwrap();
+            c.push(1000).unwrap();
         }
         let mut out = [0i16; 4];
         shared.render(&mut out);
-        assert_eq!(out, [1500; 4]);
-        assert_eq!(far.pop(), Ok(1500));
+        assert_eq!(out, [1750; 4]);
+        assert_eq!(far.pop(), Ok(1750));
+        shared.remove_source("c");
 
         shared.set_deafened(true);
         a.push(1000).unwrap();

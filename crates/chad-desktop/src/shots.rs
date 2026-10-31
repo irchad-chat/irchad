@@ -84,6 +84,14 @@ fn join_dialog() {
     s.shot("join_dialog_guest");
 }
 
+#[test]
+fn settings() {
+    let mut s = Shots::new(None);
+    s.harness.run();
+    s.click("Settings");
+    s.shot("settings");
+}
+
 impl Shots {
     /// Clicks the widget named `label` and lets the UI react.
     pub fn click(&mut self, label: &str) {

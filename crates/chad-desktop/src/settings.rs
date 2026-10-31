@@ -21,6 +21,8 @@ pub struct Settings {
     pub ptt: PttBind,
     /// Voice volume per account, 0.0..=2.0.
     pub volumes: HashMap<String, f32>,
+    /// Screen share audio volume per account, 0.0..=2.0.
+    pub screen_volumes: HashMap<String, f32>,
     pub screen: ScreenSettings,
     /// The ScreenCast portal's token for the last thing shared, so it doesn't
     /// ask again.
@@ -47,6 +49,7 @@ impl Default for Settings {
             audio: AudioSettings::default(),
             ptt: PttBind::default(),
             volumes: HashMap::new(),
+            screen_volumes: HashMap::new(),
             screen: ScreenSettings::default(),
             restore_token: None,
             load_media: true,

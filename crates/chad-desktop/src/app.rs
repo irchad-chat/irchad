@@ -292,6 +292,9 @@ impl App {
         for (id, v) in &settings.volumes {
             voice.set_volume(id, *v);
         }
+        for (id, v) in &settings.screen_volumes {
+            voice.set_screen_volume(id, *v);
+        }
         let settings_check_updates = settings.check_updates;
         let mut app = Self {
             core,
@@ -1434,6 +1437,7 @@ impl App {
                                 live,
                                 &b.voice,
                                 &mut self.settings.volumes,
+                                &mut self.settings.screen_volumes,
                             )
                         {
                             watch = Some(who);
@@ -2025,6 +2029,9 @@ impl App {
             Some(StageAction::Fullscreen(on)) => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
                 self.stage.fullscreen = on;
+            }
+            Some(StageAction::Volume(who, v)) => {
+                self.settings.screen_volumes.insert(who, v);
             }
             None => {}
         }

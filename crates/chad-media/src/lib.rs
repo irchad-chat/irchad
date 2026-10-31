@@ -37,6 +37,8 @@ pub struct AudioSettings {
     pub ptt_release_ms: u32,
     /// RNNoise before the APM's own noise suppression.
     pub rnnoise: bool,
+    /// Mic volume, 0.0..=2.0, after processing: what others hear.
+    pub input_gain: f32,
     pub bitrate_kbps: u32,
 }
 
@@ -49,6 +51,7 @@ impl Default for AudioSettings {
             vad_threshold_db: -50.0,
             ptt_release_ms: 200,
             rnnoise: false,
+            input_gain: 1.0,
             bitrate_kbps: 64,
         }
     }
@@ -179,11 +182,21 @@ impl Voice {
 
     /// Per participant, 0.0..=2.0.
     pub fn volume(&self, identity: &str) -> f32 {
-        self.shared.volume(identity)
+        self.shared.volume(identity, false)
     }
 
     pub fn set_volume(&self, identity: &str, gain: f32) {
-        self.shared.set_volume(identity, gain.clamp(0.0, 2.0));
+        self.shared
+            .set_volume(identity, false, gain.clamp(0.0, 2.0));
+    }
+
+    /// A participant's screen share audio, apart from their voice; 0.0..=2.0.
+    pub fn screen_volume(&self, identity: &str) -> f32 {
+        self.shared.volume(identity, true)
+    }
+
+    pub fn set_screen_volume(&self, identity: &str, gain: f32) {
+        self.shared.set_volume(identity, true, gain.clamp(0.0, 2.0));
     }
 
     /// Plays the processed mic back, to hear what others would.

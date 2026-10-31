@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::PaneDrag;
 use crate::icons::{self, Tip};
+use crate::voice;
 
 const SHADER: &str = r"
 struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -277,6 +278,8 @@ pub enum StageAction {
     Close,
     Layout(Layout),
     Fullscreen(bool),
+    /// The share's audio, for the settings; already applied.
+    Volume(String, f32),
 }
 
 /// Where a watched share goes when it isn't full screen.
@@ -335,6 +338,16 @@ pub fn stage(
             if ui.button(icon).tip(tip).clicked() {
                 action = Some(StageAction::Fullscreen(!fullscreen));
             }
+            ui.menu_button(icons::SPEAKER_HIGH, |ui| {
+                let mut v = voice.screen_volume(&who);
+                let l = ui.label("Screen share volume");
+                if voice::volume_slider(ui, &mut v).labelled_by(l.id).changed() {
+                    voice.set_screen_volume(&who, v);
+                    action = Some(StageAction::Volume(who.clone(), v));
+                }
+            })
+            .response
+            .tip("Volume");
             if !fullscreen {
                 ui.separator();
                 for (l, icon, tip) in Layout::ALL.into_iter().rev() {
