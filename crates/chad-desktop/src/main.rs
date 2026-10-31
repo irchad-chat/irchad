@@ -1,3 +1,6 @@
+// Release builds on Windows: no console window (and no stderr, so no logs).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod chatlog;
 mod emoji;
