@@ -138,7 +138,8 @@ pub struct AudioApp {
 pub enum PixelFormat {
     /// B, G, R, A/x bytes (libyuv "ARGB").
     Bgra,
-    /// R, G, B, A/x bytes (libyuv "ABGR").
+    /// R, G, B, A/x bytes (libyuv "ABGR"). Only the portal produces it.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Rgba,
 }
 
