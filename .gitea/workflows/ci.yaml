@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# A newer push to the same branch/PR supersedes the running one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 # No global RUSTFLAGS: it would override the per-target rustflags in
 # .cargo/config.toml (Windows needs +crt-static for libwebrtc).
 env:
