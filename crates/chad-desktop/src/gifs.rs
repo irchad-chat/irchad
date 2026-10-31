@@ -9,8 +9,6 @@ use crate::media::Media;
 
 /// Wait this long after typing before searching, in seconds.
 const DEBOUNCE: f64 = 0.35;
-/// Matches the emoji grid's width.
-const WIDTH: f32 = 9.0 * 32.0;
 
 #[derive(Default)]
 pub struct Gifs {
@@ -95,7 +93,7 @@ impl Gifs {
         let search = ui.add(
             egui::TextEdit::singleline(&mut self.query)
                 .hint_text(&hint)
-                .desired_width(WIDTH),
+                .desired_width(f32::INFINITY),
         );
         ui.ctx()
             .accesskit_node_builder(search.id, |n| n.set_label("Search GIFs"));
@@ -138,8 +136,9 @@ impl Gifs {
             action = Some(Action::Pick(g.clone()));
         }
 
+        let width = ui.available_width();
         let gap = ui.spacing().item_spacing.x;
-        let col_w = (WIDTH - gap) / 2.0;
+        let col_w = (width - gap) / 2.0;
         // Masonry: each GIF goes under the shorter column.
         let mut cols: [(f32, Vec<(usize, f32)>); 2] = Default::default();
         for (i, g) in self.gifs.iter().enumerate() {
@@ -157,7 +156,7 @@ impl Gifs {
             .max_height(320.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                ui.set_width(WIDTH);
+                ui.set_width(width);
                 ui.horizontal_top(|ui| {
                     for (_, items) in &cols {
                         ui.vertical(|ui| {
@@ -190,7 +189,7 @@ impl Gifs {
                     ui.label(RichText::new("No GIFs found.").weak());
                 } else if self.next.is_some() {
                     // Scrolled to the end: the next page.
-                    let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, 1.0), egui::Sense::hover());
+                    let (rect, _) = ui.allocate_exact_size(vec2(width, 1.0), egui::Sense::hover());
                     more = ui.is_rect_visible(rect);
                 }
             });

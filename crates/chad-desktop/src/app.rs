@@ -2419,19 +2419,22 @@ impl App {
             .constrain(true)
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| match &gif_net {
-                    Some((ni, provider)) => {
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut p.gif_tab, false, "Emoji");
-                            ui.selectable_value(&mut p.gif_tab, true, "GIFs");
-                        });
-                        if p.gif_tab {
-                            gif = p.gifs.ui(ui, &mut nets[*ni].media, provider);
-                        } else {
-                            picked = emoji::picker(ui, &mut p.query);
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_width(emoji::PICKER_WIDTH);
+                    match &gif_net {
+                        Some((ni, provider)) => {
+                            ui.horizontal(|ui| {
+                                ui.selectable_value(&mut p.gif_tab, false, "Emoji");
+                                ui.selectable_value(&mut p.gif_tab, true, "GIFs");
+                            });
+                            if p.gif_tab {
+                                gif = p.gifs.ui(ui, &mut nets[*ni].media, provider);
+                            } else {
+                                picked = emoji::picker(ui, &mut p.query);
+                            }
                         }
+                        None => picked = emoji::picker(ui, &mut p.query),
                     }
-                    None => picked = emoji::picker(ui, &mut p.query),
                 });
             });
         let close = (p.shown && area.response.clicked_elsewhere())

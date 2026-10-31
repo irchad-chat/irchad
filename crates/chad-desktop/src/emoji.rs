@@ -4,6 +4,8 @@
 use egui::{RichText, vec2};
 
 const PER_ROW: usize = 9;
+/// The picker's width, shared by the emoji and GIF tabs.
+pub const PICKER_WIDTH: f32 = PER_ROW as f32 * 36.0;
 
 /// Replaces each complete `:shortcode:` in `text`. `cursor` is a char index
 /// that is moved to stay after the same text.
@@ -49,7 +51,7 @@ pub fn picker(ui: &mut egui::Ui, query: &mut String) -> Option<String> {
     let search = ui.add(
         egui::TextEdit::singleline(query)
             .hint_text("Find an emoji")
-            .desired_width(PER_ROW as f32 * 32.0),
+            .desired_width(f32::INFINITY),
     );
     ui.ctx()
         .accesskit_node_builder(search.id, |n| n.set_label("Find an emoji"));
@@ -84,12 +86,15 @@ pub fn picker(ui: &mut egui::Ui, query: &mut String) -> Option<String> {
         .max_height(260.0)
         .auto_shrink([false, true])
         .show_rows(ui, size + ui.spacing().item_spacing.y, rows, |ui, range| {
+            // Cells split the whole width, so the grid fills the panel.
+            let cell = ui.available_width() / PER_ROW as f32;
             for row in range {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
                     for e in list.iter().skip(row * PER_ROW).take(PER_ROW) {
                         let b = egui::Button::new(RichText::new(e.as_str()).size(size * 0.75))
                             .frame(false)
-                            .min_size(vec2(size, size));
+                            .min_size(vec2(cell, size));
                         let tip = match e.shortcode() {
                             Some(s) => format!(":{s}:"),
                             None => e.name().to_owned(),
