@@ -1,0 +1,35 @@
+name: CI image
+
+# Rebuilds the Linux job container (deploy/ci.Dockerfile) that ci.yaml,
+# nightly.yml and release.yml run in. Weekly so stable Rust and the apt
+# packages don't drift far; by hand after changing the Dockerfile's base.
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/ci.Dockerfile
+      - .gitea/workflows/ci-image.yml
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-image
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # REGISTRY_TOKEN: same package-write token as release.yml's chadd image.
+      - name: Build and push
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          registry=git.gentoo.party
+          image=$registry/sam/irchad-ci
+          echo "$TOKEN" | docker login "$registry" -u sam --password-stdin
+          docker build --pull -f deploy/ci.Dockerfile -t "$image:latest" -t "$image:${GITHUB_SHA:0:9}" deploy
+          docker push "$image:latest"
+          docker push "$image:${GITHUB_SHA:0:9}"
