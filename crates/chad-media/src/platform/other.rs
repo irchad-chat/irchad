@@ -176,7 +176,14 @@ where
     let channels = usize::from(config.channels.max(1));
     let shared = shared.clone();
     let mut scratch: Vec<i16> = Vec::with_capacity(8192);
+    // WASAPI reports every glitch (routinely the first capture packet) as an
+    // Xrun; restarting on those reopens the streams forever.
     let on_error = move |e: cpal::Error| {
+        use cpal::ErrorKind::{DeviceChanged, RealtimeDenied, Xrun};
+        if matches!(e.kind(), Xrun | DeviceChanged | RealtimeDenied) {
+            tracing::debug!("audio stream: {e}");
+            return;
+        }
         tracing::warn!("audio stream: {e}");
         let _ = restart.send(Cmd::Restart);
     };
