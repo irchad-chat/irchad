@@ -203,6 +203,9 @@ fn pane_cols(n: usize) -> usize {
     (1..).find(|c| c * c >= n).unwrap_or(1)
 }
 
+/// Drag-and-drop payload: the index of the pane whose title is being dragged.
+struct PaneDrag(usize);
+
 fn badge(n: u32) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
 }
@@ -478,6 +481,17 @@ impl App {
         }
     }
 
+    /// A pane's title dropped on another pane: they trade places, and focus
+    /// stays with its buffer.
+    fn swap_panes(&mut self, a: usize, b: usize) {
+        self.panes.swap(a, b);
+        if self.pane == a {
+            self.pane = b;
+        } else if self.pane == b {
+            self.pane = a;
+        }
+    }
+
     /// Ctrl+arrows: the pane next to the focused one in that direction.
     fn step_pane(&mut self, k: Key) {
         let n = self.panes.len();
@@ -495,13 +509,15 @@ impl App {
     }
 
     /// The open panes in a grid, rows filled left to right; a short last row
-    /// stretches. The focused pane is outlined.
+    /// stretches. The focused pane is outlined. Dragging a pane's title onto
+    /// another swaps them.
     fn tiles(&mut self, ui: &mut egui::Ui) {
         let n = self.panes.len();
         let cols = pane_cols(n);
         let area = ui.available_rect_before_wrap();
         let h = area.height() / n.div_ceil(cols) as f32;
-        let (mut close, mut focus) = (None, None);
+        let (mut close, mut focus, mut swap) = (None, None, None);
+        let dragged = egui::DragAndDrop::payload::<PaneDrag>(ui.ctx()).map(|p| p.0);
         for (i, (net, k)) in self.panes.clone().iter().enumerate() {
             let (row, col) = (i / cols, i % cols);
             let w = area.width() / cols.min(n - row * cols) as f32;
@@ -531,7 +547,7 @@ impl App {
                     .size_range(140.0..=360.0)
                     .show(&mut pane, |ui| self.members(ui, ni, bi));
             }
-            if self.chat(&mut pane, ni, bi, active, n > 1) {
+            if self.chat(&mut pane, ni, bi, active, (n > 1).then_some(i)) {
                 close = Some(i);
             }
             if active && n > 1 {
@@ -539,8 +555,20 @@ impl App {
                 ui.painter()
                     .rect_stroke(rect.shrink(1.0), 4.0, stroke, egui::StrokeKind::Inside);
             }
+            if let Some(from) = dragged.filter(|&d| d != i && d < n)
+                && ui.rect_contains_pointer(rect)
+            {
+                let fill = ui.visuals().selection.bg_fill.gamma_multiply(0.25);
+                ui.painter().rect_filled(rect.shrink(2.0), 4.0, fill);
+                if ui.input(|i| i.pointer.any_released()) {
+                    swap = Some((from, i));
+                }
+            }
         }
-        if let Some(i) = close {
+        if let Some((a, b)) = swap {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            self.swap_panes(a, b);
+        } else if let Some(i) = close {
             self.close_pane(i);
         } else if let Some(i) = focus {
             self.focus_pane(i);
@@ -1446,15 +1474,18 @@ impl App {
     }
 
     /// One buffer's pane. `active`: the focused pane, which takes the
-    /// composer focus. Returns whether its close button was clicked.
+    /// composer focus. `tile`: its index when it's one of several, which makes
+    /// it closable and its title a drag handle. Returns whether its close
+    /// button was clicked.
     fn chat(
         &mut self,
         ui: &mut egui::Ui,
         ni: usize,
         bi: usize,
         active: bool,
-        closable: bool,
+        tile: Option<usize>,
     ) -> bool {
+        let closable = tile.is_some();
         let network = self.nets[ni].info.network.clone();
         let own = self.nets[ni].info.nick.clone();
         let connected = self.nets[ni].info.state == ConnState::Connected;
@@ -1504,7 +1535,17 @@ impl App {
                 if closable {
                     ui.set_max_width(ui.available_width() - 28.0);
                 }
-                ui.heading(&target);
+                match tile {
+                    Some(i) => {
+                        let id = egui::Id::unique(("pane-drag", &network, &b.key));
+                        ui.dnd_drag_source(id, PaneDrag(i), |ui| ui.heading(&target))
+                            .response
+                            .on_hover_text("Drag onto another pane to swap them");
+                    }
+                    None => {
+                        ui.heading(&target);
+                    }
+                }
                 if b.info.kind == BufferKind::Dm {
                     let status = match (b.info.online, b.info.away) {
                         (Some(true), false) => "online",

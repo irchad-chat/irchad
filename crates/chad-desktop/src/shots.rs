@@ -191,7 +191,7 @@ fn live() {
 }
 
 /// Split panes: #general and #dev side by side, Ctrl+Left back to #general,
-/// then #dev closed. Same setup as `live`.
+/// #general dragged onto #dev to swap them, then the right one closed. Same setup as `live`.
 #[test]
 #[ignore]
 fn live_panes() {
@@ -211,6 +211,27 @@ fn live_panes() {
         .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::ArrowLeft);
     s.settle(1);
     s.shot("panes_focus_left");
+    // The pane titles are the rightmost nodes with the buffer's name; the
+    // channel list has the others.
+    let title = |s: &Shots, name: &str| {
+        s.harness
+            .get_all_by_label(name)
+            .map(|n| n.rect().center())
+            .max_by(|a, b| a.x.total_cmp(&b.x))
+            .unwrap()
+    };
+    let (from, to) = (title(&s, "#general"), title(&s, "#dev"));
+    s.harness.hover_at(from);
+    s.harness.drag_at(from);
+    s.harness.run_steps(2);
+    for t in [0.1, 0.5, 1.0] {
+        s.harness.hover_at(from.lerp(to, t));
+        s.harness.run_steps(2);
+    }
+    s.shot("panes_dragging");
+    s.harness.drop_at(to);
+    s.settle(1);
+    s.shot("panes_swapped");
     s.harness
         .get_all_by_label("Close pane")
         .last()
