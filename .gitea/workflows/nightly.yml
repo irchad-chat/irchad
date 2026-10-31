@@ -5,6 +5,10 @@ name: Nightly
 on:
   push:
     branches: [main]
+    # Same as ci.yaml: image-only pushes don't change the build.
+    paths-ignore:
+      - deploy/ci.Dockerfile
+      - .gitea/workflows/ci-image.yml
   workflow_dispatch:
 
 concurrency:

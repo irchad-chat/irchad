@@ -31,5 +31,8 @@ jobs:
           image=$registry/sam/irchad-ci
           echo "$TOKEN" | docker login "$registry" -u sam --password-stdin
           docker build --pull -f deploy/ci.Dockerfile -t "$image:latest" -t "$image:${GITHUB_SHA:0:9}" deploy
+          # Uncompressed sizes; Cloudflare rejects any layer over 100 MB
+          # compressed (413), so keep an eye on the big ones.
+          docker history --format '{{.Size}}\t{{.CreatedBy}}' "$image:latest" | cut -c1-120
           docker push "$image:latest"
           docker push "$image:${GITHUB_SHA:0:9}"

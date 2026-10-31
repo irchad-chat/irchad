@@ -3,6 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+    # The job image rebuilds in ci-image.yml; a run here would still pull
+    # the old :latest. Pushes that touch anything else still run.
+    paths-ignore:
+      - deploy/ci.Dockerfile
+      - .gitea/workflows/ci-image.yml
   pull_request:
 
 # A newer push to the same branch/PR supersedes the running one.
