@@ -13,6 +13,9 @@
   The required "Search KLIPY" placeholder is in. Still to do: a screenshot scenario, KLIPY's logo for the optional "Powered by KLIPY" mark, and KLIPY's written OK for the server-side proxy (see D31).
 - [x] Away status from idle (ext-idle-notify / XScreenSaver / Windows), and manual status.
 - [x] Keyboard navigation (Ctrl+K quick switcher, Alt+↑/↓ for channels), and accessibility via AccessKit.
+- [x] A guest can sign up without leaving the network (D35): "Create an account…" in the network menu sends `NetCommand::Register`.
+  Unit: `after_a_guest_signs_up_their_channels_are_rejoined_once`.
+- [ ] Run `live` `guest_signs_up` against the dev stack, and check the sign-up dialog by eye (a shot needs a guest network, so the stack).
 
 ## Distribution
 - [x] **Flatpak** first. Portals come naturally. Mind the manifest permissions: PipeWire socket, D-Bus names for SNI and notifications.

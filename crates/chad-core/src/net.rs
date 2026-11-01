@@ -317,6 +317,18 @@ impl Net {
                 }
             }
             NetCommand::Verify { .. } | NetCommand::SignIn { .. } => {}
+            // `conn` takes it while a guest is connected.
+            NetCommand::Register { .. } => {
+                let error = if self.guest {
+                    "Wait until you're connected to sign up."
+                } else {
+                    "You already have an account here."
+                };
+                self.events.push(Event::SignUpFailed {
+                    network: self.id(),
+                    error: error.into(),
+                });
+            }
             NetCommand::LeaveVoice => self.voice_ended(None),
             NetCommand::SetAway { message } => {
                 let message = message.map(|m| truncate(m.trim(), 200).to_owned());
@@ -760,7 +772,10 @@ impl Net {
             .iter()
             .filter(|(k, _)| !self.joined.contains(k))
             .collect();
-        if self.persistent {
+        // Just signed up as a guest: the new account is in no channels yet.
+        let rejoin = self.store.meta("rejoin").is_some();
+        self.store.delete_meta("rejoin");
+        if self.persistent && !rejoin {
             // Always-on: the server's list is the truth, so these were left elsewhere.
             for (key, _) in missing {
                 self.remove_buffer(&key.clone());

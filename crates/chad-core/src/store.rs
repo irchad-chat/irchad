@@ -120,6 +120,15 @@ impl Store {
         );
     }
 
+    pub fn delete_meta(&self, key: &str) {
+        ok(
+            "delete meta",
+            self.db
+                .execute("DELETE FROM meta WHERE key = ?1", [key])
+                .map(drop),
+        );
+    }
+
     pub fn buffers(&self) -> Vec<StoredBuffer> {
         let read = || {
             let mut st = self

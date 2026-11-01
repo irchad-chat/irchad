@@ -9,6 +9,7 @@ fn net() -> Net {
         icon: None,
         nick: "bob".into(),
         state: ConnState::Connecting,
+        guest: false,
         uploads: None,
         gifs: None,
     };
@@ -180,6 +181,30 @@ fn without_always_on_cached_channels_are_rejoined() {
     feed(&mut n, ":s PERSISTENCE STATUS OFF OFF");
     feed(&mut n, &format!("@label={label} :s PONG s sync"));
     assert!(out(&mut n).contains(&"JOIN #general".to_owned()));
+}
+
+#[test]
+fn after_a_guest_signs_up_their_channels_are_rejoined_once() {
+    let mut n = net();
+    n.store
+        .put_buffer("#general", "#general", BufferKind::Channel);
+    n.store.set_meta("autojoined", "1");
+    n.store.set_meta("rejoin", "1");
+    n.load_cache();
+    // Always-on, but the new account is in nothing yet.
+    let sent = attach(&mut n, &[]);
+    assert!(sent.contains(&"JOIN #general".to_owned()), "{sent:?}");
+    assert!(buffer(&events(&mut n), "#general").is_some());
+    assert!(n.store.meta("rejoin").is_none());
+
+    // Next time the server's list is the truth again.
+    n.detach();
+    attach(&mut n, &[]);
+    assert!(
+        events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::BufferRemoved { target, .. } if target == "#general"))
+    );
 }
 
 #[test]

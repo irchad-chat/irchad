@@ -184,6 +184,15 @@ pub enum NetCommand {
     SignIn {
         password: String,
     },
+    /// A guest makes an account and carries on as it, keeping their channels
+    /// and DMs. The network reconnects to sign up (`NeedsVerification` may
+    /// follow); once logged in its `NetworkInfo::guest` turns false. On failure,
+    /// `Event::SignUpFailed`, and it goes back to being a guest.
+    Register {
+        account: String,
+        password: String,
+        email: Option<String>,
+    },
     /// Upload through chadd; answered by `Event::Uploaded`. `target` is the
     /// buffer it's for, `None` for an avatar.
     Upload {
@@ -253,6 +262,11 @@ pub enum Event {
     /// A `Join` never got as far as being a network.
     JoinFailed {
         invite: String,
+        error: String,
+    },
+    /// A guest's `NetCommand::Register` didn't work; they're a guest again.
+    SignUpFailed {
+        network: String,
         error: String,
     },
     /// Capabilities enabled or dropped at runtime (`cap-notify`). E.g. without
@@ -388,6 +402,8 @@ pub struct NetworkInfo {
     pub icon: Option<Url>,
     pub nick: String,
     pub state: ConnState,
+    /// No account; `NetCommand::Register` makes one.
+    pub guest: bool,
     /// Largest upload chadd takes, if it takes them (and we have an account).
     pub uploads: Option<u64>,
     /// Who chadd's GIF search comes from, if it has one (and we have an account).

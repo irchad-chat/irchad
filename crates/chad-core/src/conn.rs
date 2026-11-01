@@ -35,6 +35,8 @@ pub struct Params {
     pub device: String,
     /// `Some(email)` while signing up.
     pub register: Option<Option<String>>,
+    /// A guest signing up: their nick, to go back to if it fails.
+    pub upgrading: Option<String>,
     /// Set until the first login on a new network succeeds; a failure before
     /// then removes the network again.
     pub joining: Option<String>,
@@ -54,6 +56,12 @@ enum End {
     Fatal(String),
     /// Signed up: log in again so the device ID is in place (D11).
     Registered,
+    /// A guest asked to sign up: reconnect to do it.
+    Upgrade {
+        account: String,
+        password: String,
+        email: Option<String>,
+    },
     Stop,
     Remove,
 }
@@ -77,6 +85,22 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
             None => End::Fatal("Sign in to this network again.".into()),
         };
         net.detach();
+        // A guest's sign-up that didn't work: back to being a guest.
+        let end = match end {
+            End::Lost(error) | End::Fatal(error) if p.upgrading.is_some() => {
+                p.account = p.upgrading.take().expect("guarded");
+                p.guest = true;
+                p.password = None;
+                p.register = None;
+                p.session = Default::default();
+                sink.send([Event::SignUpFailed {
+                    network: net.info.network.clone(),
+                    error,
+                }]);
+                continue;
+            }
+            end => end,
+        };
         // A guest has no password to fix, so after the first join only retrying helps.
         let end = match end {
             End::Fatal(e) if p.guest && p.joining.is_none() => End::Lost(e),
@@ -85,6 +109,19 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
         match end {
             End::Registered => {
                 p.register = None;
+                continue;
+            }
+            End::Upgrade {
+                account,
+                password,
+                email,
+            } => {
+                p.upgrading = Some(std::mem::replace(&mut p.account, account));
+                p.guest = false;
+                p.password = Some(password);
+                p.register = Some(email);
+                p.session = Default::default();
+                backoff.reset();
                 continue;
             }
             End::Lost(error) if p.joining.is_none() => {
@@ -160,7 +197,7 @@ async fn remove(net: Net, p: &Params, sink: &Sink) {
 }
 
 /// Fresh discovery if the server answers, else the cached copy.
-async fn discover(net: &mut Net) -> Result<Discovery, String> {
+async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
     let origin = net.info.network.clone();
     let cached = net
         .store
@@ -181,13 +218,13 @@ async fn discover(net: &mut Net) -> Result<Discovery, String> {
         .chadd
         .uploads
         .as_ref()
-        .filter(|_| !net.guest)
+        .filter(|_| !guest)
         .map(|u| u.max_bytes);
     net.info.gifs = d
         .chadd
         .gifs
         .as_ref()
-        .filter(|_| !net.guest)
+        .filter(|_| !guest)
         .map(|g| g.provider.chars().take(40).collect());
     Ok(d)
 }
@@ -202,7 +239,7 @@ async fn session(
 ) -> End {
     net.set_state(ConnState::Connecting);
     sink.send(net.events.drain(..));
-    let d = match discover(net).await {
+    let d = match discover(net, p.guest).await {
         Ok(d) => d,
         Err(e) if p.joining.is_some() => return End::Fatal(e),
         Err(e) => return End::Lost(e),
@@ -422,6 +459,20 @@ async fn session(
                 }
             }
             cmd = rx.recv() => match cmd {
+                Some(ToNet::Cmd(NetCommand::Register { account, password, email })) if p.guest => {
+                    let account = account.trim().to_owned();
+                    if !crate::manager::valid_nick(&account) {
+                        sink.send([Event::SignUpFailed {
+                            network: net.info.network.clone(),
+                            error: "Names can't have spaces or start with # or :.".into(),
+                        }]);
+                        continue;
+                    }
+                    // Gone before the new connection asks for the nick, if it's the same.
+                    let _ = ws.send(&Message::new("QUIT", ["signing up"])).await;
+                    let _ = ws.close().await;
+                    return End::Upgrade { account, password, email };
+                }
                 Some(ToNet::Cmd(c)) => {
                     if let Some(c) = fetch(c, net, &client, sink) {
                         net.command(c);
@@ -453,13 +504,22 @@ async fn session(
 /// the password that worked is saved again.
 async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
     let first = p.joining.take().is_some();
-    if !first && !std::mem::take(&mut p.save_password) {
+    let upgraded = p.upgrading.take().is_some();
+    if !first && !upgraded && !std::mem::take(&mut p.save_password) {
         return;
     }
     let origin = net.info.network.clone();
-    if first {
+    if first || upgraded {
         net.store.set_meta("origin", &origin);
         net.store.set_meta("account", &p.account);
+    }
+    if upgraded {
+        net.store.delete_meta("guest");
+        net.store.set_meta("rejoin", "1");
+        net.guest = false;
+        net.info.guest = false;
+        init_e2e(net, p).await;
+        sink.send(net.events.drain(..));
     }
     if let Err(e) = p.secrets.save(&origin, &p.account, password).await {
         net.error(format!("{e} You'll need to sign in again next time."));

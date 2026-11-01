@@ -193,6 +193,97 @@ async fn guest_join_collision_restart() {
     .await;
 }
 
+#[tokio::test]
+#[ignore]
+async fn guest_signs_up() {
+    let origin = std::env::var("IRCHAD_ORIGIN").unwrap_or("localhost:8443".into());
+    let network = format!("https://{origin}");
+    let dir = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(MemorySecrets::default());
+    let config = || Config {
+        data_dir: dir.path().to_owned(),
+        secrets: secrets.clone(),
+        notify: Arc::new(|| {}),
+        media: None,
+    };
+    let nick = format!("gs{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
+    let register = |account: &str| Command::Net {
+        network: network.clone(),
+        cmd: NetCommand::Register {
+            account: account.into(),
+            password: "guestsignup".into(),
+            email: None,
+        },
+    };
+
+    let (core, mut rx) = chad_core::start(config());
+    core.send(Command::Join {
+        invite: format!("https://{origin}/invite?channel=%23dev"),
+        auth: Auth::Guest { nick: nick.clone() },
+    });
+    assert_eq!(until(&mut rx, connected).await, nick);
+    until(&mut rx, |e| {
+        matches!(e, Event::Buffer { buffer, .. } if buffer.target == "#dev").then_some(())
+    })
+    .await;
+
+    // A taken name: still a guest, still connected.
+    core.send(register("alice"));
+    until(&mut rx, |e| {
+        matches!(e, Event::SignUpFailed { .. }).then_some(())
+    })
+    .await;
+    until(&mut rx, |e| match e {
+        Event::Network(n) if n.state == ConnState::Connected && n.guest => Some(()),
+        _ => None,
+    })
+    .await;
+
+    // Our own nick: an account now, and back in #dev as it.
+    core.send(register(&nick));
+    until(&mut rx, |e| match e {
+        Event::Network(n) if n.state == ConnState::Connected && !n.guest => Some(()),
+        _ => None,
+    })
+    .await;
+    in_dev_as_account(&mut rx, &core, &network, &nick).await;
+    drop(core);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Restart: logs in with the saved password; always-on kept #dev.
+    let (core, mut rx) = chad_core::start(config());
+    until(&mut rx, |e| match e {
+        Event::Network(n) if n.state == ConnState::Connected && !n.guest => Some(()),
+        _ => None,
+    })
+    .await;
+    in_dev_as_account(&mut rx, &core, &network, &nick).await;
+}
+
+async fn in_dev_as_account(
+    rx: &mut UnboundedReceiver<Event>,
+    core: &chad_core::Core,
+    network: &str,
+    nick: &str,
+) {
+    core.send(Command::Net {
+        network: network.into(),
+        cmd: NetCommand::Members {
+            channel: "#dev".into(),
+        },
+    });
+    until(rx, |e| match e {
+        Event::Members {
+            channel, members, ..
+        } if channel == "#dev" => members
+            .iter()
+            .any(|m| m.nick == nick && m.account.as_deref() == Some(nick))
+            .then_some(()),
+        _ => None,
+    })
+    .await;
+}
+
 /// Records the join and reports connected right away.
 struct FakeMedia(std::sync::Mutex<Vec<(String, String)>>);
 

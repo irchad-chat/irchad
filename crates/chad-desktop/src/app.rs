@@ -66,6 +66,8 @@ pub struct App {
     signin_password: String,
     verify_dismissed: Option<String>,
     confirm_remove: Option<String>,
+    /// A guest making an account.
+    signup: Option<SignUpDialog>,
     adding: Option<(BufferKind, String)>,
     toasts: Vec<(String, Instant)>,
     last_badge: (bool, u32),
@@ -178,6 +180,17 @@ struct JoinDialog {
     email: String,
     /// The invite sent to the core, while waiting for the outcome.
     busy: Option<String>,
+    error: Option<String>,
+}
+
+/// A guest signing up on the network they're in.
+struct SignUpDialog {
+    network: String,
+    account: String,
+    password: String,
+    email: String,
+    /// Sent to the core, while waiting for the outcome.
+    busy: bool,
     error: Option<String>,
 }
 
@@ -317,6 +330,7 @@ impl App {
             signin_password: String::new(),
             verify_dismissed: None,
             confirm_remove: None,
+            signup: None,
             adding: None,
             toasts: Vec::new(),
             last_badge: (false, 0),
@@ -716,6 +730,15 @@ impl App {
                         if n.info.icon != info.icon {
                             n.icon = Icon::None;
                         }
+                        // Signed up, or waiting on the email's code: the dialog's done.
+                        if let Some(s) = &self.signup
+                            && s.busy
+                            && s.network == origin
+                            && (!info.guest
+                                || matches!(info.state, ConnState::NeedsVerification { .. }))
+                        {
+                            self.signup = None;
+                        }
                         n.info = info;
                     }
                     None => {
@@ -766,6 +789,13 @@ impl App {
                 Some(j) if j.busy.as_deref() == Some(&invite) => {
                     j.busy = None;
                     j.error = Some(error);
+                }
+                _ => self.toast(error),
+            },
+            Event::SignUpFailed { network, error } => match &mut self.signup {
+                Some(s) if s.network == network => {
+                    s.busy = false;
+                    s.error = Some(error);
                 }
                 _ => self.toast(error),
             },
@@ -1279,6 +1309,16 @@ impl App {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button(icons::DOTS_THREE, |ui| {
+                    if self.nets[ni].info.guest && ui.button("Create an account…").clicked() {
+                        self.signup = Some(SignUpDialog {
+                            network: network.clone(),
+                            account: self.nets[ni].info.nick.clone(),
+                            password: String::new(),
+                            email: String::new(),
+                            busy: false,
+                            error: None,
+                        });
+                    }
                     if ui.button("Leave network…").clicked() {
                         self.confirm_remove = Some(network.clone());
                     }
@@ -2252,6 +2292,86 @@ impl App {
             // A join in flight can't be cancelled; it ends on its own.
             if (cancel || modal.should_close()) && !busy {
                 self.join = None;
+            }
+        }
+
+        if let Some(s) = &mut self.signup {
+            let mut submit = false;
+            let mut cancel = false;
+            let name = self
+                .nets
+                .iter()
+                .find(|n| n.info.network == s.network)
+                .map_or(s.network.clone(), |n| n.info.name.clone());
+            let modal = egui::Modal::new(egui::Id::unique("signup")).show(ctx, |ui| {
+                ui.set_width(360.0);
+                ui.heading(format!("Create an account on {name}"));
+                ui.label(
+                    RichText::new(
+                        "Keep your name, catch up on what's said while you're away, \
+                         and use voice and encrypted DMs.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(8.0);
+                egui::Grid::new("signup-fields")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        let field =
+                            |text| egui::TextEdit::singleline(text).desired_width(f32::INFINITY);
+                        let l = ui.label("Username");
+                        ui.add_enabled(!s.busy, field(&mut s.account))
+                            .labelled_by(l.id);
+                        ui.end_row();
+                        let l = ui.label("Password");
+                        ui.add_enabled(!s.busy, field(&mut s.password).password(true))
+                            .labelled_by(l.id);
+                        ui.end_row();
+                        let l = ui.label("Email");
+                        ui.add_enabled(!s.busy, field(&mut s.email).hint_text("optional"))
+                            .labelled_by(l.id);
+                        ui.end_row();
+                    });
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("You'll reconnect for a moment; your channels come with you.")
+                        .weak(),
+                );
+                if let Some(e) = &s.error {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+                }
+                ui.add_space(8.0);
+                let ready = !s.account.trim().is_empty() && !s.password.is_empty() && !s.busy;
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    submit = ui
+                        .add_enabled(ready, egui::Button::new("Sign up"))
+                        .clicked()
+                        || (ready && ui.input(|i| i.key_pressed(Key::Enter)));
+                    if s.busy {
+                        ui.spinner();
+                    }
+                });
+            });
+            if submit {
+                s.busy = true;
+                s.error = None;
+                self.verify_dismissed = None;
+                self.core.send(Command::Net {
+                    network: s.network.clone(),
+                    cmd: NetCommand::Register {
+                        account: s.account.trim().to_owned(),
+                        password: s.password.clone(),
+                        email: Some(s.email.trim().to_owned()).filter(|e| !e.is_empty()),
+                    },
+                });
+            }
+            // A sign-up in flight can't be cancelled; it ends on its own.
+            if (cancel || modal.should_close()) && !s.busy {
+                self.signup = None;
             }
         }
 

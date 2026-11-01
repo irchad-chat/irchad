@@ -55,6 +55,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         password,
         device: device.clone(),
         register: None,
+        upgrading: None,
         joining: None,
         save_password: false,
         db_path,
@@ -190,6 +191,7 @@ fn spawn_with(
         icon: None,
         nick: p.account.clone(),
         state: ConnState::Connecting,
+        guest: p.guest,
         uploads: None,
         gifs: None,
     };
@@ -213,7 +215,7 @@ fn spawn_with(
 }
 
 /// Enough to keep the name a single IRC parameter; the server judges the rest.
-fn valid_nick(nick: &str) -> bool {
+pub(crate) fn valid_nick(nick: &str) -> bool {
     !nick.is_empty()
         && !nick.starts_with(['#', ':'])
         && !nick.chars().any(|c| c.is_whitespace() || c.is_control())
