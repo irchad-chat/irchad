@@ -19,6 +19,8 @@ use crate::icons;
 const MAX_SHOWN: Vec2 = vec2(400.0, 300.0);
 /// Decoded frames are scaled to fit this, in pixels.
 const MAX_PIXELS: u32 = 800;
+/// Still images are decoded again up to this for the viewer.
+const MAX_FULL: u32 = 2560;
 const MAX_FRAMES: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +58,8 @@ struct Frames {
     /// Sum of the frame delays, in seconds.
     period: f32,
     size: Vec2,
+    /// The encoded still, kept for the viewer's sharper decode.
+    bytes: Option<chad_core::Blob>,
 }
 
 enum Img {
@@ -70,13 +74,19 @@ enum Prev {
     Failed,
 }
 
-type Decoded = (String, Option<Vec<(egui::ColorImage, f32)>>);
+type Decoded = (
+    String,
+    Option<Vec<(egui::ColorImage, f32)>>,
+    chad_core::Blob,
+);
 
 pub struct Media {
     images: HashMap<String, Img>,
     previews: HashMap<String, Prev>,
     /// For the core, sent by the app after each frame.
     pub wanted: Vec<NetCommand>,
+    /// The image open in the viewer.
+    viewing: Option<String>,
     decoded: (mpsc::Sender<Decoded>, mpsc::Receiver<Decoded>),
 }
 
@@ -86,6 +96,7 @@ impl Default for Media {
             images: HashMap::new(),
             previews: HashMap::new(),
             wanted: Vec::new(),
+            viewing: None,
             decoded: mpsc::channel(),
         }
     }
@@ -103,9 +114,14 @@ impl Media {
             self.images.insert(url, Img::Failed);
             return;
         };
+        self.decode(url, bytes, MAX_PIXELS, ctx);
+    }
+
+    fn decode(&self, key: String, bytes: chad_core::Blob, max: u32, ctx: &egui::Context) {
         let (tx, ctx) = (self.decoded.0.clone(), ctx.clone());
         tokio::task::spawn_blocking(move || {
-            let _ = tx.send((url, decode(&bytes.0, MAX_PIXELS)));
+            let frames = decode(&bytes.0, max);
+            let _ = tx.send((key, frames, bytes));
             ctx.request_repaint();
         });
     }
@@ -127,10 +143,12 @@ impl Media {
 
     /// Turns decoded images into textures; call once per frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
-        while let Ok((url, frames)) = self.decoded.1.try_recv() {
+        while let Ok((url, frames, bytes)) = self.decoded.1.try_recv() {
             let img = match frames {
                 Some(frames) if !frames.is_empty() => {
                     let size = frames[0].0.size;
+                    // Animations stay at their inline size: frames add up fast.
+                    let bytes = (frames.len() == 1).then_some(bytes);
                     let mut period = 0.0;
                     let frames = frames
                         .into_iter()
@@ -145,6 +163,7 @@ impl Media {
                         frames,
                         period,
                         size: vec2(size[0] as f32, size[1] as f32),
+                        bytes,
                     })
                 }
                 _ => Img::Failed,
@@ -193,9 +212,68 @@ impl Media {
                     .on_hover_text(url);
                 r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, url));
                 if r.clicked() {
-                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                    self.open_viewer(url, ui.ctx());
                 }
             }
+        }
+    }
+
+    fn open_viewer(&mut self, url: &str, ctx: &egui::Context) {
+        self.viewing = Some(url.to_owned());
+        let key = format!("full:{url}");
+        if let Some(Img::Ready(Frames {
+            bytes: Some(b),
+            size,
+            ..
+        })) = self.images.get(url)
+            // Smaller than this and the inline decode is already full size.
+            && size.max_elem() >= MAX_PIXELS as f32
+            && !self.images.contains_key(&key)
+        {
+            let b = b.clone();
+            self.images.insert(key.clone(), Img::Loading);
+            self.decode(key, b, MAX_FULL, ctx);
+        }
+    }
+
+    /// The open image, fitted to the window, over everything else.
+    /// Call once per frame.
+    pub fn viewer(&mut self, ctx: &egui::Context) {
+        let Some(url) = self.viewing.clone() else {
+            return;
+        };
+        let full = format!("full:{url}");
+        let shown = [&full, &url]
+            .into_iter()
+            .find_map(|k| match self.images.get(k.as_str()) {
+                Some(Img::Ready(f)) => Some(f),
+                _ => None,
+            });
+        let Some(f) = shown else {
+            self.viewing = None;
+            return;
+        };
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::unique("image viewer")).show(ctx, |ui| {
+            let max = ctx.content_rect().size() * 0.85 - vec2(0.0, 40.0);
+            // Upscale small images a little so a click shows something bigger.
+            let scale = (max.x / f.size.x).min(max.y / f.size.y).min(2.0);
+            let r = ui.add(egui::Image::new((frame_at(f, ui).id(), f.size * scale)));
+            r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &url));
+            ui.horizontal(|ui| {
+                if ui
+                    .button(format!("{} Open in browser", icons::ARROW_SQUARE_OUT))
+                    .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(&url));
+                }
+                close = ui.button("Close").clicked();
+            });
+        });
+        if close || modal.should_close() {
+            self.viewing = None;
+            // The sharp copy is big; decode it again if reopened.
+            self.images.remove(&full);
         }
     }
 

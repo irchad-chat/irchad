@@ -1109,6 +1109,7 @@ impl App {
         }
         for n in &mut self.nets {
             n.media.poll(ctx);
+            n.media.viewer(ctx);
             for cmd in n.media.wanted.drain(..) {
                 self.core.send(Command::Net {
                     network: n.info.network.clone(),
