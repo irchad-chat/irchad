@@ -56,16 +56,28 @@ jobs:
   windows:
     # Must match a label on a Windows act_runner (host mode).
     runs-on: windows-latest
+    env:
+      # Host mode: each job gets a fresh workspace path, and rust-cache's
+      # cache version hashes that path, so it never restored here. A fixed
+      # target dir on the runner outlives the job instead, keeping
+      # dependencies built. nightly.yml and release.yml use ...\dist.
+      CARGO_TARGET_DIR: C:\gitea-runner\cargo-target\ci
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ci-windows
-          cache-on-failure: true
+      # Nothing else cleans it: wipe it past 40 GB.
+      - name: Trim target dir
+        shell: pwsh
+        run: |
+          $d = $env:CARGO_TARGET_DIR
+          if (Test-Path $d) {
+            $gb = (Get-ChildItem $d -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB
+            "{0}: {1:N1} GB" -f $d, $gb
+            if ($gb -gt 40) { Remove-Item $d -Recurse -Force; "wiped" }
+          }
 
       - run: cargo build --locked
       - run: cargo test --locked

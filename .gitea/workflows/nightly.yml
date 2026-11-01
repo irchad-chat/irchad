@@ -74,12 +74,23 @@ jobs:
     needs: release
     if: needs.release.outputs.id != ''
     runs-on: windows-latest
+    env:
+      # Fixed target dir on the host-mode runner, shared with release.yml
+      # (see ci.yaml's windows job for why not rust-cache).
+      CARGO_TARGET_DIR: C:\gitea-runner\cargo-target\dist
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-windows
+
+      - name: Trim target dir
+        shell: pwsh
+        run: |
+          $d = $env:CARGO_TARGET_DIR
+          if (Test-Path $d) {
+            $gb = (Get-ChildItem $d -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB
+            "{0}: {1:N1} GB" -f $d, $gb
+            if ($gb -gt 40) { Remove-Item $d -Recurse -Force; "wiped" }
+          }
 
       - run: cargo build --release --locked -p chad-desktop
         env:
@@ -90,7 +101,7 @@ jobs:
         shell: pwsh
         run: |
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
-            -F "attachment=@target/release/irchad.exe" `
+            -F "attachment=@${env:CARGO_TARGET_DIR}\release\irchad.exe" `
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64.exe"
 
       # NSIS on the runner: `choco install nsis` once, or this installs it.
@@ -101,7 +112,7 @@ jobs:
             choco install nsis -y --no-progress
             $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
           }
-          makensis /DVERSION=nightly /DEXE=..\..\target\release\irchad.exe packaging\windows\irchad.nsi
+          makensis /DVERSION=nightly "/DEXE=${env:CARGO_TARGET_DIR}\release\irchad.exe" packaging\windows\irchad.nsi
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
             -F "attachment=@packaging/windows/irchad-setup.exe" `
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64-setup.exe"
