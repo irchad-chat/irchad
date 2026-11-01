@@ -441,7 +441,17 @@ fn dms_presence_and_ctcp() {
         (m[0].kind, m[0].text.as_str()),
         (MessageKind::Action, "waves")
     );
-    assert!(out(&mut n).is_empty(), "never answers CTCP");
+    assert_eq!(out(&mut n), ["NOTICE alice :\x01VERSION IrChad\x01"]);
+    // Not again so soon, nor to a channel, nor anything else.
+    feed(&mut n, ":carol!u@h PRIVMSG bob :\x01VERSION\x01");
+    assert!(out(&mut n).is_empty());
+    n.ctcp_at = None;
+    feed(&mut n, ":alice!u@h PRIVMSG #c :\x01VERSION\x01");
+    feed(&mut n, ":alice!u@h PRIVMSG bob :\x01PING 1\x01");
+    feed(&mut n, ":alice!u@h NOTICE bob :\x01VERSION\x01");
+    feed(&mut n, ":s PRIVMSG bob :\x01VERSION\x01");
+    assert!(out(&mut n).is_empty(), "only answers VERSION");
+    assert!(messages(&events(&mut n)).is_empty());
 
     // Our own echo to a DM files under the other side.
     feed(&mut n, "@msgid=d2 :bob!u@h PRIVMSG carol :hi");

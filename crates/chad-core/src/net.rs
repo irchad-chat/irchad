@@ -35,6 +35,8 @@ const MAX_NAME: usize = 200;
 /// Bytes of text per PRIVMSG line we send: 512 minus the relayed prefix, target and slack.
 const MAX_PIECE: usize = 350;
 const TYPING_EVERY: Duration = Duration::from_secs(3);
+/// At most one CTCP reply this often, so nobody can make us flood ourselves off.
+const CTCP_EVERY: Duration = Duration::from_secs(2);
 /// Metadata key for voice: a user's room (`#chan`), or `off` on a channel.
 pub const VOICE_KEY: &str = "chad/voice";
 /// De-facto metadata keys other clients read too.
@@ -134,6 +136,9 @@ pub struct Net {
     away: Option<String>,
     /// Encrypted DMs; `None` for guests, or without a keyring.
     pub e2e: Option<E2e>,
+    /// Our CTCP VERSION reply.
+    pub version: String,
+    ctcp_at: Option<Instant>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -172,6 +177,8 @@ impl Net {
             profiles: HashMap::new(),
             away: None,
             e2e: None,
+            version: "IrChad".into(),
+            ctcp_at: None,
         }
     }
 
@@ -821,6 +828,9 @@ impl Net {
         let from = m.source_nick().unwrap_or_default().to_owned();
         let me = self.cm.eq(&from, &self.info.nick);
         match m.command.as_str() {
+            "PRIVMSG" if !me && m.param(1) == Some("\x01VERSION\x01") => {
+                self.ctcp_version(&m, &from);
+            }
             "PRIVMSG" | "NOTICE" => {
                 if let Some((target, msg)) = self.chat_in(&Item::Message(m)) {
                     self.live(&target, msg);
@@ -1167,6 +1177,23 @@ impl Net {
                 }
             }
         }
+    }
+
+    /// Answers a CTCP VERSION sent to us by a user (not to a channel), at most
+    /// every [`CTCP_EVERY`].
+    fn ctcp_version(&mut self, m: &Message, from: &str) {
+        let to_us = m.param(0).is_some_and(|t| self.cm.eq(t, &self.info.nick));
+        let user = m.source.as_deref().is_some_and(|s| s.contains('!'));
+        if !to_us || !user || !valid_name(from) {
+            return;
+        }
+        if self.ctcp_at.is_some_and(|t| t.elapsed() < CTCP_EVERY) {
+            return;
+        }
+        self.ctcp_at = Some(Instant::now());
+        let reply = format!("\x01VERSION {}\x01", self.version);
+        self.out
+            .push(Message::new("NOTICE", [from, reply.as_str()]));
     }
 
     /// A PRIVMSG/NOTICE or multiline batch as `(buffer name, message)`.

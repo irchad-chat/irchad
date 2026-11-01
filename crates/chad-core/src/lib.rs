@@ -45,6 +45,8 @@ pub struct Config {
     pub notify: Arc<dyn Fn() + Send + Sync>,
     /// Voice calls; `None` turns voice off.
     pub media: Option<Arc<dyn Media>>,
+    /// What the app calls itself, e.g. `IrChad 0.1.1`: the CTCP VERSION reply.
+    pub version: String,
 }
 
 /// Whatever plays voice calls (`chad-media` on desktop). The core decides when

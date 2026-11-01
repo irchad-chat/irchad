@@ -45,6 +45,7 @@ impl Shots {
                     secrets: Arc::new(chad_core::secrets::MemorySecrets::default()),
                     notify: Arc::new(|| {}),
                     media: Some(Arc::new(voice::Glue(voice.clone()))),
+                    version: "IrChad test".into(),
                 });
                 App::new(cc, core, events, os, platform::Tray::none(), open, voice)
             });

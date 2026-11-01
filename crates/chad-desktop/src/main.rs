@@ -86,6 +86,7 @@ fn main() -> eframe::Result {
                 },
                 notify: Arc::new(move || ctx.request_repaint()),
                 media: Some(Arc::new(voice::Glue(voice.clone()))),
+                version: format!("IrChad {}", update::version()),
             });
             Ok(Box::new(app::App::new(
                 cc, core, events, os_rx, tray, open, voice,

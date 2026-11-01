@@ -45,6 +45,8 @@ pub struct Params {
     pub db_path: PathBuf,
     pub secrets: Arc<dyn SecretStore>,
     pub media: Option<Arc<dyn Media>>,
+    /// [`crate::Config::version`].
+    pub version: String,
     /// chadd session, reused until it expires.
     pub session: Arc<tokio::sync::Mutex<Option<Session>>>,
 }

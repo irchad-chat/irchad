@@ -15,6 +15,20 @@ const PAGES: &str = "https://git.gentoo.party/sam/irchad-ng/releases/";
 /// The commit this nightly was built from; `None` for any other build.
 const NIGHTLY: Option<&str> = option_env!("IRCHAD_NIGHTLY");
 
+/// The commit built, unless it's the release tag (see `build.rs`).
+const COMMIT: Option<&str> = option_env!("IRCHAD_COMMIT");
+
+/// What this build is: `0.1.1` for the release, `nightly f78602ee8`, or
+/// `dev f78602ee8` for anything else built from git.
+pub fn version() -> String {
+    let short = |sha: &'static str| sha.get(..9).unwrap_or(sha);
+    match (NIGHTLY, COMMIT) {
+        (Some(sha), _) => format!("nightly {}", short(sha)),
+        (None, Some(sha)) => format!("dev {}", short(sha)),
+        (None, None) => env!("CARGO_PKG_VERSION").to_owned(),
+    }
+}
+
 /// The nightly asset for this platform. The workflow recreates the release
 /// before building, so its commit is new before the downloads are there.
 const ASSET: Option<&str> = if cfg!(target_os = "linux") {

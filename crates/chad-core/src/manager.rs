@@ -61,6 +61,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         db_path,
         secrets: cfg.secrets.clone(),
         media: cfg.media.clone(),
+        version: cfg.version.clone(),
         session: Default::default(),
     };
 
@@ -198,6 +199,7 @@ fn spawn_with(
     let mut net = Net::new(store, info);
     net.invite_channel = invite_channel;
     net.guest = p.guest;
+    net.version = p.version.clone();
     if let Some(d) = net
         .store
         .meta("discovery")

@@ -2476,6 +2476,8 @@ impl App {
                         self.restart_ptt(ctx);
                     }
                 }
+                ui.separator();
+                ui.weak(format!("IrChad {}", crate::update::version()));
             });
         if !open {
             self.binding_ptt = false;

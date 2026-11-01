@@ -54,6 +54,7 @@ async fn register_chat_restart_history() {
         secrets: secrets.clone(),
         notify: Arc::new(|| {}),
         media: None,
+        version: "test".into(),
     };
     let account = format!("lc{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
 
@@ -118,6 +119,7 @@ async fn register_chat_restart_history() {
         secrets: Arc::new(MemorySecrets::default()),
         notify: Arc::new(|| {}),
         media: None,
+        version: "test".into(),
     });
     alice.send(Command::Join {
         invite: origin.clone(),
@@ -150,6 +152,7 @@ async fn guest_join_collision_restart() {
         secrets: Arc::new(MemorySecrets::default()),
         notify: Arc::new(|| {}),
         media: None,
+        version: "test".into(),
     };
     let nick = format!("g{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
     let join = || Command::Join {
@@ -205,6 +208,7 @@ async fn guest_signs_up() {
         secrets: secrets.clone(),
         notify: Arc::new(|| {}),
         media: None,
+        version: "test".into(),
     };
     let nick = format!("gs{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
     let register = |account: &str| Command::Net {
@@ -310,6 +314,7 @@ async fn voice_token_and_metadata() {
         secrets: Arc::new(MemorySecrets::default()),
         notify: Arc::new(|| {}),
         media: media.map(|m| m as Arc<dyn chad_core::Media>),
+        version: "test".into(),
     };
     let login = |account: &str| Command::Join {
         invite: origin.clone(),
@@ -398,6 +403,7 @@ async fn two_networks_upload_profile() {
         secrets: Arc::new(MemorySecrets::default()),
         notify: Arc::new(|| {}),
         media: None,
+        version: "test".into(),
     });
     for origin in &origins {
         core.send(Command::Join {
@@ -510,6 +516,7 @@ async fn encrypted_dms_across_devices() {
         secrets,
         notify: Arc::new(|| {}),
         media: None,
+        version: "test".into(),
     };
     let auth = |account: &str, register: bool| {
         let (account, password) = (account.to_owned(), "livecorepass".to_owned());
