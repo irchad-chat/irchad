@@ -239,3 +239,6 @@ Each join gets an id because the core's drop of an old call can reach Kotlin aft
 Kotlin owns what's in the room (participants, speaking, mute, deafen, which share is watched), the same split as desktop's `chad-media`. It follows desktop's rules: auto-subscribe off, mics and the soundboard track always, a screen share and its audio only while watched, and the `watching` attribute for the sharer's count (D22).
 LiveKit's signalling goes through OkHttp, which uses the Java trust store and not D42's `SSL_CERT_DIR`. When `files/certs` holds anything, the app hands LiveKit an OkHttp client that trusts the system CAs plus those, so the dev CA works for both stacks. Otherwise OkHttp keeps its defaults.
 A call runs in a `microphone` foreground service, whose notification has mute, deafen and leave. Audio focus and headset or Bluetooth routing are the SDK's AudioSwitch defaults.
+
+## D44: The landing page links the latest release, not nightly (2026-11-01)
+chadd's `downloads` now defaults to `releases/download/latest/`, which Gitea resolves to the newest non-prerelease release. The Android APK is only built for tagged releases, and the desktop update check (D27) compares against the latest release, so new chads start on the build that check expects. Nightly stays available on the releases page for testers.

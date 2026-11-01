@@ -141,17 +141,17 @@ fn join_url(origin: &Url, code: Option<&str>, channel: Option<&String>) -> Url {
     url
 }
 
-/// Client builds: (name, nightly asset, icon, User-Agent needle). Android
+/// Client builds: (name, release asset, icon, User-Agent needle). Android
 /// comes before Linux because its User-Agent contains both.
-const PLATFORMS: [(&str, Option<&str>, &str, &str); 3] = [
-    ("Android", None, ANDROID, "Android"),
+const PLATFORMS: [(&str, &str, &str, &str); 3] = [
+    ("Android", "irchad-android-arm64.apk", ANDROID, "Android"),
     (
         "Windows",
-        Some("irchad-windows-x86_64-setup.exe"),
+        "irchad-windows-x86_64-setup.exe",
         WINDOWS,
         "Windows",
     ),
-    ("Linux", Some("irchad-linux-x86_64"), LINUX, "Linux"),
+    ("Linux", "irchad-linux-x86_64", LINUX, "Linux"),
 ];
 
 fn invite_page(
@@ -172,12 +172,11 @@ fn invite_page(
         None => String::new(),
     };
     let base = state.config.downloads.as_str().trim_end_matches('/');
-    let link = |label: &str, asset: Option<&str>, icon: &str, class: &str| match asset {
-        Some(a) => format!(
-            r#"<a class="{class}" href="{}/{a}" download>{icon}{label}</a>"#,
+    let link = |label: &str, asset: &str, icon: &str, class: &str| {
+        format!(
+            r#"<a class="{class}" href="{}/{asset}" download>{icon}{label}</a>"#,
             escape(base)
-        ),
-        None => format!(r#"<span class="{class} soon">{icon}{label} · soon</span>"#),
+        )
     };
     // Unknown OS (macOS, bots): offer Linux, the first-class platform.
     let mine = PLATFORMS
@@ -195,7 +194,7 @@ fn invite_page(
         .iter()
         .enumerate()
         .filter(|(i, _)| *i != mine)
-        .map(|(_, (os, asset, icon, _))| link(os, *asset, icon, "chip"))
+        .map(|(_, (os, asset, icon, _))| link(os, asset, icon, "chip"))
         .collect();
     let hint = if os == "Linux" {
         r#"<p class="hint">Then <code>chmod +x irchad-linux-x86_64</code> and run it.</p>"#
@@ -237,7 +236,6 @@ fn invite_page(
   .chip {{ display: inline-flex; align-items: center; gap: .375rem; padding: .375rem .75rem; border-radius: 999px;
     border: 1px solid var(--line); color: var(--muted); font-size: .875rem; text-decoration: none; }}
   a.chip:hover {{ color: var(--fg); }}
-  .soon {{ opacity: .55; cursor: default; }}
   footer {{ margin-top: 1.5rem; color: var(--muted); font-size: .75rem; }}
   a:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
 </style>
@@ -346,20 +344,22 @@ mod tests {
 
     #[tokio::test]
     async fn landing_offers_the_visitors_build() {
-        let nightly = "https://git.gentoo.party/sam/irchad-ng/releases/download/nightly";
+        let latest = "https://git.gentoo.party/sam/irchad-ng/releases/download/latest";
         let (status, body) = get_as("/", "Mozilla/5.0 (X11; Linux x86_64)").await;
         assert_eq!(status, 200);
         assert!(body.contains("Click to Join Chad &lt;Network&gt;"));
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{nightly}/irchad-linux-x86_64""#
+            r#"class="btn secondary" href="{latest}/irchad-linux-x86_64""#
         )));
 
         let (_, body) = get_as("/", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{nightly}/irchad-windows-x86_64-setup.exe""#
+            r#"class="btn secondary" href="{latest}/irchad-windows-x86_64-setup.exe""#
         )));
 
         let (_, body) = get_as("/", "Mozilla/5.0 (Linux; Android 14)").await;
-        assert!(body.contains("Download for Android · soon"));
+        assert!(body.contains(&format!(
+            r#"class="btn secondary" href="{latest}/irchad-android-arm64.apk""#
+        )));
     }
 }
