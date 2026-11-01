@@ -227,3 +227,15 @@ The APK is built by Gitea Actions in the Linux CI image (D32), extended with the
 
 ## D41: Android looks native: Material You dynamic color (2026-11-01)
 Android follows the wallpaper palette instead of matching desktop's Catppuccin. It's a Compose app (D3), so it should feel like one.
+
+## D42: Android finds TLS roots through `SSL_CERT_DIR` (2026-11-01)
+rustls-native-certs knows no Android trust store, so with no setup every TLS connection fails. chad-ffi points `SSL_CERT_DIR` at the system stores (`/apex/com.android.conscrypt/cacerts`, then `/system/etc/security/cacerts`) and the app's own `files/certs`, before any thread starts.
+That covers both the WebSocket (chad-irc) and reqwest without touching their TLS setup. User-installed CAs aren't seen. `files/certs` is how a dev CA gets in for now.
+rustls-platform-verifier, which uses Android's own verifier over JNI and needs an extra Gradle component, is the upgrade if user CAs or revocation start to matter.
+
+## D43: Android plays calls behind a foreign `Voice` trait; the core still runs them (2026-11-01)
+chad-ffi implements chad-core's `Media` with a UniFFI callback trait, `Voice { join(id, url, token, call), hang_up(id) }`, that Kotlin implements with the LiveKit Android SDK. The core keeps owning voice exactly as on desktop: one call across networks, the chadd token, `chad/voice` metadata and `VoiceState`. Kotlin reports back through the `Call` object (`connected`, `ended`).
+Each join gets an id because the core's drop of an old call can reach Kotlin after the next join; a stale `hang_up` is ignored.
+Kotlin owns what's in the room (participants, speaking, mute, deafen, which share is watched), the same split as desktop's `chad-media`. It follows desktop's rules: auto-subscribe off, mics and the soundboard track always, a screen share and its audio only while watched, and the `watching` attribute for the sharer's count (D22).
+LiveKit's signalling goes through OkHttp, which uses the Java trust store and not D42's `SSL_CERT_DIR`. When `files/certs` holds anything, the app hands LiveKit an OkHttp client that trusts the system CAs plus those, so the dev CA works for both stacks. Otherwise OkHttp keeps its defaults.
+A call runs in a `microphone` foreground service, whose notification has mute, deafen and leave. Audio focus and headset or Bluetooth routing are the SDK's AudioSwitch defaults.

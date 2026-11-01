@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
+use chad_core::view::Edit;
 use chad_core::{ChatMessage, Crypt, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
-use url::Url;
 
 use crate::format;
 use crate::icons::{self, Tip};
@@ -26,12 +26,7 @@ const AVATAR: f32 = 32.0;
 /// Inline images per message.
 const MAX_IMAGES: usize = 3;
 
-/// Someone's metadata, keyed by `app::key(nick)`.
-#[derive(Debug, Clone, Default)]
-pub struct Profile {
-    pub display_name: Option<String>,
-    pub avatar: Option<Url>,
-}
+pub use chad_core::view::{Profile, shown};
 
 /// What rows need besides the messages.
 pub struct Extras<'a> {
@@ -43,14 +38,6 @@ pub struct Extras<'a> {
     pub auto_media: bool,
     /// A DM, where unencrypted messages are marked.
     pub dm: bool,
-}
-
-/// The name to show for `nick`: their display name if they set one.
-pub fn shown<'a>(profiles: &'a HashMap<String, Profile>, nick: &'a str) -> &'a str {
-    profiles
-        .get(&nick.to_ascii_lowercase())
-        .and_then(|p| p.display_name.as_deref())
-        .unwrap_or(nick)
 }
 
 pub enum Action {
@@ -84,9 +71,9 @@ pub struct Output {
     pub at_bottom: bool,
 }
 
+/// Layout of one buffer's messages, which live in the view (`Buf::msgs`).
 #[derive(Default)]
 pub struct ChatLog {
-    pub msgs: Vec<ChatMessage>,
     heights: Vec<f32>,
     prefix: Vec<f32>,
     prefix_dirty: bool,
@@ -107,8 +94,8 @@ pub struct ChatLog {
     hover: Option<(String, Rect)>,
 }
 
-fn same_msg(a: &ChatMessage, b: &ChatMessage) -> bool {
-    (a.msgid.is_some() && a.msgid == b.msgid) || (a.local_id.is_some() && a.local_id == b.local_id)
+fn index_of(msgs: &[ChatMessage], msgid: &str) -> Option<usize> {
+    msgs.iter().rposition(|m| m.msgid.as_deref() == Some(msgid))
 }
 
 fn day(ms: i64) -> Option<jiff::civil::Date> {
@@ -132,50 +119,40 @@ pub fn nick_color(nick: &str, dark: bool) -> Color32 {
 }
 
 impl ChatLog {
-    /// Merges new or updated messages; returns the indices into `incoming`
-    /// that weren't held before (for notifications).
-    pub fn merge(&mut self, incoming: &[ChatMessage]) -> Vec<usize> {
-        let mut new = Vec::new();
-        for (n, m) in incoming.iter().enumerate() {
-            if let Some(i) = self.msgs.iter().rposition(|x| same_msg(x, m)) {
-                if self.msgs[i].time == m.time {
-                    self.msgs[i] = m.clone();
-                    self.measured[i] = false;
-                    continue;
+    /// Follows the view's merge of `incoming` into the buffer's messages.
+    pub fn apply(&mut self, edits: &[Edit], incoming: &[ChatMessage]) {
+        for e in edits {
+            match *e {
+                Edit::Replaced(i) => {
+                    if let Some(m) = self.measured.get_mut(i) {
+                        *m = false;
+                    }
                 }
-                self.remove(i);
-            } else {
-                new.push(n);
+                Edit::Removed(i) if i < self.heights.len() => {
+                    self.rebuild_prefix();
+                    if self.prefix[i] < self.last_top && !self.at_bottom {
+                        self.shift -= self.heights[i];
+                    }
+                    self.heights.remove(i);
+                    self.measured.remove(i);
+                    self.prefix_dirty = true;
+                }
+                Edit::Inserted { at, from } if at <= self.heights.len() => {
+                    let Some(m) = incoming.get(from) else {
+                        continue;
+                    };
+                    let h = self.estimate(m);
+                    self.rebuild_prefix();
+                    if self.prefix[at] < self.last_top && !self.at_bottom {
+                        self.shift += h;
+                    }
+                    self.heights.insert(at, h);
+                    self.measured.insert(at, false);
+                    self.prefix_dirty = true;
+                }
+                _ => {}
             }
-            let i = self.msgs.partition_point(|x| x.time <= m.time);
-            let h = self.estimate(m);
-            self.rebuild_prefix();
-            if self.prefix[i] < self.last_top && !self.at_bottom {
-                self.shift += h;
-            }
-            self.msgs.insert(i, m.clone());
-            self.heights.insert(i, h);
-            self.measured.insert(i, false);
-            self.prefix_dirty = true;
         }
-        new
-    }
-
-    fn remove(&mut self, i: usize) {
-        self.rebuild_prefix();
-        if self.prefix[i] < self.last_top && !self.at_bottom {
-            self.shift -= self.heights[i];
-        }
-        self.msgs.remove(i);
-        self.heights.remove(i);
-        self.measured.remove(i);
-        self.prefix_dirty = true;
-    }
-
-    pub fn index_of(&self, msgid: &str) -> Option<usize> {
-        self.msgs
-            .iter()
-            .rposition(|m| m.msgid.as_deref() == Some(msgid))
     }
 
     fn estimate(&self, m: &ChatMessage) -> f32 {
@@ -208,16 +185,16 @@ impl ChatLog {
         self.prefix_dirty = false;
     }
 
-    fn set_width(&mut self, width: f32, line: f32) {
-        if (width - self.width).abs() < 0.5 && (line - self.line).abs() < 0.01 {
+    fn set_width(&mut self, msgs: &[ChatMessage], width: f32, line: f32) {
+        // Out of step with the messages (a missed edit): start the layout over.
+        let synced = self.heights.len() == msgs.len();
+        if synced && (width - self.width).abs() < 0.5 && (line - self.line).abs() < 0.01 {
             return;
         }
         self.width = width;
         self.line = line;
-        for i in 0..self.msgs.len() {
-            self.heights[i] = self.estimate(&self.msgs[i]);
-            self.measured[i] = false;
-        }
+        self.heights = msgs.iter().map(|m| self.estimate(m)).collect();
+        self.measured = vec![false; msgs.len()];
         self.prefix_dirty = true;
     }
 
@@ -239,15 +216,16 @@ impl ChatLog {
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
+        msgs: &[ChatMessage],
         own_nick: &str,
         highlights: bool,
         extras: &mut Extras,
     ) -> Output {
         let line = ui.text_style_height(&egui::TextStyle::Body) + 2.0;
-        self.set_width(ui.available_width() - 16.0, line);
+        self.set_width(msgs, ui.available_width() - 16.0, line);
         self.rebuild_prefix();
         let mut out = Output::default();
-        if self.msgs.is_empty() {
+        if msgs.is_empty() {
             out.near_top = true;
             out.at_bottom = true;
             self.at_bottom = true;
@@ -279,24 +257,24 @@ impl ChatLog {
                 .prefix
                 .partition_point(|&y| y <= viewport.min.y)
                 .saturating_sub(1)
-                .min(self.msgs.len() - 1);
+                .min(msgs.len() - 1);
             let mut y = self.prefix[first];
             let mut i = first;
             let mut changed = false;
             let mut rows = Vec::new();
-            while i < self.msgs.len() && y < viewport.max.y {
+            while i < msgs.len() && y < viewport.max.y {
                 let rect = Rect::from_min_size(
                     origin + vec2(GUTTER, y),
                     vec2(self.width - GUTTER, f32::INFINITY),
                 );
-                let prev = i.checked_sub(1).map(|p| &self.msgs[p]);
-                let m = &self.msgs[i];
+                let prev = i.checked_sub(1).map(|p| &msgs[p]);
+                let m = &msgs[i];
                 let unread = m.msgid.is_some() && self.unread_from == m.msgid;
                 let parent = m
                     .reply_to
                     .as_deref()
-                    .and_then(|id| self.index_of(id))
-                    .map(|p| &self.msgs[p]);
+                    .and_then(|id| index_of(msgs, id))
+                    .map(|p| &msgs[p]);
                 let resp = ui.scope_builder(
                     UiBuilder::new()
                         .max_rect(rect)
@@ -355,7 +333,7 @@ impl ChatLog {
                     let id = id.clone();
                     rows.iter()
                         .copied()
-                        .find(|(i, _)| self.msgs[*i].msgid.as_ref() == Some(&id))
+                        .find(|(i, _)| msgs[*i].msgid.as_ref() == Some(&id))
                 }
                 None => rows
                     .iter()
@@ -363,7 +341,7 @@ impl ChatLog {
                     .find(|(_, r)| pointer.is_some_and(|p| r.contains(p))),
             };
             self.hover = hovered.and_then(|(i, r)| {
-                let m = &self.msgs[i];
+                let m = &msgs[i];
                 if m.redacted {
                     return None;
                 }
@@ -760,23 +738,20 @@ mod tests {
     }
 
     #[test]
-    fn merge_sorts_dedupes_and_replaces_pending() {
+    fn apply_keeps_heights_in_step() {
         let mut log = ChatLog::default();
-        assert_eq!(log.merge(&[msg("b", 2), msg("a", 1)]), vec![0, 1]);
-        assert_eq!(log.merge(&[msg("a", 1)]), Vec::<usize>::new());
-        let mut pending = msg("x", 5);
-        pending.msgid = None;
-        pending.local_id = Some(7);
-        pending.status = SendStatus::Pending;
-        assert_eq!(log.merge(&[pending]), vec![0]);
-        // The echo carries the msgid and server time, and replaces it.
-        let mut echo = msg("c", 4);
-        echo.local_id = Some(7);
-        assert_eq!(log.merge(&[echo]), Vec::<usize>::new());
-        let ids: Vec<_> = log.msgs.iter().map(|m| m.msgid.clone().unwrap()).collect();
-        assert_eq!(ids, ["a", "b", "c"]);
-        assert_eq!(log.heights.len(), 3);
-        assert_eq!(log.measured.len(), 3);
+        let incoming = [msg("b", 2), msg("a", 1)];
+        let ins = |at, from| Edit::Inserted { at, from };
+        log.apply(&[ins(0, 0), ins(0, 1)], &incoming);
+        assert_eq!((log.heights.len(), log.measured.len()), (2, 2));
+        log.apply(&[Edit::Removed(1), ins(1, 0)], &incoming);
+        assert_eq!(log.heights.len(), 2);
+        // Hostile or stale edits are skipped, not panicked on.
+        log.apply(
+            &[Edit::Removed(9), ins(9, 0), ins(0, 9), Edit::Replaced(9)],
+            &incoming,
+        );
+        assert_eq!(log.heights.len(), 2);
     }
 
     #[test]

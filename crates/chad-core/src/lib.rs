@@ -1,7 +1,7 @@
 //! UI-agnostic client state. Commands in, events out. Never depends on egui.
 //!
 //! [`start`] spawns the core on the current tokio runtime. The UI sends
-//! [`Command`]s and projects the [`Event`] stream into its own view model.
+//! [`Command`]s and projects the [`Event`] stream with [`view::View`].
 //! Networks are keyed by origin (`https://chat.example.com`); buffers by name
 //! as the server spells it, compared under the network's casemapping.
 
@@ -15,6 +15,7 @@ mod platform;
 pub mod secrets;
 mod store;
 pub mod time;
+pub mod view;
 
 use std::path::PathBuf;
 use std::sync::Arc;

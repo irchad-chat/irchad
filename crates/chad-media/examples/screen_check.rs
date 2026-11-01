@@ -9,7 +9,8 @@
 //! ```
 //!
 //! Env: LIVEKIT_URL (default wss://localhost:8443/livekit), CHECK_SECS (10),
-//! PRESET (720p30 | 1080p60 | source).
+//! PRESET (720p30 | 1080p60 | source), ROOM (`screen-check`; a channel's
+//! voice room, e.g. `#dev`, puts the share in front of another client).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -162,7 +163,7 @@ fn token(identity: &str) -> anyhow::Result<String> {
             .with_identity(identity)
             .with_grants(VideoGrants {
                 room_join: true,
-                room: "screen-check".into(),
+                room: std::env::var("ROOM").unwrap_or("screen-check".into()),
                 can_update_own_metadata: Some(true),
                 ..Default::default()
             })

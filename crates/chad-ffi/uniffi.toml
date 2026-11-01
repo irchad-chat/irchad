@@ -1,0 +1,3 @@
+[bindings.kotlin]
+package_name = "party.gentoo.irchad.core"
+cdylib_name = "chad_ffi"

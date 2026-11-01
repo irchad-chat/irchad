@@ -6,7 +6,22 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+
 [dependencies]
+chad-core.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uniffi = "0.32.2"
 
 [lints]
 workspace = true

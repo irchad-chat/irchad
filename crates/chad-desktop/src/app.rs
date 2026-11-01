@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use chad_core::{
     Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, DeviceInfo,
-    Encryption, Event, Member, NetCommand, NetworkInfo, SendStatus, Typing, VerifyState,
-    VerifyStep, VoiceState, invite,
+    Encryption, Event, Member, NetCommand, SendStatus, Typing, VerifyState, VerifyStep, VoiceState,
+    invite,
 };
 use chad_media::{InputMode, Voice};
 use egui::{
@@ -21,7 +21,7 @@ use egui::{
 use tokio::sync::mpsc::UnboundedReceiver;
 use url::Url;
 
-use crate::chatlog::{self, Action, ChatLog, Extras, Profile};
+use crate::chatlog::{self, Action, ChatLog, Extras};
 use crate::icons::{self, Tip};
 use crate::media::{self, Media};
 use crate::platform::idle::Idle;
@@ -32,7 +32,6 @@ use crate::settings::{self, Notify, Settings};
 use crate::voice;
 use crate::{complete, emoji, format, gifs, update};
 
-const TYPING_TTL: Duration = Duration::from_secs(6);
 const TOAST_TTL: Duration = Duration::from_secs(8);
 /// Only messages this fresh notify; gap-fill after a restart stays quiet.
 const NOTIFY_WINDOW_MS: i64 = 60_000;
@@ -52,7 +51,7 @@ pub struct App {
     os: mpsc::Receiver<Os>,
     tray: Tray,
     icons: (mpsc::Sender<IconMsg>, mpsc::Receiver<IconMsg>),
-    nets: Vec<Network>,
+    view: View,
     /// Origin of the network on screen.
     current: Option<String>,
     /// Buffers tiled in the main window, as (network, key). The focused one,
@@ -74,8 +73,6 @@ pub struct App {
     toasts: Vec<(String, Instant)>,
     last_badge: (bool, u32),
     voice: Voice,
-    /// Our call: (network, state). One at a time across networks.
-    call: Option<(String, VoiceState)>,
     /// Listening for push-to-talk, while that's the input mode.
     ptt: Option<Ptt>,
     binding_ptt: bool,
@@ -87,8 +84,6 @@ pub struct App {
     /// The emoji verification on screen: (network, nick, where it stands).
     verify: Option<(String, String, VerifyState)>,
     files: (mpsc::Sender<Picked>, mpsc::Receiver<Picked>),
-    /// Each network's soundboard, as chadd last listed it.
-    sounds: HashMap<String, Vec<chad_core::Sound>>,
     /// Decoded clips by (network, file).
     // shortcut: an admin replacing a file under the same name isn't picked up
     // until restart; key on a hash or mtime from chadd if that matters.
@@ -138,36 +133,34 @@ struct Stage {
     cell: usize,
 }
 
-struct Network {
-    info: NetworkInfo,
-    buffers: Vec<Buffer>,
+/// The view model from the core, with the window's own state on each network
+/// and buffer.
+type View = chad_core::view::View<NetUi, BufUi>;
+type Network = chad_core::view::Net<NetUi, BufUi>;
+
+#[derive(Default)]
+struct NetUi {
     /// Key of the buffer on screen.
     selected: Option<String>,
     /// Put the cursor in the composer on the next frame.
     focus: bool,
     icon: Icon,
-    /// By `key(nick)`.
-    profiles: HashMap<String, Profile>,
-    /// Encrypted-DM devices, by `key(nick)`.
-    devices: HashMap<String, Vec<DeviceInfo>>,
     media: Media,
 }
 
+#[derive(Default)]
 enum Icon {
+    #[default]
     None,
     Loading,
     Ready(TextureHandle),
     Failed,
 }
 
-struct Buffer {
-    key: String,
-    info: BufferInfo,
+#[derive(Default)]
+struct BufUi {
     log: ChatLog,
-    members: Option<Vec<Member>>,
     members_asked: bool,
-    typing: Vec<(String, Instant)>,
-    history_start: bool,
     older_asked: Option<Instant>,
     mark_sent: bool,
     draft: String,
@@ -177,8 +170,6 @@ struct Buffer {
     reply: Option<(String, String)>,
     /// A message to scroll to once `LoadAround` brings it in.
     jump: Option<String>,
-    /// Who's in the channel's voice room (metadata).
-    voice: Vec<String>,
     /// Names of files on their way up.
     uploads: Vec<String>,
     /// Files waiting in the composer, uploaded when the message is sent.
@@ -223,20 +214,17 @@ enum JoinMode {
     Guest,
 }
 
-/// Buffer names compare under ergo's `ascii` casemapping.
-fn key(target: &str) -> String {
-    target.to_ascii_lowercase()
-}
+use chad_core::view::key;
 
 /// The nicks a buffer's composer completes: the channel's members, or the
 /// other side of a DM.
 fn completable(
     members: &Option<Vec<Member>>,
-    log: &ChatLog,
+    msgs: &[ChatMessage],
     info: &BufferInfo,
     own: &str,
 ) -> Vec<String> {
-    let recent = log.msgs.iter().rev().map(|m| m.nick.as_str());
+    let recent = msgs.iter().rev().map(|m| m.nick.as_str());
     match members {
         Some(ms) => complete::candidates(ms.iter().map(|m| m.nick.as_str()), recent, own),
         None if info.kind == BufferKind::Dm => {
@@ -268,44 +256,30 @@ fn badge(n: u32) -> String {
     if n > 99 { "99+".into() } else { n.to_string() }
 }
 
-impl Network {
-    fn buffer(&self, k: &str) -> Option<usize> {
-        self.buffers.iter().position(|b| b.key == k)
-    }
-
-    fn unread(&self) -> bool {
-        self.buffers.iter().any(|b| b.info.unread > 0)
-    }
-
-    fn mentions(&self) -> u32 {
-        self.buffers.iter().map(|b| b.info.mentions).sum()
-    }
-
-    /// Shows a buffer, with the "new messages" line above the first unread one.
-    fn select(&mut self, k: &str) {
-        self.selected = Some(k.to_owned());
-        self.focus = true;
-        let Some(i) = self.buffer(k) else { return };
-        let b = &mut self.buffers[i];
-        let mut left = b.info.unread;
-        b.log.unread_from = None;
-        if left > 0 {
-            for (idx, m) in b.log.msgs.iter().enumerate().rev() {
-                if !m.own {
-                    left -= 1;
-                    if left == 0 {
-                        b.log.unread_from = m.msgid.clone();
-                        b.log.scroll_to_index(idx, 60.0);
-                        break;
-                    }
+/// Shows a buffer, with the "new messages" line above the first unread one.
+fn select(n: &mut Network, k: &str) {
+    n.ui.selected = Some(k.to_owned());
+    n.ui.focus = true;
+    let Some(i) = n.buffer(k) else { return };
+    let b = &mut n.buffers[i];
+    let mut left = b.info.unread;
+    b.ui.log.unread_from = None;
+    if left > 0 {
+        for (idx, m) in b.msgs.iter().enumerate().rev() {
+            if !m.own {
+                left -= 1;
+                if left == 0 {
+                    b.ui.log.unread_from = m.msgid.clone();
+                    b.ui.log.scroll_to_index(idx, 60.0);
+                    break;
                 }
             }
         }
-        if b.log.unread_from.is_none() {
-            b.log.scroll_to_bottom();
-        }
-        b.mark_sent = false;
     }
+    if b.ui.log.unread_from.is_none() {
+        b.ui.log.scroll_to_bottom();
+    }
+    b.ui.mark_sent = false;
 }
 
 impl App {
@@ -339,7 +313,7 @@ impl App {
             os,
             tray,
             icons: mpsc::channel(),
-            nets: Vec::new(),
+            view: View::default(),
             current: None,
             panes: Vec::new(),
             pane: 0,
@@ -356,7 +330,6 @@ impl App {
             toasts: Vec::new(),
             last_badge: (false, 0),
             voice,
-            call: None,
             ptt: None,
             binding_ptt: false,
             share_dialog: None,
@@ -366,7 +339,6 @@ impl App {
             profile: None,
             verify: None,
             files: mpsc::channel(),
-            sounds: HashMap::new(),
             clips: HashMap::new(),
             decoded: mpsc::channel(),
             attached: 0,
@@ -408,7 +380,7 @@ impl App {
     }
 
     fn net_idx(&self, origin: &str) -> Option<usize> {
-        self.nets.iter().position(|n| n.info.network == origin)
+        self.view.net(origin)
     }
 
     fn send(&self, network: &str, cmd: NetCommand) {
@@ -435,7 +407,7 @@ impl App {
     ) {
         let Some(max) = self
             .net_idx(network)
-            .and_then(|i| self.nets[i].info.uploads)
+            .and_then(|i| self.view.nets[i].info.uploads)
         else {
             return self.toast("This network doesn't take uploads.".into());
         };
@@ -452,14 +424,14 @@ impl App {
             let Some(ni) = self.net_idx(network) else {
                 return;
             };
-            let n = &mut self.nets[ni];
+            let n = &mut self.view.nets[ni];
             let Some(bi) = n.buffer(&key(t)) else {
                 return;
             };
             if media::media_kind(&name) == Some(media::Kind::Image) {
-                n.media.local(preview.clone(), bytes.clone(), ctx);
+                n.ui.media.local(preview.clone(), bytes.clone(), ctx);
             }
-            n.buffers[bi].attached.push(Attachment {
+            n.buffers[bi].ui.attached.push(Attachment {
                 name,
                 bytes,
                 key: preview,
@@ -478,8 +450,8 @@ impl App {
 
     /// The network and buffer on screen.
     fn on_screen(&self) -> Option<(String, String)> {
-        let n = &self.nets[self.current.as_deref().and_then(|c| self.net_idx(c))?];
-        let b = &n.buffers[n.selected.as_deref().and_then(|k| n.buffer(k))?];
+        let n = &self.view.nets[self.current.as_deref().and_then(|c| self.net_idx(c))?];
+        let b = &n.buffers[n.ui.selected.as_deref().and_then(|k| n.buffer(k))?];
         Some((n.info.network.clone(), b.info.target.clone()))
     }
 
@@ -488,19 +460,19 @@ impl App {
         let Some(ni) = self.current.as_deref().and_then(|c| self.net_idx(c)) else {
             return;
         };
-        let n = &mut self.nets[ni];
+        let n = &mut self.view.nets[ni];
         let len = n.buffers.len() as isize;
         if len == 0 {
             return;
         }
-        let at = n
-            .selected
-            .as_deref()
-            .and_then(|k| n.buffer(k))
-            .map_or(-1, |i| i as isize);
+        let at =
+            n.ui.selected
+                .as_deref()
+                .and_then(|k| n.buffer(k))
+                .map_or(-1, |i| i as isize);
         let next = (at + step).rem_euclid(len) as usize;
         let k = n.buffers[next].key.clone();
-        n.select(&k);
+        select(n, &k);
         self.replace_pane = true;
     }
 
@@ -517,8 +489,8 @@ impl App {
             .as_deref()
             .and_then(|c| self.net_idx(c))
             .and_then(|i| {
-                let n = &self.nets[i];
-                let k = n.selected.clone().filter(|k| n.buffer(k).is_some())?;
+                let n = &self.view.nets[i];
+                let k = n.ui.selected.clone().filter(|k| n.buffer(k).is_some())?;
                 Some((n.info.network.clone(), k))
             });
         let replace = std::mem::take(&mut self.replace_pane);
@@ -530,8 +502,8 @@ impl App {
         let focus_gone = self
             .panes
             .get(self.pane)
-            .is_some_and(|p| !alive(&self.nets, p));
-        self.panes.retain(|p| alive(&self.nets, p));
+            .is_some_and(|p| !alive(&self.view.nets, p));
+        self.panes.retain(|p| alive(&self.view.nets, p));
         self.pane = self.pane.min(self.panes.len().saturating_sub(1));
         if focus_gone && !self.panes.is_empty() {
             // Parted or closed: focus a neighbour rather than open a new pane.
@@ -557,8 +529,8 @@ impl App {
         };
         self.pane = i;
         if let Some(ni) = self.net_idx(&net) {
-            self.nets[ni].selected = Some(k);
-            self.nets[ni].focus = true;
+            self.view.nets[ni].ui.selected = Some(k);
+            self.view.nets[ni].ui.focus = true;
             self.current = Some(net);
         }
     }
@@ -663,7 +635,7 @@ impl App {
                 let Some(ni) = self.net_idx(net) else {
                     continue;
                 };
-                let Some(bi) = self.nets[ni].buffer(k) else {
+                let Some(bi) = self.view.nets[ni].buffer(k) else {
                     continue;
                 };
                 let mut pane = ui.new_child(
@@ -679,7 +651,7 @@ impl App {
                 {
                     focus = Some(p);
                 }
-                if self.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
+                if self.view.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
                     let fit = self.members_width(&pane, ni, bi);
                     egui::Panel::right("members")
                         .default_size(200.0)
@@ -749,7 +721,7 @@ impl App {
                                 channel: ch.clone(),
                             },
                         );
-                        self.nets[i].select(&key(&ch));
+                        select(&mut self.view.nets[i], &key(&ch));
                     }
                     return;
                 }
@@ -763,55 +735,53 @@ impl App {
     }
 
     fn handle(&mut self, ev: Event, ctx: &egui::Context) {
+        // A removed buffer's key, and whether an icon changed, before the view forgets.
+        let removed = match &ev {
+            Event::BufferRemoved { network, target } => Some((network.clone(), key(target))),
+            _ => None,
+        };
+        let icon_changed = match &ev {
+            Event::Network(info) => self
+                .net_idx(&info.network)
+                .is_some_and(|i| self.view.nets[i].info.icon != info.icon),
+            _ => false,
+        };
+        let unread_was = match &ev {
+            Event::Buffer { network, buffer } => self
+                .view
+                .buf(network, &buffer.target)
+                .map(|b| b.info.unread),
+            _ => None,
+        };
+        let applied = self.view.apply(&ev);
         match ev {
             Event::Network(info) => {
                 let origin = info.network.clone();
-                let connected = info.state == ConnState::Connected;
-                match self.net_idx(&origin) {
-                    Some(i) => {
-                        let n = &mut self.nets[i];
-                        if connected && n.info.state != ConnState::Connected {
-                            // Member lists are dropped with the connection.
-                            for b in &mut n.buffers {
-                                b.members = None;
-                                b.members_asked = false;
-                            }
-                            n.media.retry_failed();
-                        }
-                        if n.info.icon != info.icon {
-                            n.icon = Icon::None;
-                        }
-                        // Signed up, or waiting on the email's code: the dialog's done.
-                        if let Some(s) = &self.signup
-                            && s.busy
-                            && s.network == origin
-                            && (!info.guest
-                                || matches!(info.state, ConnState::NeedsVerification { .. }))
-                        {
-                            self.signup = None;
-                        }
-                        n.info = info;
-                    }
-                    None => {
-                        if self.away_sent {
-                            let message = Some(AWAY.to_owned());
-                            self.send(&origin, NetCommand::SetAway { message });
-                        }
-                        self.nets.push(Network {
-                            info,
-                            buffers: Vec::new(),
-                            selected: None,
-                            focus: false,
-                            icon: Icon::None,
-                            profiles: HashMap::new(),
-                            devices: HashMap::new(),
-                            media: Media::default(),
-                        });
-                    }
-                }
                 let i = self.net_idx(&origin).unwrap_or_default();
+                if applied.reconnected {
+                    let n = &mut self.view.nets[i];
+                    for b in &mut n.buffers {
+                        b.ui.members_asked = false;
+                    }
+                    n.ui.media.retry_failed();
+                }
+                if applied.new && self.away_sent {
+                    let message = Some(AWAY.to_owned());
+                    self.send(&origin, NetCommand::SetAway { message });
+                }
+                if icon_changed {
+                    self.view.nets[i].ui.icon = Icon::None;
+                }
+                // Signed up, or waiting on the email's code: the dialog's done.
+                if let Some(s) = &self.signup
+                    && s.busy
+                    && s.network == origin
+                    && (!info.guest || matches!(info.state, ConnState::NeedsVerification { .. }))
+                {
+                    self.signup = None;
+                }
                 let waiting = matches!(
-                    self.nets[i].info.state,
+                    info.state,
                     ConnState::Connected | ConnState::NeedsVerification { .. }
                 );
                 if waiting
@@ -823,7 +793,7 @@ impl App {
                     self.current = Some(origin.clone());
                     // Open the invite's channel, not whichever autojoin lands first.
                     if let Some(ch) = inv.channel {
-                        self.nets[i].selected = Some(key(&ch));
+                        self.view.nets[i].ui.selected = Some(key(&ch));
                     }
                 }
                 if self.current.is_none() {
@@ -831,9 +801,8 @@ impl App {
                 }
             }
             Event::NetworkRemoved { network } => {
-                self.nets.retain(|n| n.info.network != network);
                 if self.current.as_deref() == Some(&network) {
-                    self.current = self.nets.first().map(|n| n.info.network.clone());
+                    self.current = self.view.nets.first().map(|n| n.info.network.clone());
                 }
             }
             Event::JoinFailed { invite, error } => match &mut self.join {
@@ -861,56 +830,29 @@ impl App {
                 let Some(ni) = self.net_idx(&network) else {
                     return;
                 };
-                let n = &mut self.nets[ni];
+                let n = &mut self.view.nets[ni];
                 let k = key(&buffer.target);
-                match n.buffer(&k) {
-                    Some(bi) => {
-                        let b = &mut n.buffers[bi];
-                        if b.info.unread != buffer.unread {
-                            b.mark_sent = false;
-                        }
-                        b.info = buffer;
+                if applied.new {
+                    if n.ui.selected.is_none() || n.ui.selected.as_deref() == Some(&k) {
+                        select(n, &k);
                     }
-                    None => {
-                        n.buffers.push(Buffer {
-                            key: k.clone(),
-                            info: buffer,
-                            log: ChatLog::default(),
-                            members: None,
-                            members_asked: false,
-                            typing: Vec::new(),
-                            history_start: false,
-                            older_asked: None,
-                            mark_sent: false,
-                            draft: String::new(),
-                            tab: None,
-                            reply: None,
-                            jump: None,
-                            voice: Vec::new(),
-                            uploads: Vec::new(),
-                            attached: Vec::new(),
-                        });
-                        n.buffers.sort_by(|a, b| {
-                            (a.info.kind == BufferKind::Dm, &a.key)
-                                .cmp(&(b.info.kind == BufferKind::Dm, &b.key))
-                        });
-                        if n.selected.is_none() || n.selected.as_deref() == Some(&k) {
-                            n.select(&k);
-                        }
-                    }
+                } else if let Some(bi) = n.buffer(&k)
+                    && unread_was != Some(buffer.unread)
+                {
+                    // Unread changed since we said it was read: say so again.
+                    n.buffers[bi].ui.mark_sent = false;
                 }
             }
-            Event::BufferRemoved { network, target } => {
+            Event::BufferRemoved { .. } => {
+                let Some((network, k)) = removed else { return };
                 let Some(ni) = self.net_idx(&network) else {
                     return;
                 };
-                let n = &mut self.nets[ni];
-                let k = key(&target);
-                n.buffers.retain(|b| b.key != k);
-                if n.selected.as_deref() == Some(&k) {
-                    n.selected = None;
+                let n = &mut self.view.nets[ni];
+                if n.ui.selected.as_deref() == Some(&k) {
+                    n.ui.selected = None;
                     if let Some(first) = n.buffers.first().map(|b| b.key.clone()) {
-                        n.select(&first);
+                        select(n, &first);
                     }
                 }
             }
@@ -918,16 +860,13 @@ impl App {
                 let Some(ni) = self.net_idx(&network) else {
                     return;
                 };
-                let n = &mut self.nets[ni];
+                let n = &mut self.view.nets[ni];
                 let (old, new) = (key(&from), key(&to));
-                let Some(bi) = n.buffer(&old) else { return };
-                n.buffers[bi].key = new.clone();
-                n.buffers.sort_by(|a, b| {
-                    (a.info.kind == BufferKind::Dm, &a.key)
-                        .cmp(&(b.info.kind == BufferKind::Dm, &b.key))
-                });
-                if n.selected.as_deref() == Some(&old) {
-                    n.selected = Some(new.clone());
+                if n.buffer(&new).is_none() {
+                    return;
+                }
+                if n.ui.selected.as_deref() == Some(&old) {
+                    n.ui.selected = Some(new.clone());
                 }
                 for p in &mut self.panes {
                     if p.0 == network && p.1 == old {
@@ -950,14 +889,13 @@ impl App {
                 let Some(ni) = self.net_idx(&network) else {
                     return;
                 };
-                let n = &mut self.nets[ni];
+                let n = &mut self.view.nets[ni];
                 let Some(bi) = n.buffer(&k) else { return };
                 let b = &mut n.buffers[bi];
-                b.older_asked = None;
-                let new = b.log.merge(&messages);
-                for &i in &new {
+                b.ui.older_asked = None;
+                b.ui.log.apply(&applied.edits, &messages);
+                for &i in &applied.fresh {
                     let m = &messages[i];
-                    b.typing.retain(|(nick, _)| nick != &m.nick);
                     if !viewing && should_notify(self.settings.notify, m) {
                         let who = chatlog::shown(&n.profiles, &m.nick);
                         let summary = match b.info.kind {
@@ -967,60 +905,17 @@ impl App {
                         platform::notify(summary, chatlog::snippet(&format::strip(&m.text), 200));
                     }
                 }
-                if let Some(id) = &b.jump
-                    && let Some(i) = b.log.index_of(id)
+                if let Some(id) = &b.ui.jump
+                    && let Some(i) = b.index_of(id)
                 {
-                    b.log.scroll_to_index(i, 60.0);
-                    b.jump = None;
-                }
-            }
-            Event::HistoryStart { network, target } => {
-                if let Some(b) = self.buffer_mut(&network, &target) {
-                    b.history_start = true;
-                }
-            }
-            Event::Members {
-                network,
-                channel,
-                members,
-            } => {
-                if let Some(b) = self.buffer_mut(&network, &channel) {
-                    b.members = Some(members);
-                }
-            }
-            Event::Typing {
-                network,
-                target,
-                nick,
-                state,
-            } => {
-                if let Some(b) = self.buffer_mut(&network, &target) {
-                    b.typing.retain(|(n, _)| n != &nick);
-                    if state == Typing::Active {
-                        b.typing.push((nick, Instant::now()));
-                    }
-                }
-            }
-            Event::Voice { network, state } => {
-                if state != VoiceState::Idle {
-                    self.call = Some((network, state));
-                } else if self.call.as_ref().is_some_and(|(n, _)| *n == network) {
-                    self.call = None;
-                }
-            }
-            Event::VoiceMembers {
-                network,
-                channel,
-                nicks,
-            } => {
-                if let Some(b) = self.buffer_mut(&network, &channel) {
-                    b.voice = nicks;
+                    b.ui.log.scroll_to_index(i, 60.0);
+                    b.ui.jump = None;
                 }
             }
             Event::Error { network, error } => {
                 let name = self
                     .net_idx(&network)
-                    .map_or(network, |i| self.nets[i].info.name.clone());
+                    .map_or(network, |i| self.view.nets[i].info.name.clone());
                 self.toast(format!("{name}: {error}"));
             }
             Event::Uploaded {
@@ -1045,33 +940,10 @@ impl App {
                     ),
                     (_, Err(e)) => self.toast(format!("Upload failed: {e}")),
                 }
-                if let Some(b) = target.and_then(|t| self.buffer_mut(&network, &t))
-                    && !b.uploads.is_empty()
+                if let Some(b) = target.and_then(|t| self.view.buf_mut(&network, &t))
+                    && !b.ui.uploads.is_empty()
                 {
-                    b.uploads.remove(0);
-                }
-            }
-            Event::Profile {
-                network,
-                nick,
-                display_name,
-                avatar,
-            } => {
-                if let Some(i) = self.net_idx(&network) {
-                    let p = Profile {
-                        display_name,
-                        avatar,
-                    };
-                    self.nets[i].profiles.insert(key(&nick), p);
-                }
-            }
-            Event::Devices {
-                network,
-                nick,
-                devices,
-            } => {
-                if let Some(i) = self.net_idx(&network) {
-                    self.nets[i].devices.insert(key(&nick), devices);
+                    b.ui.uploads.remove(0);
                 }
             }
             Event::Verification {
@@ -1102,7 +974,7 @@ impl App {
                 preview,
             } => {
                 if let Some(i) = self.net_idx(&network) {
-                    self.nets[i].media.preview(url, preview);
+                    self.view.nets[i].ui.media.preview(url, preview);
                 }
             }
             Event::Media {
@@ -1111,15 +983,10 @@ impl App {
                 result,
             } => {
                 if let Some(i) = self.net_idx(&network) {
-                    self.nets[i].media.bytes(url, result, ctx);
+                    self.view.nets[i].ui.media.bytes(url, result, ctx);
                 }
             }
-            Event::Sounds { network, result } => match result {
-                Ok(list) => {
-                    self.sounds.insert(network, list);
-                }
-                Err(e) => tracing::info!("soundboard: {e}"),
-            },
+            Event::Sounds { result: Err(e), .. } => tracing::info!("soundboard: {e}"),
             Event::Sound {
                 network,
                 file,
@@ -1152,14 +1019,16 @@ impl App {
                     p.gifs.page(&query, pos.as_deref(), result);
                 }
             }
+            // Held in the view, nothing more to do.
+            Event::HistoryStart { .. }
+            | Event::Members { .. }
+            | Event::Typing { .. }
+            | Event::Voice { .. }
+            | Event::VoiceMembers { .. }
+            | Event::Profile { .. }
+            | Event::Devices { .. }
+            | Event::Sounds { .. } => {}
         }
-    }
-
-    fn buffer_mut(&mut self, network: &str, target: &str) -> Option<&mut Buffer> {
-        let ni = self.net_idx(network)?;
-        let n = &mut self.nets[ni];
-        let bi = n.buffer(&key(target))?;
-        Some(&mut n.buffers[bi])
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
@@ -1183,10 +1052,10 @@ impl App {
             self.voice
                 .set_ptt(ctx.input(|i| i.focused && bind.down(i)) && !self.binding_ptt);
         }
-        for n in &mut self.nets {
-            n.media.poll(ctx);
-            n.media.viewer(ctx);
-            for cmd in n.media.wanted.drain(..) {
+        for n in &mut self.view.nets {
+            n.ui.media.poll(ctx);
+            n.ui.media.viewer(ctx);
+            for cmd in n.ui.media.wanted.drain(..) {
                 self.core.send(Command::Net {
                     network: n.info.network.clone(),
                     cmd,
@@ -1211,7 +1080,7 @@ impl App {
                 .unwrap_or_else(|| "file".into());
             let max = self
                 .net_idx(&network)
-                .and_then(|i| self.nets[i].info.uploads)
+                .and_then(|i| self.view.nets[i].info.uploads)
                 .unwrap_or(0);
             match read_file(&path, max) {
                 Ok(bytes) => self.upload(ctx, &network, target, name, bytes),
@@ -1238,7 +1107,7 @@ impl App {
         let away = self.settings.away || (self.settings.away_after > 0 && idle >= after);
         if away != self.away_sent {
             self.away_sent = away;
-            for n in &self.nets {
+            for n in &self.view.nets {
                 let message = away.then(|| AWAY.to_owned());
                 self.send(&n.info.network, NetCommand::SetAway { message });
             }
@@ -1248,7 +1117,7 @@ impl App {
         }
         while let Ok((origin, img)) = self.icons.1.try_recv() {
             if let Some(i) = self.net_idx(&origin) {
-                self.nets[i].icon = match img {
+                self.view.nets[i].ui.icon = match img {
                     Some(img) => Icon::Ready(ctx.load_texture(
                         format!("icon:{origin}"),
                         img,
@@ -1258,9 +1127,9 @@ impl App {
                 };
             }
         }
-        for n in &mut self.nets {
-            if let (Icon::None, Some(url)) = (&n.icon, &n.info.icon) {
-                n.icon = Icon::Loading;
+        for n in &mut self.view.nets {
+            if let (Icon::None, Some(url)) = (&n.ui.icon, &n.info.icon) {
+                n.ui.icon = Icon::Loading;
                 fetch_icon(
                     n.info.network.clone(),
                     url.clone(),
@@ -1270,8 +1139,8 @@ impl App {
             }
         }
         let now = (
-            self.nets.iter().any(Network::unread),
-            self.nets.iter().map(Network::mentions).sum(),
+            self.view.nets.iter().any(Network::unread),
+            self.view.nets.iter().map(Network::mentions).sum(),
         );
         if now != self.last_badge {
             self.last_badge = now;
@@ -1308,12 +1177,12 @@ impl App {
 
     fn networks(&mut self, ui: &mut egui::Ui) {
         let mut pick = None;
-        for n in &self.nets {
+        for n in &self.view.nets {
             let selected = self.current.as_deref() == Some(&n.info.network);
             let (rect, resp) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::click());
             let p = ui.painter();
             let round = if selected || resp.hovered() { 14 } else { 24 };
-            match &n.icon {
+            match &n.ui.icon {
                 Icon::Ready(tex) => {
                     egui::Image::new(tex)
                         .corner_radius(CornerRadius::same(round))
@@ -1360,7 +1229,7 @@ impl App {
         if pick.is_some() {
             self.current = pick;
         }
-        if !self.nets.is_empty() {
+        if !self.view.nets.is_empty() {
             ui.separator();
         }
         let add = ui
@@ -1375,11 +1244,11 @@ impl App {
     }
 
     fn channels(&mut self, ui: &mut egui::Ui, ni: usize) {
-        let network = self.nets[ni].info.network.clone();
-        if let Some((net, state)) = self.call.clone() {
+        let network = self.view.nets[ni].info.network.clone();
+        if let Some((net, state)) = self.view.call.clone() {
             let name = self
                 .net_idx(&net)
-                .map_or(net.clone(), |i| self.nets[i].info.name.clone());
+                .map_or(net.clone(), |i| self.view.nets[i].info.name.clone());
             let action = egui::Panel::bottom("voice-panel")
                 .show(ui, |ui| {
                     voice::panel(
@@ -1388,7 +1257,8 @@ impl App {
                         &state,
                         &name,
                         self.ptt.as_ref(),
-                        self.sounds.get(&net).map(Vec::as_slice),
+                        self.net_idx(&net)
+                            .map(|i| self.view.nets[i].sounds.as_slice()),
                         &mut self.settings.audio,
                     )
                 })
@@ -1426,10 +1296,11 @@ impl App {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button(icons::DOTS_THREE, |ui| {
-                    if self.nets[ni].info.guest && ui.button("Create an account…").clicked() {
+                    if self.view.nets[ni].info.guest && ui.button("Create an account…").clicked()
+                    {
                         self.signup = Some(SignUpDialog {
                             network: network.clone(),
-                            account: self.nets[ni].info.nick.clone(),
+                            account: self.view.nets[ni].info.nick.clone(),
                             password: String::new(),
                             email: String::new(),
                             busy: false,
@@ -1444,12 +1315,12 @@ impl App {
                 .tip("Network options");
                 // Whatever's left of the menu, so long names truncate instead of overlapping it.
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    let name = RichText::new(&self.nets[ni].info.name).heading();
+                    let name = RichText::new(&self.view.nets[ni].info.name).heading();
                     ui.add(egui::Label::new(name).truncate());
                 });
             });
         });
-        if let Some((text, bad)) = state_text(&self.nets[ni].info.state) {
+        if let Some((text, bad)) = state_text(&self.view.nets[ni].info.state) {
             let color = if bad {
                 ui.visuals().error_fg_color
             } else {
@@ -1474,8 +1345,8 @@ impl App {
                 }
             }
         }
-        let own = self.nets[ni].info.nick.clone();
-        let shown = chatlog::shown(&self.nets[ni].profiles, &own).to_owned();
+        let own = self.view.nets[ni].info.nick.clone();
+        let shown = chatlog::shown(&self.view.nets[ni].profiles, &own).to_owned();
         let (dot, color) = if self.away_sent {
             (icons::MOON, voice::AWAY)
         } else {
@@ -1498,7 +1369,7 @@ impl App {
                 .button(format!("{} Edit profile…", icons::USER_CIRCLE))
                 .clicked()
             {
-                let name = self.nets[ni]
+                let name = self.view.nets[ni]
                     .profiles
                     .get(&key(&own))
                     .and_then(|p| p.display_name.clone())
@@ -1541,9 +1412,9 @@ impl App {
                             }
                         });
                     });
-                    let n = &self.nets[ni];
+                    let n = &self.view.nets[ni];
                     for b in n.buffers.iter().filter(|b| b.info.kind == kind) {
-                        let selected = n.selected.as_deref() == Some(&b.key);
+                        let selected = n.ui.selected.as_deref() == Some(&b.key);
                         let mut text = RichText::new(&b.info.target);
                         if b.info.unread > 0 || selected {
                             text = text.strong().color(ui.visuals().strong_text_color());
@@ -1580,7 +1451,7 @@ impl App {
                             );
                         }
                         let in_call = matches!(
-                            &self.call,
+                            &self.view.call,
                             Some((net, VoiceState::Connecting { channel } | VoiceState::Connected { channel }))
                                 if *net == network && key(channel) == b.key
                         );
@@ -1615,7 +1486,7 @@ impl App {
                             pick = Some(b.key.clone());
                         }
                         let live = in_call
-                            && matches!(&self.call, Some((_, VoiceState::Connected { .. })));
+                            && matches!(&self.view.call, Some((_, VoiceState::Connected { .. })));
                         if (live || !b.voice.is_empty())
                             && let Some(who) = voice::members(
                                 ui,
@@ -1676,7 +1547,7 @@ impl App {
                 }
             });
         if let Some(k) = pick {
-            self.nets[ni].select(&k);
+            select(&mut self.view.nets[ni], &k);
             // Back to the chat; a share that isn't in its place keeps playing.
             if self.settings.stage == Layout::Fill {
                 self.voice.watch(None);
@@ -1700,8 +1571,8 @@ impl App {
     /// margins, the scroll bar and a little air. Capped, since display names
     /// can be long; past that they truncate.
     fn members_width(&self, ui: &egui::Ui, ni: usize, bi: usize) -> f32 {
-        let profiles = &self.nets[ni].profiles;
-        let Some(members) = &self.nets[ni].buffers[bi].members else {
+        let profiles = &self.view.nets[ni].profiles;
+        let Some(members) = &self.view.nets[ni].buffers[bi].members else {
             return 100.0;
         };
         let body = egui::TextStyle::Body.resolve(ui.style());
@@ -1731,10 +1602,10 @@ impl App {
 
     fn members(&mut self, ui: &mut egui::Ui, ni: usize, bi: usize) {
         let dark = ui.visuals().dark_mode;
-        let network = self.nets[ni].info.network.clone();
-        let own = self.nets[ni].info.nick.clone();
-        let profiles = &self.nets[ni].profiles;
-        let Some(members) = &self.nets[ni].buffers[bi].members else {
+        let network = self.view.nets[ni].info.network.clone();
+        let own = self.view.nets[ni].info.nick.clone();
+        let profiles = &self.view.nets[ni].profiles;
+        let Some(members) = &self.view.nets[ni].buffers[bi].members else {
             ui.add_space(8.0);
             ui.spinner();
             return;
@@ -1775,7 +1646,7 @@ impl App {
             });
         if let Some(nick) = dm {
             self.send(&network, NetCommand::OpenDm { nick: nick.clone() });
-            self.nets[ni].select(&key(&nick));
+            select(&mut self.view.nets[ni], &key(&nick));
         }
     }
 
@@ -1792,9 +1663,9 @@ impl App {
         tile: Option<usize>,
         closable: bool,
     ) -> bool {
-        let network = self.nets[ni].info.network.clone();
-        let own = self.nets[ni].info.nick.clone();
-        let connected = self.nets[ni].info.state == ConnState::Connected;
+        let network = self.view.nets[ni].info.network.clone();
+        let own = self.view.nets[ni].info.nick.clone();
+        let connected = self.view.nets[ni].info.state == ConnState::Connected;
         let focused = ui.input(|i| i.focused);
         let core = self.core.clone();
         let send = |cmd| {
@@ -1803,16 +1674,16 @@ impl App {
                 cmd,
             })
         };
-        let uploads = self.nets[ni].info.uploads.is_some();
-        let gifs = self.nets[ni].info.gifs.is_some();
+        let uploads = self.view.nets[ni].info.uploads.is_some();
+        let gifs = self.view.nets[ni].info.gifs.is_some();
         let auto_media = self.settings.load_media;
         // Keys that aren't typing: the one being bound, and push-to-talk's.
         let ptt_key = self.ptt.as_ref().map(|p| p.bind);
         let binding_ptt = self.binding_ptt;
-        let n = &mut self.nets[ni];
+        let n = &mut self.view.nets[ni];
         let (b, profiles, media, devices) =
-            (&mut n.buffers[bi], &n.profiles, &mut n.media, &n.devices);
-        let focus = active && std::mem::take(&mut n.focus);
+            (&mut n.buffers[bi], &n.profiles, &mut n.ui.media, &n.devices);
+        let focus = active && std::mem::take(&mut n.ui.focus);
         let target = b.info.target.clone();
         let mut close = false;
         // Set inside the panels, acted on once `b` is free again.
@@ -1824,8 +1695,8 @@ impl App {
         let mut pick_reaction = None;
         let mut pasted = Vec::new();
 
-        if connected && b.info.kind == BufferKind::Channel && !b.members_asked {
-            b.members_asked = true;
+        if connected && b.info.kind == BufferKind::Channel && !b.ui.members_asked {
+            b.ui.members_asked = true;
             send(NetCommand::Members {
                 channel: target.clone(),
             });
@@ -1923,18 +1794,18 @@ impl App {
 
         egui::Panel::bottom("composer").show(ui, |ui| {
             ui.add_space(4.0);
-            b.typing.retain(|(_, t)| t.elapsed() < TYPING_TTL);
-            let typing = match b.typing.as_slice() {
+            let typing: Vec<_> = b.typing().collect();
+            let typing_text = match typing.as_slice() {
                 [] => String::new(),
-                [(a, _)] => format!("{a} is typing…"),
-                [(a, _), (c, _)] => format!("{a} and {c} are typing…"),
+                [a] => format!("{a} is typing…"),
+                [a, c] => format!("{a} and {c} are typing…"),
                 _ => "Several people are typing…".into(),
             };
-            if !b.typing.is_empty() {
+            if !typing.is_empty() {
                 ui.ctx().request_repaint_after(Duration::from_secs(1));
             }
-            ui.label(RichText::new(typing).small().weak());
-            for name in &b.uploads {
+            ui.label(RichText::new(typing_text).small().weak());
+            for name in &b.ui.uploads {
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(RichText::new(format!("Uploading {name}…")).small());
@@ -1942,7 +1813,7 @@ impl App {
             }
             let mut unattach = None;
             ui.horizontal_wrapped(|ui| {
-                for (i, a) in b.attached.iter().enumerate() {
+                for (i, a) in b.ui.attached.iter().enumerate() {
                     egui::Frame::group(ui.style()).show(ui, |ui| {
                         ui.vertical(|ui| {
                             match media::media_kind(&a.name) {
@@ -1971,7 +1842,7 @@ impl App {
                 }
             });
             if let Some(i) = unattach {
-                media.forget(&b.attached.remove(i).key);
+                media.forget(&b.ui.attached.remove(i).key);
             }
             let id = egui::Id::unique(("composer", &network, &b.key));
             // The `@` list was open last frame, so Tab, Enter and Escape are its.
@@ -1994,14 +1865,14 @@ impl App {
             {
                 ui.memory_mut(|m| m.request_focus(id));
             }
-            if let Some((_, nick)) = &b.reply {
+            if let Some((_, nick)) = &b.ui.reply {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("Replying to {nick}")).small());
                     cancel = ui.small_button(icons::X).tip("Cancel reply").clicked();
                 });
                 if cancel || (!completing && ui.input(|i| i.key_pressed(Key::Escape))) {
-                    b.reply = None;
+                    b.ui.reply = None;
                 }
             }
             // Tab completes nicks rather than moving focus (Shift+Tab goes back).
@@ -2060,19 +1931,19 @@ impl App {
                                 emoji_at = Some((g.rect.left_top(), true));
                             }
                         }
-                        let edit = egui::TextEdit::multiline(&mut b.draft)
+                        let edit = egui::TextEdit::multiline(&mut b.ui.draft)
                             .hint_text(format!("Message {target}"))
                             .desired_rows(1)
                             .margin(egui::Margin::symmetric(14, 12))
                             .desired_width(f32::INFINITY)
                             .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                             .lock_focus(true);
-                        let (members, log, info) = (&b.members, &b.log, &b.info);
+                        let (members, msgs, info) = (&b.members, &b.msgs, &b.info);
                         egui::CompletionPopup::new(id).show(ui, edit, |q| {
                             if !q.word.starts_with('@') {
                                 return Vec::new();
                             }
-                            let nicks = completable(members, log, info, &own);
+                            let nicks = completable(members, msgs, info, &own);
                             let list = complete::suggest(&nicks, q.word).unwrap_or_default();
                             list.into_iter()
                                 .map(|n| {
@@ -2097,19 +1968,21 @@ impl App {
             if (changed || tab.is_some())
                 && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id)
             {
-                let end = b.draft.chars().count();
+                let end = b.ui.draft.chars().count();
                 let mut cursor = state
                     .cursor
                     .char_range()
                     .map_or(end, |r| r.primary.index.into());
                 let mut moved = false;
                 if let Some(back) = tab {
-                    let nicks = completable(&b.members, &b.log, &b.info, &own);
-                    if let Some(c) = complete::tab(&mut b.draft, cursor, &mut b.tab, &nicks, back) {
+                    let nicks = completable(&b.members, &b.msgs, &b.info, &own);
+                    if let Some(c) =
+                        complete::tab(&mut b.ui.draft, cursor, &mut b.ui.tab, &nicks, back)
+                    {
                         (cursor, moved, changed) = (c, true, true);
                     }
                 }
-                if changed && emoji::replace_shortcodes(&mut b.draft, &mut cursor) {
+                if changed && emoji::replace_shortcodes(&mut b.ui.draft, &mut cursor) {
                     moved = true;
                 }
                 if moved {
@@ -2121,7 +1994,7 @@ impl App {
                 }
             }
             if changed {
-                let state = if b.draft.trim().is_empty() {
+                let state = if b.ui.draft.trim().is_empty() {
                     Typing::Done
                 } else {
                     Typing::Active
@@ -2133,19 +2006,19 @@ impl App {
             }
             let enter = ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
             if resp.has_focus() && enter {
-                let text = b.draft.trim_end().to_owned();
+                let text = b.ui.draft.trim_end().to_owned();
                 if let Some(q) = gifs::command(&text) {
                     // `/gif [search]` opens the GIF tab instead of sending.
                     if gifs {
                         emoji_at = Some((resp.rect.right_top(), true));
                         gif_query = q.to_owned();
-                        b.draft.clear();
+                        b.ui.draft.clear();
                     } else {
                         no_gifs = true;
                     }
-                } else if !text.trim().is_empty() || !b.attached.is_empty() {
+                } else if !text.trim().is_empty() || !b.ui.attached.is_empty() {
                     if !text.trim().is_empty() {
-                        let reply_to = b.reply.take().map(|(id, _)| id);
+                        let reply_to = b.ui.reply.take().map(|(id, _)| id);
                         send(NetCommand::Send {
                             target: target.clone(),
                             text,
@@ -2153,24 +2026,24 @@ impl App {
                         });
                     }
                     // Each attachment follows as its own message once it's up.
-                    for a in b.attached.drain(..) {
+                    for a in b.ui.attached.drain(..) {
                         media.forget(&a.key);
-                        b.uploads.push(a.name.clone());
+                        b.ui.uploads.push(a.name.clone());
                         send(NetCommand::Upload {
                             target: Some(target.clone()),
                             name: a.name,
                             bytes: a.bytes,
                         });
                     }
-                    b.draft.clear();
-                    b.log.scroll_to_bottom();
+                    b.ui.draft.clear();
+                    b.ui.log.scroll_to_bottom();
                 }
             }
             ui.add_space(12.0);
         });
 
         let dm = egui::CentralPanel::default().show(ui, |ui| {
-            if b.log.msgs.is_empty() {
+            if b.msgs.is_empty() {
                 ui.centered_and_justified(|ui| {
                     ui.label(RichText::new(format!("No messages in {target} yet. Say hi!")).weak());
                 });
@@ -2182,9 +2055,8 @@ impl App {
                 auto_media,
                 dm: b.info.kind == BufferKind::Dm,
             };
-            let out = b
-                .log
-                .ui(ui, &own, b.info.kind == BufferKind::Channel, &mut extras);
+            let channel = b.info.kind == BufferKind::Channel;
+            let out = b.ui.log.ui(ui, &b.msgs, &own, channel, &mut extras);
             if !out.at_bottom {
                 let pos = ui.max_rect().right_bottom() - vec2(16.0, 16.0);
                 egui::Area::new(egui::Id::unique(("jump-latest", &network, &b.key)))
@@ -2195,24 +2067,25 @@ impl App {
                             .button(format!("Jump to latest {}", icons::ARROW_DOWN))
                             .clicked()
                         {
-                            b.log.scroll_to_bottom();
+                            b.ui.log.scroll_to_bottom();
                         }
                     });
             }
             if out.near_top
                 && connected
                 && !b.history_start
-                && !b.log.msgs.is_empty()
-                && b.older_asked
+                && !b.msgs.is_empty()
+                && b.ui
+                    .older_asked
                     .is_none_or(|t| t.elapsed() > Duration::from_secs(5))
             {
-                b.older_asked = Some(Instant::now());
+                b.ui.older_asked = Some(Instant::now());
                 send(NetCommand::LoadOlder {
                     target: target.clone(),
                 });
             }
-            if out.at_bottom && focused && b.info.unread > 0 && !b.mark_sent {
-                b.mark_sent = true;
+            if out.at_bottom && focused && b.info.unread > 0 && !b.ui.mark_sent {
+                b.ui.mark_sent = true;
                 send(NetCommand::MarkRead {
                     target: target.clone(),
                 });
@@ -2221,8 +2094,8 @@ impl App {
             for a in out.actions {
                 match a {
                     Action::Reply(i) => {
-                        if let Some(id) = b.log.msgs[i].msgid.clone() {
-                            b.reply = Some((id, b.log.msgs[i].nick.clone()));
+                        if let Some(id) = b.msgs[i].msgid.clone() {
+                            b.ui.reply = Some((id, b.msgs[i].nick.clone()));
                         }
                     }
                     Action::React { msgid, emoji } => {
@@ -2245,10 +2118,10 @@ impl App {
                             msgid,
                         });
                     }
-                    Action::Jump { msgid } => match b.log.index_of(&msgid) {
-                        Some(i) => b.log.scroll_to_index(i, 60.0),
+                    Action::Jump { msgid } => match b.index_of(&msgid) {
+                        Some(i) => b.ui.log.scroll_to_index(i, 60.0),
                         None => {
-                            b.jump = Some(msgid.clone());
+                            b.ui.jump = Some(msgid.clone());
                             send(NetCommand::LoadAround {
                                 target: target.clone(),
                                 msgid,
@@ -2263,7 +2136,7 @@ impl App {
         });
         if let Some(nick) = dm.inner {
             send(NetCommand::OpenDm { nick: nick.clone() });
-            self.nets[ni].select(&key(&nick));
+            select(&mut self.view.nets[ni], &key(&nick));
         }
         if let Some((msgid, at)) = pick_reaction {
             self.picker = Some(Picker {
@@ -2525,6 +2398,7 @@ impl App {
             let mut submit = false;
             let mut cancel = false;
             let name = self
+                .view
                 .nets
                 .iter()
                 .find(|n| n.info.network == s.network)
@@ -2602,10 +2476,10 @@ impl App {
         }
 
         if let Some(ni) = self.current.as_deref().and_then(|c| self.net_idx(c))
-            && let ConnState::NeedsVerification { message } = &self.nets[ni].info.state
-            && self.verify_dismissed.as_deref() != Some(&self.nets[ni].info.network)
+            && let ConnState::NeedsVerification { message } = &self.view.nets[ni].info.state
+            && self.verify_dismissed.as_deref() != Some(&self.view.nets[ni].info.network)
         {
-            let network = self.nets[ni].info.network.clone();
+            let network = self.view.nets[ni].info.network.clone();
             let mut done = false;
             let modal = egui::Modal::new(egui::Id::unique("verify")).show(ctx, |ui| {
                 ui.set_width(320.0);
@@ -2634,7 +2508,7 @@ impl App {
         if let Some(network) = self.confirm_remove.clone() {
             let name = self
                 .net_idx(&network)
-                .map_or(network.clone(), |i| self.nets[i].info.name.clone());
+                .map_or(network.clone(), |i| self.view.nets[i].info.name.clone());
             let mut close = false;
             let modal = egui::Modal::new(egui::Id::unique("remove")).show(ctx, |ui| {
                 ui.heading(format!("Leave {name}?"));
@@ -2757,10 +2631,10 @@ impl App {
         let gif_net = here
             .as_ref()
             .and_then(|(n, _)| self.net_idx(n))
-            .and_then(|i| Some((i, self.nets[i].info.gifs.clone()?)));
+            .and_then(|i| Some((i, self.view.nets[i].info.gifs.clone()?)));
         let Some(p) = &mut self.picker else { return };
         let gif_net = gif_net.filter(|_| p.react.is_none());
-        let nets = &mut self.nets;
+        let nets = &mut self.view.nets;
         let (mut picked, mut gif) = (None, None);
         let area = egui::Area::new(egui::Id::unique("emoji-picker"))
             .fixed_pos(p.at)
@@ -2777,7 +2651,7 @@ impl App {
                                 ui.selectable_value(&mut p.gif_tab, true, "GIFs");
                             });
                             if p.gif_tab {
-                                gif = p.gifs.ui(ui, &mut nets[*ni].media, provider);
+                                gif = p.gifs.ui(ui, &mut nets[*ni].ui.media, provider);
                             } else {
                                 picked = emoji::picker(ui, &mut p.query);
                             }
@@ -2797,9 +2671,9 @@ impl App {
             // Posted as a plain link: every client can open it, and IrChad
             // shows it inline.
             (Some(gifs::Action::Pick(g)), Some((network, target))) => {
-                if let Some(b) = self.buffer_mut(&network, &target) {
-                    let reply_to = b.reply.take().map(|(id, _)| id);
-                    b.log.scroll_to_bottom();
+                if let Some(b) = self.view.buf_mut(&network, &target) {
+                    let reply_to = b.ui.reply.take().map(|(id, _)| id);
+                    b.ui.log.scroll_to_bottom();
                     self.send(
                         &network,
                         NetCommand::Send {
@@ -2829,22 +2703,22 @@ impl App {
                 }
                 None => {
                     if let Some((network, target)) = self.on_screen()
-                        && let Some(b) = self.buffer_mut(&network, &target)
+                        && let Some(b) = self.view.buf_mut(&network, &target)
                     {
                         // At the caret, which then sits after the emoji.
                         let id = egui::Id::unique(("composer", &network, &b.key));
                         let state = egui::TextEdit::load_state(ctx, id);
-                        let end = b.draft.chars().count();
+                        let end = b.ui.draft.chars().count();
                         let at = state
                             .as_ref()
                             .and_then(|s| s.cursor.char_range())
                             .map_or(end, |r| usize::from(r.primary.index).min(end));
-                        let byte = b
-                            .draft
-                            .char_indices()
-                            .nth(at)
-                            .map_or(b.draft.len(), |(i, _)| i);
-                        b.draft.insert_str(byte, &e);
+                        let byte =
+                            b.ui.draft
+                                .char_indices()
+                                .nth(at)
+                                .map_or(b.ui.draft.len(), |(i, _)| i);
+                        b.ui.draft.insert_str(byte, &e);
                         if let Some(mut s) = state {
                             let c = egui::text::CCursor::new(at + e.chars().count());
                             s.cursor
@@ -2864,7 +2738,7 @@ impl App {
     /// Back to typing in the buffer on screen, e.g. after the picker.
     fn refocus_composer(&mut self) {
         if let Some(ni) = self.current.as_deref().and_then(|c| self.net_idx(c)) {
-            self.nets[ni].focus = true;
+            self.view.nets[ni].ui.focus = true;
         }
     }
 
@@ -2873,6 +2747,7 @@ impl App {
         let q = sw.query.trim().to_lowercase();
         // (network, key, label), names starting with the query first.
         let mut hits: Vec<(bool, String, String, String)> = self
+            .view
             .nets
             .iter()
             .flat_map(|n| {
@@ -2931,7 +2806,7 @@ impl App {
         if let Some((net, k)) = go {
             if let Some(i) = self.net_idx(&net) {
                 self.current = Some(net);
-                self.nets[i].select(&k);
+                select(&mut self.view.nets[i], &k);
             }
             self.switcher = None;
         } else if modal.should_close() {
@@ -2948,7 +2823,7 @@ impl App {
             return;
         };
         let Some(d) = &mut self.profile else { return };
-        let n = &mut self.nets[ni];
+        let n = &mut self.view.nets[ni];
         let own = n.info.nick.clone();
         let avatar = n.profiles.get(&key(&own)).and_then(|p| p.avatar.clone());
         let (mut save, mut close, mut choose, mut remove) = (false, false, false, false);
@@ -2958,7 +2833,7 @@ impl App {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
-                n.media.avatar(ui, rect, &own, avatar.as_ref(), true);
+                n.ui.media.avatar(ui, rect, &own, avatar.as_ref(), true);
                 ui.vertical(|ui| {
                     if n.info.uploads.is_some() {
                         choose = ui.button("Choose a picture…").clicked();
