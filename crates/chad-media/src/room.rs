@@ -4,8 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use livekit::options::{AudioEncoding, TrackPublishOptions};
@@ -21,7 +22,7 @@ use livekit::webrtc::video_stream::native::NativeVideoStream;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::engine::{CUE_LEN, Cue, Mic, Shared, lock};
+use crate::engine::{CUE_LEN, Cue, Mic, Shared, VAD_HANG, dbfs, lock};
 use crate::screen::{MAX_DIM, ScreenFrame};
 use crate::{CallState, Participant, Quality, RATE, Voice};
 
@@ -31,6 +32,10 @@ const WATCHING: &str = "watching";
 /// D14: the SFU decides who's in the room.
 const MAX_PARTICIPANTS: usize = 500;
 const MAX_IDENTITY: usize = 64;
+/// A decoded remote mic above this is talking (senders zero their gated audio).
+const TALKING_DB: f32 = -60.0;
+/// How often the speaking dots refresh.
+const SPEAKING_POLL: Duration = Duration::from_millis(50);
 
 /// A joined call. Dropping it leaves.
 pub struct Call {
@@ -154,8 +159,15 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
     let task = tokio::spawn(async move {
         let mut streams: HashMap<String, JoinHandle<()>> = HashMap::new();
         let mut stats = tokio::time::interval(Duration::from_secs(2));
+        let mut levels = tokio::time::interval(SPEAKING_POLL);
+        levels.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Speaking comes from our own audio, not the SFU's slow active-speaker reports.
+        let epoch = Instant::now();
+        let local_id = short(&r.local_participant().identity().to_string());
+        let mut talking: HashMap<String, (String, Arc<AtomicU64>)> = HashMap::new();
+        let mut speakers = HashSet::new();
         let mut seen = None;
-        snapshot(&shared, generation, &r, &mut seen);
+        snapshot(&shared, generation, &r, &mut seen, &speakers);
         let reason = loop {
             let ev = tokio::select! {
                 ev = events.recv() => ev,
@@ -164,6 +176,18 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                     if shared.current(generation) {
                         shared.update_call(|c| c.rtt_ms = rtt);
                     }
+                    continue;
+                }
+                _ = levels.tick() => {
+                    let now = speaking(&shared, &local_id, &talking, epoch);
+                    if now != speakers && shared.current(generation) {
+                        shared.update_call(|c| {
+                            for p in &mut c.participants {
+                                p.speaking = now.contains(&p.identity);
+                            }
+                        });
+                    }
+                    speakers = now;
                     continue;
                 }
             };
@@ -180,7 +204,11 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                     let identity = short(&participant.identity().to_string());
                     let screen = publication.source() == TrackSource::ScreenshareAudio;
                     if let Some(tx) = shared.add_source(&sid, &identity, screen) {
-                        let h = tokio::spawn(play(t, tx));
+                        let loud = Arc::new(AtomicU64::new(0));
+                        if !screen {
+                            talking.insert(sid.clone(), (identity, loud.clone()));
+                        }
+                        let h = tokio::spawn(play(t, tx, loud, epoch));
                         if let Some(old) = streams.insert(sid, h) {
                             old.abort();
                         }
@@ -209,6 +237,7 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                     if let Some(h) = streams.remove(&sid) {
                         h.abort();
                     }
+                    talking.remove(&sid);
                     shared.remove_source(&sid);
                     if publication.source() == TrackSource::Screenshare {
                         *lock(&shared.screen) = None;
@@ -221,7 +250,7 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 RoomEvent::Disconnected { reason } => break end_reason(reason),
                 _ => {}
             }
-            snapshot(&shared, generation, &r, &mut seen);
+            snapshot(&shared, generation, &r, &mut seen, &speakers);
         };
         for (sid, h) in streams {
             h.abort();
@@ -238,10 +267,19 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
     })
 }
 
-/// Pushes one remote track into its mixer ring.
-async fn play(track: RemoteAudioTrack, mut tx: rtrb::Producer<i16>) {
+/// Pushes one remote track into its mixer ring, and stamps `loud` (ms since
+/// `epoch`) whenever it carries voice.
+async fn play(
+    track: RemoteAudioTrack,
+    mut tx: rtrb::Producer<i16>,
+    loud: Arc<AtomicU64>,
+    epoch: Instant,
+) {
     let mut stream = NativeAudioStream::new(track.rtc_track(), RATE as i32, 1);
     while let Some(frame) = stream.next().await {
+        if !frame.data.is_empty() && dbfs(&frame.data) > TALKING_DB {
+            loud.store(epoch.elapsed().as_millis() as u64, Relaxed);
+        }
         for &x in frame.data.iter() {
             if tx.push(x).is_err() {
                 break;
@@ -333,8 +371,35 @@ struct Seen {
     watchers: HashMap<String, u32>,
 }
 
+/// Who's talking right now: us while the mic gate is open, others while their
+/// decoded audio was loud within [`VAD_HANG`].
+fn speaking(
+    shared: &Shared,
+    local_id: &str,
+    talking: &HashMap<String, (String, Arc<AtomicU64>)>,
+    epoch: Instant,
+) -> HashSet<String> {
+    let now = epoch.elapsed().as_millis() as u64;
+    let hang = VAD_HANG.as_millis() as u64;
+    talking
+        .values()
+        .filter(|(_, loud)| {
+            let t = loud.load(Relaxed);
+            t != 0 && now.saturating_sub(t) < hang
+        })
+        .map(|(id, _)| id.clone())
+        .chain(shared.transmitting().then(|| local_id.to_owned()))
+        .collect()
+}
+
 /// Rebuilds the participant list from the room.
-fn snapshot(shared: &Shared, generation: u64, room: &Room, seen: &mut Option<Seen>) {
+fn snapshot(
+    shared: &Shared,
+    generation: u64,
+    room: &Room,
+    seen: &mut Option<Seen>,
+    speakers: &HashSet<String>,
+) {
     if !shared.current(generation) {
         return;
     }
@@ -356,7 +421,7 @@ fn snapshot(shared: &Shared, generation: u64, room: &Room, seen: &mut Option<See
         *watchers.entry(w.clone()).or_default() += 1;
     }
     let mut participants = vec![Participant {
-        speaking: local.is_speaking() && !shared.muted(),
+        speaking: speakers.contains(&local_id),
         muted: shared.muted(),
         local: true,
         sharing: shared.sharing(),
@@ -370,7 +435,7 @@ fn snapshot(shared: &Shared, generation: u64, room: &Room, seen: &mut Option<See
             let identity = short(&p.identity().to_string());
             let pubs = p.track_publications();
             Participant {
-                speaking: p.is_speaking(),
+                speaking: speakers.contains(&identity),
                 muted: pubs
                     .values()
                     .filter(|t| t.source() == TrackSource::Microphone)

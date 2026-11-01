@@ -30,7 +30,7 @@ use crate::{AudioSettings, CallState, FRAME, InputMode, RATE};
 const MAX_QUEUE: usize = RATE as usize / 10;
 const RING: usize = RATE as usize / 5;
 /// Voice activity stays open this long after the level drops.
-const VAD_HANG: Duration = Duration::from_millis(300);
+pub(crate) const VAD_HANG: Duration = Duration::from_millis(300);
 /// shortcut: a fixed guess at playback + capture latency for the AEC. AEC3
 /// estimates the real delay itself; feed it `pw_stream_get_time_n` if echo
 /// survives on some hardware.
@@ -531,7 +531,7 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
     }
 }
 
-fn dbfs(frame: &[i16]) -> f32 {
+pub(crate) fn dbfs(frame: &[i16]) -> f32 {
     let sum: f64 = frame.iter().map(|&x| f64::from(x).powi(2)).sum();
     let rms = (sum / frame.len() as f64).sqrt() / 32768.0;
     if rms <= 0.0 {
