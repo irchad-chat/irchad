@@ -51,3 +51,23 @@ ENV CC=clang-21 \
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal \
         --default-toolchain stable --component rustfmt,clippy \
     && rustc --version
+
+# Android (Phase 6): JDK 21 for Gradle (8.14 can't run on 25), and the SDK
+# pieces android/app needs: platform 36, AGP 8.13's default build-tools, and
+# the NDK whose clang android/build-rust.sh links with. Gradle itself and
+# its dependencies download per run. Rust's Android targets come from the
+# workflow's rust-toolchain step, so a stable update brings them along.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openjdk-21-jdk-headless \
+    && rm -rf /var/lib/apt/lists/*
+ENV ANDROID_HOME=/opt/android-sdk \
+    JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+RUN mkdir -p $ANDROID_HOME/cmdline-tools \
+    && curl -sSfo /tmp/clt.zip https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip \
+    && unzip -q /tmp/clt.zip -d $ANDROID_HOME/cmdline-tools \
+    && mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest \
+    && rm /tmp/clt.zip \
+    && yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null \
+    && $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+        "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.14206865" > /dev/null \
+    && ls $ANDROID_HOME/ndk
