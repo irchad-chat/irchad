@@ -677,6 +677,30 @@ fn fetch(
                 }]);
             });
         }
+        NetCommand::Sounds => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| async move { chadd::sounds(&api, &t).await })
+                    .await;
+                sink.send([Event::Sounds { network, result }]);
+            });
+        }
+        NetCommand::Sound { file } => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| {
+                        let file = file.clone();
+                        async move { chadd::sound(&api, &t, &file).await }
+                    })
+                    .await
+                    .map(|b| Blob(b.into()));
+                sink.send([Event::Sound {
+                    network,
+                    file,
+                    result,
+                }]);
+            });
+        }
         cmd => return Some(cmd),
     }
     None

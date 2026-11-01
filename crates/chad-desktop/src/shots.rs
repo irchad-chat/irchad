@@ -211,6 +211,34 @@ fn live() {
     s.shot("live_light");
 }
 
+/// The soundboard menu in a call, listing `deploy/sounds`. Same setup as `live`.
+#[test]
+#[ignore]
+fn live_soundboard() {
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23dev".into());
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", "alice");
+    s.type_into("Password", "alicepass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(3);
+    s.harness
+        .get_all_by_label("Join voice")
+        .next()
+        .unwrap()
+        .click();
+    s.settle(4);
+    s.click("Soundboard");
+    s.settle(2);
+    s.shot("live_soundboard");
+    s.click("ding");
+    s.settle(1);
+    s.harness.key_press(egui::Key::Escape);
+    s.click("Disconnect");
+}
+
 /// Split panes: #general and #dev side by side, Ctrl+Left back to #general,
 /// #general dragged onto #dev to swap them, then the right one closed. Same setup as `live`.
 #[test]

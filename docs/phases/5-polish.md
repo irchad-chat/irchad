@@ -15,6 +15,9 @@
 - [x] Keyboard navigation (Ctrl+K quick switcher, Alt+↑/↓ for channels), and accessibility via AccessKit.
 - [x] A guest can sign up without leaving the network (D35): "Create an account…" in the network menu sends `NetCommand::Register`.
   Unit: `after_a_guest_signs_up_their_channels_are_rejoined_once`.
+- [x] Soundboard (D37): server-wide clips from chadd's `[sounds] dir`, played into voice on their own track, with a "Soundboard volume" apart from voices (in the call panel's ♫ menu and Settings).
+  Live: `voice_check` asserts the far side gets the clip on the `soundboard` track under chadd's grants.
+- [ ] Soundboard by ear in a real call: the player hears the clip once (no echo through the mic), and the volume slider changes clips but not voices.
 - [ ] Run `live` `guest_signs_up` against the dev stack, and check the sign-up dialog by eye (a shot needs a guest network, so the stack).
 
 ## Distribution

@@ -22,6 +22,12 @@ pub const MEDIA: &str = "media";
 /// of GIFs from the provider chadd is set up with, which never learns who
 /// searched (D30). Fetch `preview` through [`MEDIA`], not directly.
 pub const GIFS: &str = "gifs";
+/// `POST <api>/sounds` with a Bearer session token: the network's soundboard,
+/// a list of [`Sound`]s. Empty when the server has none.
+pub const SOUNDS: &str = "sounds";
+/// `POST <api>/sound` with a [`Sound`] (only `file` matters) and a Bearer
+/// session token: the clip's bytes (mp3, ogg, wav or flac).
+pub const SOUND: &str = "sound";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
@@ -102,6 +108,14 @@ pub struct Gif {
     /// Of `preview`, in pixels.
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sound {
+    /// What the button says.
+    pub name: String,
+    /// For [`SOUND`].
+    pub file: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

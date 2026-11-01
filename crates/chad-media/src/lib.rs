@@ -9,6 +9,7 @@ mod engine;
 mod platform;
 mod room;
 mod screen;
+mod sound;
 
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +20,7 @@ pub use screen::{
     AudioApp, ContentHint, Preset, ScreenFrame, ScreenSettings, ShareSource, SourceId, Target,
     Targets,
 };
+pub use sound::{MAX_SECS as MAX_SOUND_SECS, load as load_sound};
 
 /// Everything runs at 48 kHz mono, 10 ms frames.
 pub(crate) const RATE: u32 = 48_000;
@@ -47,6 +49,8 @@ pub struct AudioSettings {
     /// Mic volume, 0.0..=2.0, after processing: what others hear.
     pub input_gain: f32,
     pub bitrate_kbps: u32,
+    /// Everyone's soundboard clips (ours too), 0.0..=2.0, apart from voices.
+    pub soundboard_volume: f32,
 }
 
 impl Default for AudioSettings {
@@ -63,6 +67,7 @@ impl Default for AudioSettings {
             auto_gain: false,
             input_gain: 1.0,
             bitrate_kbps: 64,
+            soundboard_volume: 1.0,
         }
     }
 }
@@ -207,6 +212,30 @@ impl Voice {
 
     pub fn set_screen_volume(&self, identity: &str, gain: f32) {
         self.shared.set_volume(identity, true, gain.clamp(0.0, 2.0));
+    }
+
+    /// Plays a [`load_sound`] clip into the call, replacing one that's
+    /// playing. Everyone in the call hears it at their soundboard volume, us
+    /// too. Errs, in words for the user, when it can't be heard.
+    pub fn play_sound(&self, clip: Arc<[i16]>) -> Result<(), &'static str> {
+        match &*engine::lock(&self.shared.mic) {
+            None => return Err("Join voice to play sounds."),
+            Some(m) if m.board.is_none() => {
+                return Err("This server doesn't let IrChad play sounds into voice yet.");
+            }
+            Some(_) if self.muted() => return Err("Unmute to play sounds."),
+            Some(_) => {}
+        }
+        *engine::lock(&self.shared.clip) = Some((clip, 0));
+        Ok(())
+    }
+
+    pub fn stop_sound(&self) {
+        *engine::lock(&self.shared.clip) = None;
+    }
+
+    pub fn playing_sound(&self) -> bool {
+        engine::lock(&self.shared.clip).is_some()
     }
 
     /// Plays the processed mic back, to hear what others would.

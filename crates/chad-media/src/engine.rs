@@ -3,6 +3,8 @@
 //! ```text
 //! mic ─capture()─▶ near ring ─▶ DSP thread: RNNoise? → APM → VAD/PTT gate ─▶ LiveKit source
 //!                                     ▲ far ring (process_reverse_stream)    └▶ loopback source
+//!                    soundboard clip ─▶ DSP thread (same 10 ms pace) ─▶ soundboard track
+//!                                                                     └▶ own soundboard source
 //! remote tracks ─▶ source rings ─render()─▶ speakers
 //!                                  └────▶ far ring
 //! ```
@@ -44,12 +46,20 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// What a source carries; each has its own volume.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Mic,
+    Screen,
+    /// Soundboard clips: one volume for everyone's.
+    Board,
+}
+
 pub struct Source {
-    /// Track SID, or [`LOOPBACK`].
+    /// Track SID, [`LOOPBACK`] or [`OWN_BOARD`].
     pub key: String,
     pub identity: String,
-    /// Screen share audio, which has its own volume.
-    screen: bool,
+    kind: Kind,
     rx: Consumer<i16>,
     gain: f32,
 }
@@ -71,6 +81,8 @@ impl Source {
 
 /// The mic test's source key.
 const LOOPBACK: &str = "loopback";
+/// Our own soundboard clips, heard the way others hear them.
+const OWN_BOARD: &str = "board";
 
 #[derive(Default)]
 pub struct Rt {
@@ -134,6 +146,8 @@ impl Cue {
 pub struct Mic {
     pub source: NativeAudioSource,
     pub track: LocalAudioTrack,
+    /// The soundboard track's source; `None` if the server wouldn't take it.
+    pub board: Option<NativeAudioSource>,
 }
 
 pub struct Shared {
@@ -148,6 +162,8 @@ pub struct Shared {
     loopback: AtomicBool,
     /// (identity, screen share audio) → gain.
     volumes: Mutex<HashMap<(String, bool), f32>>,
+    /// The soundboard clip we're playing into the call, and how far in.
+    pub clip: Mutex<Option<(Arc<[i16]>, usize)>>,
     pub mic: Mutex<Option<Mic>>,
     call: Mutex<Option<(u64, CallState)>>,
     /// Bumped by every join, so a stale call can't clobber a newer one.
@@ -179,6 +195,7 @@ impl Shared {
             deafened: AtomicBool::new(false),
             loopback: AtomicBool::new(false),
             volumes: Mutex::default(),
+            clip: Mutex::default(),
             mic: Mutex::default(),
             call: Mutex::default(),
             generation: AtomicU64::new(0),
@@ -231,7 +248,13 @@ impl Shared {
     }
 
     pub fn set_settings(&self, s: AudioSettings) {
+        let board = s.soundboard_volume.clamp(0.0, 2.0);
         *lock(&self.settings) = s;
+        for src in lock(&self.rt).sources.iter_mut() {
+            if src.kind == Kind::Board {
+                src.gain = board;
+            }
+        }
     }
 
     pub fn level(&self) -> f32 {
@@ -301,18 +324,21 @@ impl Shared {
 
     pub fn set_volume(&self, identity: &str, screen: bool, gain: f32) {
         lock(&self.volumes).insert((identity.to_owned(), screen), gain);
+        let kind = if screen { Kind::Screen } else { Kind::Mic };
         for s in lock(&self.rt).sources.iter_mut() {
-            if s.identity == identity && s.screen == screen {
+            if s.identity == identity && s.kind == kind {
                 s.gain = gain;
             }
         }
     }
 
-    /// A ring for one remote track; the caller pushes its audio. `screen`:
-    /// it's screen share audio rather than a microphone.
-    pub fn add_source(&self, key: &str, identity: &str, screen: bool) -> Option<Producer<i16>> {
+    /// A ring for one remote track; the caller pushes its audio.
+    pub fn add_source(&self, key: &str, identity: &str, kind: Kind) -> Option<Producer<i16>> {
         let (tx, rx) = RingBuffer::new(RING);
-        let gain = self.volume(identity, screen);
+        let gain = match kind {
+            Kind::Board => self.settings().soundboard_volume.clamp(0.0, 2.0),
+            _ => self.volume(identity, kind == Kind::Screen),
+        };
         let mut rt = lock(&self.rt);
         if rt.sources.len() >= MAX_SOURCES {
             return None;
@@ -320,7 +346,7 @@ impl Shared {
         rt.sources.push(Source {
             key: key.to_owned(),
             identity: identity.to_owned(),
-            screen,
+            kind,
             rx,
             gain,
         });
@@ -450,6 +476,8 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
     let (mut fin, mut fout) = ([0f32; FRAME], [0f32; FRAME]);
     let mut open_until: Option<Instant> = None;
     let mut loopback: Option<Producer<i16>> = None;
+    let mut own_board = shared.add_source(OWN_BOARD, "", Kind::Board);
+    let mut board = [0i16; FRAME];
     while !stop.load(Relaxed) {
         while far.slots() >= FRAME {
             reference
@@ -514,7 +542,7 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
 
         match (shared.loopback.load(Relaxed), &mut loopback) {
-            (true, None) => loopback = shared.add_source(LOOPBACK, "", false),
+            (true, None) => loopback = shared.add_source(LOOPBACK, "", Kind::Mic),
             (false, Some(_)) => {
                 loopback = None;
                 shared.remove_source(LOOPBACK);
@@ -528,23 +556,63 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
                 }
             }
         }
-        let source = lock(&shared.mic).as_ref().map(|m| m.source.clone());
+        let (source, board_source) = lock(&shared.mic)
+            .as_ref()
+            .map(|m| (m.source.clone(), m.board.clone()))
+            .unzip();
         if let Some(source) = source {
-            let f = AudioFrame {
-                data: frame.as_slice().into(),
-                sample_rate: RATE,
-                num_channels: 1,
-                samples_per_channel: FRAME as u32,
-            };
-            // Unbuffered source (queue 0): this completes synchronously.
-            if let Some(Err(e)) = source.capture_frame(&f).now_or_never() {
-                tracing::warn!("sending mic audio: {e:?}");
+            send(&source, &frame, "mic");
+        }
+        let board_source = board_source.flatten();
+        // Paced by the mic, like the mic: a clip only plays in a call, unmuted.
+        if next_clip(shared, board_source.is_some(), &mut board) {
+            if let Some(b) = &board_source {
+                send(b, &board, "soundboard");
+            }
+            if let Some(own) = &mut own_board {
+                for &x in &board {
+                    if own.push(x).is_err() {
+                        break;
+                    }
+                }
             }
         }
     }
     if loopback.is_some() {
         shared.remove_source(LOOPBACK);
     }
+    shared.remove_source(OWN_BOARD);
+}
+
+fn send(source: &NativeAudioSource, frame: &[i16], what: &str) {
+    let f = AudioFrame {
+        data: frame.into(),
+        sample_rate: RATE,
+        num_channels: 1,
+        samples_per_channel: FRAME as u32,
+    };
+    // Unbuffered source (queue 0): this completes synchronously.
+    if let Some(Err(e)) = source.capture_frame(&f).now_or_never() {
+        tracing::warn!("sending {what} audio: {e:?}");
+    }
+}
+
+/// The clip's next frame into `out`, zero-padded at its end. False, and the
+/// clip dropped, when nothing plays or it can't be heard (`live`: in a call).
+fn next_clip(shared: &Shared, live: bool, out: &mut [i16; FRAME]) -> bool {
+    let mut clip = lock(&shared.clip);
+    let Some((samples, pos)) = clip.as_mut().filter(|_| live && !shared.muted()) else {
+        *clip = None;
+        return false;
+    };
+    let n = (samples.len() - *pos).min(FRAME);
+    out[..n].copy_from_slice(&samples[*pos..*pos + n]);
+    out[n..].fill(0);
+    *pos += n;
+    if *pos >= samples.len() {
+        *clip = None;
+    }
+    true
 }
 
 pub(crate) fn dbfs(frame: &[i16]) -> f32 {
@@ -566,10 +634,10 @@ mod tests {
         let shared = Shared::new(Arc::new(|| {}));
         let (far_tx, mut far) = RingBuffer::new(RING);
         lock(&shared.rt).far = Some(far_tx);
-        let mut a = shared.add_source("a", "alice", false).unwrap();
-        let mut b = shared.add_source("b", "bob", false).unwrap();
+        let mut a = shared.add_source("a", "alice", Kind::Mic).unwrap();
+        let mut b = shared.add_source("b", "bob", Kind::Mic).unwrap();
         // Bob's screen share audio, turned down apart from his voice.
-        let mut c = shared.add_source("c", "bob", true).unwrap();
+        let mut c = shared.add_source("c", "bob", Kind::Screen).unwrap();
         shared.set_volume("bob", false, 0.5);
         shared.set_volume("bob", true, 0.25);
         for _ in 0..4 {
@@ -597,14 +665,49 @@ mod tests {
         let shared = Shared::new(Arc::new(|| {}));
         let (far_tx, mut far) = RingBuffer::new(RING);
         lock(&shared.rt).far = Some(far_tx);
-        let mut lb = shared.add_source(LOOPBACK, "", false).unwrap();
-        let mut a = shared.add_source("a", "alice", false).unwrap();
+        let mut lb = shared.add_source(LOOPBACK, "", Kind::Mic).unwrap();
+        let mut a = shared.add_source("a", "alice", Kind::Mic).unwrap();
         lb.push(500).unwrap();
         a.push(1000).unwrap();
         let mut out = [0i16; 1];
         shared.render(&mut out);
         assert_eq!(out, [1500]);
         assert_eq!(far.pop(), Ok(1000));
+    }
+
+    #[test]
+    fn soundboard_has_its_own_volume() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let mut voice = shared.add_source("v", "alice", Kind::Mic).unwrap();
+        let mut board = shared.add_source("s", "alice", Kind::Board).unwrap();
+        let mut s = shared.settings();
+        s.soundboard_volume = 0.25;
+        shared.set_settings(s);
+        voice.push(1000).unwrap();
+        board.push(1000).unwrap();
+        let mut out = [0i16; 1];
+        shared.render(&mut out);
+        assert_eq!(out, [1250]);
+    }
+
+    #[test]
+    fn clips_play_through_once_and_only_live() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let mut out = [0i16; FRAME];
+        *lock(&shared.clip) = Some((vec![7; FRAME + 10].into(), 0));
+        assert!(!next_clip(&shared, false, &mut out));
+        assert!(lock(&shared.clip).is_none(), "outside a call it's dropped");
+
+        *lock(&shared.clip) = Some((vec![7; FRAME + 10].into(), 0));
+        assert!(next_clip(&shared, true, &mut out));
+        assert_eq!(out, [7; FRAME]);
+        assert!(next_clip(&shared, true, &mut out));
+        assert_eq!((out[9], out[10]), (7, 0));
+        assert!(!next_clip(&shared, true, &mut out));
+
+        *lock(&shared.clip) = Some((vec![7; FRAME].into(), 0));
+        shared.set_muted(true);
+        assert!(!next_clip(&shared, true, &mut out));
     }
 
     #[test]

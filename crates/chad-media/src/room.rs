@@ -22,12 +22,15 @@ use livekit::webrtc::video_stream::native::NativeVideoStream;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::engine::{CUE_LEN, Cue, Mic, Shared, VAD_HANG, dbfs, lock};
+use crate::engine::{CUE_LEN, Cue, Kind, Mic, Shared, VAD_HANG, dbfs, lock};
 use crate::screen::{MAX_DIM, ScreenFrame};
 use crate::{CallState, Participant, Quality, RATE, Voice};
 
 /// Participant attribute naming whose screen share someone watches.
 const WATCHING: &str = "watching";
+/// The soundboard track's name. Its source is `Unknown`: LiveKit takes one
+/// track per known source, and the mic has `Microphone`.
+const BOARD: &str = "soundboard";
 
 /// D14: the SFU decides who's in the room.
 const MAX_PARTICIPANTS: usize = 500;
@@ -101,16 +104,19 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
     let room = Arc::new(room);
     // Our own APM does the processing (D: we own audio I/O), and the DSP thread
     // paces us, so the source needs no queue.
-    let source = NativeAudioSource::new(
-        AudioSourceOptions {
-            echo_cancellation: false,
-            noise_suppression: false,
-            auto_gain_control: false,
-        },
-        RATE,
-        1,
-        0,
-    );
+    let new_source = || {
+        NativeAudioSource::new(
+            AudioSourceOptions {
+                echo_cancellation: false,
+                noise_suppression: false,
+                auto_gain_control: false,
+            },
+            RATE,
+            1,
+            0,
+        )
+    };
+    let source = new_source();
     let track = LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
     let shared = voice.shared.clone();
     let kbps = shared.settings().bitrate_kbps.clamp(16, 256);
@@ -132,9 +138,39 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
             tracing::warn!("publishing the mic: {e}");
             "Couldn't send your microphone.".to_owned()
         })?;
+    // Its own track, so listeners can turn clips down apart from voices.
+    let board = new_source();
+    let board_track =
+        LocalAudioTrack::create_audio_track(BOARD, RtcAudioSource::Native(board.clone()));
+    let board = match room
+        .local_participant()
+        .publish_track(
+            LocalTrack::Audio(board_track),
+            TrackPublishOptions {
+                source: TrackSource::Unknown,
+                dtx: true,
+                audio_encoding: Some(AudioEncoding {
+                    max_bitrate: 64_000,
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        Ok(_) => Some(board),
+        Err(e) => {
+            // An older chadd's token doesn't allow it; voice works without.
+            tracing::warn!("publishing the soundboard track: {e}");
+            None
+        }
+    };
 
     let generation = shared.generation.fetch_add(1, Relaxed) + 1;
-    *lock(&shared.mic) = Some(Mic { source, track });
+    *lock(&shared.mic) = Some(Mic {
+        source,
+        track,
+        board,
+    });
     *lock(&shared.room) = Some(room.clone());
     *lock(&shared.watching) = None;
     for p in room.remote_participants().values() {
@@ -202,10 +238,14 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 } => {
                     let sid = publication.sid().to_string();
                     let identity = short(&participant.identity().to_string());
-                    let screen = publication.source() == TrackSource::ScreenshareAudio;
-                    if let Some(tx) = shared.add_source(&sid, &identity, screen) {
+                    let kind = match publication.source() {
+                        TrackSource::Microphone => Kind::Mic,
+                        TrackSource::ScreenshareAudio => Kind::Screen,
+                        _ => Kind::Board,
+                    };
+                    if let Some(tx) = shared.add_source(&sid, &identity, kind) {
                         let loud = Arc::new(AtomicU64::new(0));
-                        if !screen {
+                        if kind == Kind::Mic {
                             talking.insert(sid.clone(), (identity, loud.clone()));
                         }
                         let h = tokio::spawn(play(t, tx, loud, epoch));
@@ -292,6 +332,7 @@ async fn play(
 fn subscribe(shared: &Shared, publication: &RemoteTrackPublication, identity: &str) {
     let want = match publication.source() {
         TrackSource::Microphone => true,
+        TrackSource::Unknown => publication.name() == BOARD,
         TrackSource::Screenshare | TrackSource::ScreenshareAudio => {
             lock(&shared.watching).as_deref() == Some(identity)
         }

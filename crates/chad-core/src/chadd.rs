@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use chad_proto::chadd::{
     self, ApiError, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse, PreviewRequest,
-    UploadResponse, VoiceTokenRequest, VoiceTokenResponse,
+    Sound, UploadResponse, VoiceTokenRequest, VoiceTokenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
@@ -19,6 +19,9 @@ const MAX_BODY: usize = 16 << 10;
 const MAX_GIFS: usize = 256 << 10;
 /// chadd's own cap on proxied images.
 pub const MAX_MEDIA: usize = 8 << 20;
+/// chadd's own caps on soundboard clips and the list.
+const MAX_SOUND: usize = 4 << 20;
+const MAX_SOUNDS: usize = 64 << 10;
 
 /// A chadd session token and when to stop using it.
 #[derive(Debug, Clone)]
@@ -196,6 +199,48 @@ pub async fn gifs(
     }
     page.next = page.next.filter(|n| n.len() <= 128);
     Ok(page)
+}
+
+/// The soundboard; names and files checked (D14).
+pub async fn sounds(api: &Url, session: &str) -> Result<Vec<Sound>, Error> {
+    let mut sounds: Vec<Sound> = parse(
+        &request(
+            api,
+            chadd::SOUNDS,
+            Some(session),
+            Body::Json(b"{}".to_vec()),
+            MAX_SOUNDS,
+        )
+        .await?,
+    )?;
+    sounds.truncate(200);
+    sounds.retain(|s| s.file.len() <= 100 && !s.file.contains(['/', '\\']));
+    for s in &mut sounds {
+        s.name = s
+            .name
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(40)
+            .collect();
+    }
+    Ok(sounds)
+}
+
+/// One soundboard clip's bytes.
+pub async fn sound(api: &Url, session: &str, file: &str) -> Result<Vec<u8>, Error> {
+    let req = Sound {
+        name: String::new(),
+        file: file.to_owned(),
+    };
+    let json = serde_json::to_vec(&req).map_err(|e| Error::Other(e.to_string()))?;
+    request(
+        api,
+        chadd::SOUND,
+        Some(session),
+        Body::Json(json),
+        MAX_SOUND,
+    )
+    .await
 }
 
 enum Body {

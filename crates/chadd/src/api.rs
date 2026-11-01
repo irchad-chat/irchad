@@ -208,6 +208,8 @@ pub async fn voice_token(
                 "microphone".into(),
                 "screen_share".into(),
                 "screen_share_audio".into(),
+                // The soundboard's own track, so listeners can turn it down.
+                "unknown".into(),
             ],
             // The `watching` attribute behind "N watching" (D22).
             can_update_own_metadata: Some(true),

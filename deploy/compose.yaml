@@ -57,6 +57,7 @@ services:
     volumes:
       - ./chadd.toml:/etc/chadd/chadd.toml:ro
       - chadd-uploads:/var/lib/chadd/uploads
+      - ./sounds:/var/lib/chadd/sounds:ro
     networks: [chad]
 
   chadd2:
@@ -70,6 +71,7 @@ services:
     volumes:
       - ./chadd2.toml:/etc/chadd/chadd.toml:ro
       - chadd2-uploads:/var/lib/chadd/uploads
+      - ./sounds:/var/lib/chadd/sounds:ro
     networks: [chad]
 
   caddy:

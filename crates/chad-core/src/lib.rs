@@ -22,7 +22,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
 
-pub use chad_proto::chadd::{Gif, GifPage, LinkPreview};
+pub use chad_proto::chadd::{Gif, GifPage, LinkPreview, Sound};
 pub use discovery::fetch_icon;
 pub use manager::start;
 
@@ -229,6 +229,12 @@ pub enum NetCommand {
         query: String,
         pos: Option<String>,
     },
+    /// The network's soundboard: `Event::Sounds`.
+    Sounds,
+    /// One soundboard clip's bytes: `Event::Sound`.
+    Sound {
+        file: String,
+    },
     /// Someone's devices with encrypted DMs on, fetched again: `Event::Devices`.
     Devices {
         nick: String,
@@ -361,6 +367,15 @@ pub enum Event {
         query: String,
         pos: Option<String>,
         result: Result<GifPage, String>,
+    },
+    Sounds {
+        network: String,
+        result: Result<Vec<Sound>, String>,
+    },
+    Sound {
+        network: String,
+        file: String,
+        result: Result<Blob, String>,
     },
     /// Someone's devices with encrypted DMs on (ours, for our own nick).
     Devices {

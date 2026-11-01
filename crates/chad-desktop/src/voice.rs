@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use chad_core::{MediaEvent, VoiceState};
-use chad_media::{InputMode, Quality, Voice};
+use chad_core::{MediaEvent, Sound, VoiceState};
+use chad_media::{AudioSettings, InputMode, Quality, Voice};
 use egui::{Color32, RichText, Sense, vec2};
 use tokio::sync::mpsc;
 
@@ -53,6 +53,10 @@ pub enum PanelAction {
     StopShare,
     /// Watch our own share.
     Preview,
+    /// The soundboard opened: list the network's sounds again.
+    Soundboard,
+    /// Play this soundboard file.
+    Sound(String),
 }
 
 /// Bottom of the channel list while in a call (on any network).
@@ -62,6 +66,8 @@ pub fn panel(
     state: &VoiceState,
     network: &str,
     ptt: Option<&Ptt>,
+    sounds: Option<&[Sound]>,
+    audio: &mut AudioSettings,
 ) -> Option<PanelAction> {
     let call = voice.call();
     let (text, color, channel) = match state {
@@ -179,6 +185,19 @@ pub fn panel(
                 PanelAction::Share
             });
         }
+        let board = ui.add_enabled_ui(connected, |ui| {
+            ui.menu_button(RichText::new(icons::MUSIC_NOTES).size(16.0), |ui| {
+                soundboard(ui, voice, sounds, audio)
+            })
+        });
+        let board = board.inner;
+        if board.response.clicked() {
+            action = Some(PanelAction::Soundboard);
+        }
+        board.response.tip("Soundboard");
+        if let Some(Some(file)) = board.inner {
+            action = Some(PanelAction::Sound(file));
+        }
         let leave = egui::Button::new(
             RichText::new(icons::PHONE_DISCONNECT)
                 .size(16.0)
@@ -191,6 +210,52 @@ pub fn panel(
     });
     ui.add_space(4.0);
     action
+}
+
+/// The soundboard menu: the network's sounds, and their volume for us.
+/// Returns the file clicked.
+fn soundboard(
+    ui: &mut egui::Ui,
+    voice: &Voice,
+    sounds: Option<&[Sound]>,
+    audio: &mut AudioSettings,
+) -> Option<String> {
+    let mut play = None;
+    ui.set_max_width(280.0);
+    match sounds {
+        None => {
+            ui.spinner();
+        }
+        Some([]) => {
+            ui.label(RichText::new("This server has no sounds yet.").weak());
+        }
+        Some(sounds) => {
+            egui::ScrollArea::vertical()
+                .max_height(240.0)
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for s in sounds {
+                            if ui.button(&s.name).clicked() {
+                                play = Some(s.file.clone());
+                            }
+                        }
+                    });
+                });
+        }
+    }
+    if voice.playing_sound() && ui.button(format!("{} Stop", icons::X)).clicked() {
+        voice.stop_sound();
+    }
+    ui.separator();
+    let l = ui.label("Soundboard volume");
+    if volume_slider(ui, &mut audio.soundboard_volume)
+        .labelled_by(l.id)
+        .on_hover_text("How loud everyone's sounds are for you. Voices stay as they are.")
+        .changed()
+    {
+        voice.set_settings(audio.clone());
+    }
+    play
 }
 
 /// Who's in a channel's voice room, under its row in the sidebar. In our own
@@ -329,6 +394,12 @@ pub fn settings(
             volume_slider(ui, &mut s.audio.input_gain)
                 .labelled_by(l.id)
                 .on_hover_text("How loud others hear you.");
+            ui.end_row();
+
+            let l = ui.label("Soundboard volume");
+            volume_slider(ui, &mut s.audio.soundboard_volume)
+                .labelled_by(l.id)
+                .on_hover_text("How loud sounds played in voice are for you.");
             ui.end_row();
 
             ui.label("Input");

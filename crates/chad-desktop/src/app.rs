@@ -43,6 +43,8 @@ const AWAY: &str = "Away";
 type IconMsg = (String, Option<egui::ColorImage>);
 /// A file from the file dialog: (network, buffer or `None` for an avatar, path).
 type Picked = (String, Option<String>, std::path::PathBuf);
+/// (network, file, the clip or why not).
+type Decoded = (String, String, Result<std::sync::Arc<[i16]>, String>);
 
 pub struct App {
     core: Core,
@@ -85,6 +87,14 @@ pub struct App {
     /// The emoji verification on screen: (network, nick, where it stands).
     verify: Option<(String, String, VerifyState)>,
     files: (mpsc::Sender<Picked>, mpsc::Receiver<Picked>),
+    /// Each network's soundboard, as chadd last listed it.
+    sounds: HashMap<String, Vec<chad_core::Sound>>,
+    /// Decoded clips by (network, file).
+    // shortcut: an admin replacing a file under the same name isn't picked up
+    // until restart; key on a hash or mtime from chadd if that matters.
+    clips: HashMap<(String, String), std::sync::Arc<[i16]>>,
+    /// Clips decoded off the UI thread, to play.
+    decoded: (mpsc::Sender<Decoded>, mpsc::Receiver<Decoded>),
     /// Numbers attachments, for their preview's key.
     attached: u64,
     idle: Idle,
@@ -356,6 +366,9 @@ impl App {
             profile: None,
             verify: None,
             files: mpsc::channel(),
+            sounds: HashMap::new(),
+            clips: HashMap::new(),
+            decoded: mpsc::channel(),
             attached: 0,
             idle: Idle::start({
                 let ctx = cc.egui_ctx.clone();
@@ -1101,6 +1114,31 @@ impl App {
                     self.nets[i].media.bytes(url, result, ctx);
                 }
             }
+            Event::Sounds { network, result } => match result {
+                Ok(list) => {
+                    self.sounds.insert(network, list);
+                }
+                Err(e) => tracing::info!("soundboard: {e}"),
+            },
+            Event::Sound {
+                network,
+                file,
+                result,
+            } => match result {
+                Ok(bytes) => {
+                    let (tx, ctx) = (self.decoded.0.clone(), ctx.clone());
+                    tokio::task::spawn_blocking(move || {
+                        // A hostile file that panics the decoder only loses the sound (D14).
+                        let clip = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            chad_media::load_sound(bytes.0, &file)
+                        }))
+                        .unwrap_or_else(|_| Err("It's damaged.".into()));
+                        let _ = tx.send((network, file, clip));
+                        ctx.request_repaint();
+                    });
+                }
+                Err(e) => self.toast(e),
+            },
             Event::Gifs {
                 network,
                 query,
@@ -1153,6 +1191,17 @@ impl App {
                     network: n.info.network.clone(),
                     cmd,
                 });
+            }
+        }
+        while let Ok((network, file, clip)) = self.decoded.1.try_recv() {
+            match clip {
+                Ok(clip) => {
+                    self.clips.insert((network, file), clip.clone());
+                    if let Err(e) = self.voice.play_sound(clip) {
+                        self.toast(e.into());
+                    }
+                }
+                Err(e) => self.toast(format!("Couldn't play {file}: {e}")),
             }
         }
         while let Ok((network, target, path)) = self.files.1.try_recv() {
@@ -1333,7 +1382,15 @@ impl App {
                 .map_or(net.clone(), |i| self.nets[i].info.name.clone());
             let action = egui::Panel::bottom("voice-panel")
                 .show(ui, |ui| {
-                    voice::panel(ui, &self.voice, &state, &name, self.ptt.as_ref())
+                    voice::panel(
+                        ui,
+                        &self.voice,
+                        &state,
+                        &name,
+                        self.ptt.as_ref(),
+                        self.sounds.get(&net).map(Vec::as_slice),
+                        &mut self.settings.audio,
+                    )
                 })
                 .inner;
             match action {
@@ -1342,6 +1399,17 @@ impl App {
                     self.share_dialog = Some(ShareDialog::new(&self.voice, ui.ctx()));
                 }
                 Some(voice::PanelAction::StopShare) => self.voice.stop_share(),
+                Some(voice::PanelAction::Soundboard) => self.send(&net, NetCommand::Sounds),
+                Some(voice::PanelAction::Sound(file)) => {
+                    match self.clips.get(&(net.clone(), file.clone())) {
+                        Some(clip) => {
+                            if let Err(e) = self.voice.play_sound(clip.clone()) {
+                                self.toast(e.into());
+                            }
+                        }
+                        None => self.send(&net, NetCommand::Sound { file }),
+                    }
+                }
                 Some(voice::PanelAction::Preview) => {
                     let me = self.voice.call().and_then(|c| {
                         c.participants

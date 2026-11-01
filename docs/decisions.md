@@ -200,3 +200,11 @@ On success the network gets meta `account`, its password is saved, E2EE starts, 
 Narrows D16's stale window. When an always-on user's last device disconnects, ergo's auto-away sends `AWAY :User is currently disconnected`.
 Clients that see that reason drop the user's voice presence locally. The metadata itself stays until their next launch clears it.
 Still stale: viewers who connect after the AWAY was sent (WHO's `G` flag carries no reason), and users who were already away by hand, assuming ergo keeps a manual away message rather than overwriting it (unverified).
+
+## D37: The soundboard is a second audio track, its clips a directory on chadd (2026-11-01)
+Admins drop mp3/ogg/wav/flac files into chadd's `[sounds] dir`; there's no upload UI (no admin UI yet).
+Signed-in clients list them with `POST /api/sounds` and fetch one with `POST /api/sound`, like the GIF picker. Clients decode at most 10 s of a clip, off the UI thread, and cache it per run.
+Playing a clip publishes nothing new over IRC. The player's client sends it on its own LiveKit track, named `soundboard`, with source `Unknown`. LiveKit takes only one track per known source, and the mic already has `Microphone`, so the voice token now grants `unknown` too.
+Listeners mix that track as its own source at one "Soundboard volume" for everyone's clips, apart from voices. So only people in the call hear a clip, and the player hears it the same way.
+The DSP thread feeds the clip at the mic's 10 ms pace. A clip is dropped while muted or outside a call, and the player hears it through the AEC reference so their mic doesn't send it twice.
+The alternative was a data message telling every client to play the clip locally. It was rejected because it needs `canPublishData`, all clients agreeing on the list, and a download per listener.

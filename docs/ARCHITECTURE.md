@@ -57,10 +57,11 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
 - **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs.
   A guest can sign up later from the network menu without leaving (D35).
 - **chadd session (D18):** the client POSTs the account and password to `chadd /api/login`. chadd checks them with ergo's `/v1/check_auth` and returns a 1 h signed session token.
-  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone and a screen share with its audio.
+  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone, a screen share with its audio, and the soundboard track (source `unknown`, D37).
   `POST /api/upload` (raw body, Bearer or HTTP Basic, also advertised as ISUPPORT `draft/FILEHOST`) stores a file (D26).
   `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
   `POST /api/gifs {query, pos}` searches the GIF provider set up in chadd.toml (KLIPY by default), and discovery's `chadd.gifs` says it's on (D30).
+  `POST /api/sounds` lists the soundboard (the files in chadd.toml's `[sounds] dir`), and `POST /api/sound {file}` returns one clip (D37).
   Request and response types live in `chad_proto::chadd`. Calls share one session per network, and the client logs in again on a 401.
 
 ## Client crates

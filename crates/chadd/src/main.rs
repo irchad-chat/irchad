@@ -9,6 +9,7 @@ mod fetch;
 mod files;
 mod gifs;
 mod routes;
+mod sounds;
 
 use config::Config;
 

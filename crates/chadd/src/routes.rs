@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, fetch, files, gifs};
+use crate::{api, fetch, files, gifs, sounds};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -80,6 +80,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/preview", post(fetch::preview))
         .route("/api/media", post(fetch::media))
         .route("/api/gifs", post(gifs::search))
+        .route("/api/sounds", post(sounds::list))
+        .route("/api/sound", post(sounds::get))
         .merge(files)
         .with_state(state)
 }

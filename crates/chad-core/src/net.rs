@@ -375,6 +375,21 @@ impl Net {
                     result: Err("You're offline right now.".into()),
                 });
             }
+            NetCommand::Sounds => {
+                let network = self.id();
+                self.events.push(Event::Sounds {
+                    network,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
+            NetCommand::Sound { file } => {
+                let network = self.id();
+                self.events.push(Event::Sound {
+                    network,
+                    file,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
             NetCommand::Gifs { query, pos } => {
                 let network = self.id();
                 self.events.push(Event::Gifs {

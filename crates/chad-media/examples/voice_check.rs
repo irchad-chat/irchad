@@ -1,6 +1,7 @@
 //! End-to-end check of [`chad_media::Voice`] against the dev stack: joins a
 //! room with the real audio engine (your mic and speakers), while a second,
-//! raw LiveKit participant publishes a quiet tone and listens to us.
+//! raw LiveKit participant publishes a quiet tone and listens to us, mic and
+//! soundboard apart.
 //!
 //! ```sh
 //! SSL_CERT_FILE=<system bundle + Caddy root> \
@@ -47,6 +48,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         .map_err(anyhow::Error::msg)?;
     println!("check-a joined through Voice");
+    // A one-second soundboard clip, sent once check-b listens.
+    let clip: Arc<[i16]> = (0..RATE)
+        .map(|i| ((i as f32 * TAU * 660.0 / RATE as f32).sin() * 3000.0) as i16)
+        .collect();
 
     let (other, mut events) = Room::connect(&url, &token("check-b")?, RoomOptions::default())
         .await
@@ -83,21 +88,35 @@ async fn main() -> anyhow::Result<()> {
         }
     });
     let heard = Arc::new(AtomicUsize::new(0));
-    let h = heard.clone();
+    let board = Arc::new(AtomicUsize::new(0));
+    let (h, b) = (heard.clone(), board.clone());
     let listen = tokio::spawn(async move {
         while let Some(ev) = events.recv().await {
             if let RoomEvent::TrackSubscribed {
                 track: RemoteTrack::Audio(t),
+                publication,
                 ..
             } = ev
             {
-                let mut stream = NativeAudioStream::new(t.rtc_track(), RATE as i32, 1);
-                while let Some(f) = stream.next().await {
-                    h.fetch_add(f.data.len(), Ordering::Relaxed);
-                }
+                // The soundboard idles silent between clips: count its loud samples.
+                let sb = publication.name() == "soundboard";
+                let n = if sb { b.clone() } else { h.clone() };
+                tokio::spawn(async move {
+                    let mut stream = NativeAudioStream::new(t.rtc_track(), RATE as i32, 1);
+                    while let Some(f) = stream.next().await {
+                        let c = if sb {
+                            f.data.iter().filter(|x| x.abs() > 500).count()
+                        } else {
+                            f.data.len()
+                        };
+                        n.fetch_add(c, Ordering::Relaxed);
+                    }
+                });
             }
         }
     });
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    voice.play_sound(clip).map_err(anyhow::Error::msg)?;
 
     tokio::select! {
         () = tokio::time::sleep(Duration::from_secs(secs)) => {}
@@ -109,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
     let got = heard.load(Ordering::Relaxed) as f32 / RATE as f32;
     let ok_peers = state.participants.iter().any(|p| p.identity == "check-b");
     let ok_audio = got > secs as f32 / 2.0;
+    let got_board = board.load(Ordering::Relaxed) as f32 / RATE as f32;
     println!(
         "RESULT participants: {}",
         if ok_peers { "ok" } else { "FAILED" }
@@ -116,6 +136,10 @@ async fn main() -> anyhow::Result<()> {
     println!(
         "RESULT check-b heard {got:.1}s of our mic: {}",
         if ok_audio { "ok" } else { "FAILED" }
+    );
+    println!(
+        "RESULT check-b heard {got_board:.2}s of loud soundboard: {}",
+        if got_board > 0.3 { "ok" } else { "FAILED" }
     );
     println!(
         "RESULT rtt: {}",
@@ -140,6 +164,15 @@ fn token(identity: &str) -> anyhow::Result<String> {
             .with_grants(VideoGrants {
                 room_join: true,
                 room: "voice-check".into(),
+                // As chadd mints them (crates/chadd/src/api.rs).
+                can_publish_sources: [
+                    "microphone",
+                    "screen_share",
+                    "screen_share_audio",
+                    "unknown",
+                ]
+                .map(Into::into)
+                .to_vec(),
                 ..Default::default()
             })
             .to_jwt()?,

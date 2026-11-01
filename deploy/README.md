@@ -32,6 +32,7 @@ Caddy's internal CA root is in the `caddy-data` volume (`/data/caddy/pki/authori
 - `livekit.yaml`: LiveKit dev config. Production TURN settings are in the comments.
 - `Caddyfile`: routing per `docs/ARCHITECTURE.md`.
 - Uploads go to the `chadd-uploads` volume (`chadd2-uploads` for the second network). ergo advertises them to plain IRC clients as ISUPPORT `draft/FILEHOST` (the `ERGO__SERVER__ADDITIONAL_ISUPPORT` env in `compose.yaml`).
+- Soundboard clips are the files in `sounds/`, mounted read-only into both chadds (`[sounds]` in their configs). Add or remove files at will; clients list them each time the soundboard opens (D37).
 - `chadd.toml`: chadd config. compose sets `CHADD_ORIGIN` to match the published host and port. `[ergo]` holds the API URL and bearer token (must match `ergo.yaml`), and `[livekit]` holds the key and secret (must match `livekit.yaml`).
 - `tools/ergo-probe.py`: the Phase 0 capability probe (see `docs/notes/ergo-caps.md`).
 

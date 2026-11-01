@@ -30,6 +30,16 @@ pub struct Config {
     pub uploads: Option<Uploads>,
     /// Leave out to turn the GIF picker off.
     pub gifs: Option<Gifs>,
+    /// Leave out for no soundboard.
+    pub sounds: Option<Sounds>,
+}
+
+/// The soundboard: every mp3, ogg, wav or flac file in `dir`, named after the
+/// file. Admins add and remove files by hand; no restart needed.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sounds {
+    pub dir: std::path::PathBuf,
 }
 
 /// KLIPY's GIF API, searched on behalf of clients (D30, D31).
