@@ -208,3 +208,22 @@ Playing a clip publishes nothing new over IRC. The player's client sends it on i
 Listeners mix that track as its own source at one "Soundboard volume" for everyone's clips, apart from voices. So only people in the call hear a clip, and the player hears it the same way.
 The DSP thread feeds the clip at the mic's 10 ms pace. A clip is dropped while muted or outside a call, and the player hears it through the AEC reference so their mic doesn't send it twice.
 The alternative was a data message telling every client to play the clip locally. It was rejected because it needs `canPublishData`, all clients agreeing on the list, and a download per listener.
+
+## D38: The UI view model lives in chad-core, not in each UI (2026-11-01)
+Until now chad-desktop projected core `Event`s into its own state (buffers, members, unreads, voice) in `app.rs`.
+Android would have to write that logic a second time in Kotlin, and the two copies would drift. So the projection moves into chad-core, and both UIs read the state from there.
+Desktop gets refactored onto it first, as the opening item of Phase 6, so the API is proven before UniFFI exposes it.
+
+## D39: Android pushes over UnifiedPush only; without a distributor the user picks (2026-11-01)
+A backgrounded app drops its IRC socket shortly after backgrounding. ergo's `draft/webpush` wakes it through UnifiedPush, and it catches up via chathistory when opened. Always-on (D11) keeps the user in their channels meanwhile.
+There's no FCM, embedded or otherwise. That keeps the APK free of Google libs and means nobody has to own a Firebase project.
+Onboarding suggests installing a distributor (ntfy). Without one, the user chooses between a persistent socket in a foreground service (notifications work, a permanent notification shows, some battery cost) and offline (no background notifications).
+Periodic WorkManager sync was rejected, because delayed notifications feel broken for chat.
+
+## D40: Android ships as a signed APK on Gitea releases (2026-11-01)
+Releases are laid out so Obtainium can track them: stable asset names and one APK per ABI or a universal one. There's no Play Store and no F-Droid for now.
+The application ID is `party.gentoo.irchad`. It doesn't need to resolve, only to be unique and never change after the first release. minSdk is 29 (Android 10).
+The APK is built by Gitea Actions in the Linux CI image (D32), extended with the Android SDK, NDK and cargo-ndk.
+
+## D41: Android looks native: Material You dynamic color (2026-11-01)
+Android follows the wallpaper palette instead of matching desktop's Catppuccin. It's a Compose app (D3), so it should feel like one.

@@ -1,6 +1,6 @@
 # Plan
 
-**Current phase: 3 (Screen share)**
+**Current phase: 6 (Android)**. The hardware Done-when checks for 2, 3 and 5 were waived on 2026-11-01 and are still owed.
 
 Update the line above when a phase's "Done when" holds.
 
@@ -12,7 +12,7 @@ Update the line above when a phase's "Done when" holds.
 | 3 | Screen share | [phases/3-screenshare.md](phases/3-screenshare.md) | implemented; Done-when checks need hardware |
 | 4 | Encrypted DMs | [phases/4-e2ee-dms.md](phases/4-e2ee-dms.md) | implemented; Done-when holds in tests, UI checked headless only |
 | 5 | Polish & distribution | [phases/5-polish.md](phases/5-polish.md) | implemented; Done-when checks need hardware and a release run |
-| 6 | Android | [phases/6-android.md](phases/6-android.md) | not started |
+| 6 | Android | [phases/6-android.md](phases/6-android.md) | in progress |
 | 7 | Later / parking lot | [phases/7-later.md](phases/7-later.md) | — |
 
 ## Ordering rules
