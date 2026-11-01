@@ -6,6 +6,15 @@ plugins {
 
 val rustOut = layout.buildDirectory.dir("rust")
 
+// The workspace version (Cargo.toml), so the APK matches the release tag.
+val cargoVersion = rootDir.resolve("../Cargo.toml").readLines()
+    .first { it.startsWith("version = ") }.substringAfter('"').substringBefore('"')
+// Android only installs an update with a higher versionCode: 1.2.3 -> 1002003.
+val cargoVersionCode = cargoVersion.substringBefore('-').split('.').map { it.toInt() }
+    .let { (major, minor, patch) -> major * 1_000_000 + minor * 1_000 + patch }
+// release.yml decodes the keystore here and sets the password (D40).
+val releaseKeystore = System.getenv("IRCHAD_KEYSTORE")?.let { file(it) }
+
 android {
     namespace = "party.gentoo.irchad"
     compileSdk = 36
@@ -14,15 +23,29 @@ android {
         applicationId = "party.gentoo.irchad"
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.1"
+        versionCode = cargoVersionCode
+        versionName = cargoVersion
+        // Only the ABIs build-rust.sh built (the same ABIS), which also drops
+        // LiveKit's 32-bit libraries.
+        ndk { abiFilters += (System.getenv("ABIS") ?: "x86_64").split(" ").filter { it.isNotBlank() } }
+    }
+
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = System.getenv("IRCHAD_KEYSTORE_PASSWORD")
+                keyAlias = "irchad"
+                keyPassword = System.getenv("IRCHAD_KEYSTORE_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // shortcut: signed with the debug key until CI has a release key (D40).
-            signingConfig = signingConfigs.getByName("debug")
+            // Local release builds without the keystore get the debug key.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
     compileOptions {

@@ -15,7 +15,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 Gradle runs `build-rust.sh` first. It builds `libchad_ffi.so` and generates the Kotlin bindings into
 `app/build/rust/`. It builds x86_64 for the emulator by default. Use `ABIS="x86_64 arm64-v8a"` for phones.
-When rustup has the Android targets they're used. Otherwise std is built from `rust-src` (`-Zbuild-std`), which is how it works with Gentoo's rustc.
+The APK only carries the ABIs in `ABIS`. When rustup has the Android targets they're used. Otherwise std is built from `rust-src` (`-Zbuild-std`), which is how it works with Gentoo's rustc.
 
 ## Dev stack from the emulator
 
@@ -36,3 +36,9 @@ adb shell "run-as party.gentoo.irchad sh -c 'mkdir -p files/certs && cp /data/lo
 ```
 
 Then join `irchad.test:8443` as `bob` / `bobpass` (from `deploy/seed.py`).
+
+## Release signing
+
+`release.yml` signs with a PKCS12 keystore from the `ANDROID_KEYSTORE` secret (base64), whose store and key (alias `irchad`) share `ANDROID_KEYSTORE_PASSWORD`.
+Locally, `IRCHAD_KEYSTORE=<file> IRCHAD_KEYSTORE_PASSWORD=<pw> ./gradlew assembleRelease` does the same; without them a release build gets the debug key.
+Keep the keystore safe: an APK signed with another key won't install over the old one.

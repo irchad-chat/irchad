@@ -30,6 +30,8 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
 - [x] Keystore-backed storage for credentials and E2EE keys.
   `KeystoreSecrets` uses AES-GCM with a Keystore key over SharedPreferences. The E2EE store key goes through the same `SecretStore` (`<origin>#e2e`).
 - [ ] CI: add the Android SDK, NDK and cargo-ndk to the CI image (D32). Tags build a signed APK and attach it to the Gitea release with Obtainium-friendly asset names (D40).
+  The CI image has JDK 21, the SDK and the NDK (no cargo-ndk, see `build-rust.sh`). `ci.yaml`'s `android` job builds a debug APK. `release.yml` builds `irchad-android-arm64.apk`, signed with the `ANDROID_KEYSTORE` secrets.
+  The APK's version comes from `Cargo.toml` (`versionCode` = major·10⁶ + minor·10³ + patch). Open until the secrets are in and a tag has produced an APK that installs.
 
 ## Done when
 - The phone joins via an invite link, receives push while backgrounded, talks in voice with desktop users, and watches a desktop screen share.

@@ -55,6 +55,24 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
 
+  # The Android app: chad-ffi for the emulator ABI, then a debug APK.
+  android:
+    runs-on: ubuntu-latest
+    # JDK, Android SDK and NDK preinstalled (deploy/ci.Dockerfile).
+    container:
+      image: 192.0.2.7:3000/sam/irchad-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v1-rust
+          shared-key: ci-android
+      - run: ./gradlew --no-daemon assembleDebug
+        working-directory: android
+
   windows:
     # Must match a label on a Windows act_runner (host mode).
     runs-on: windows-latest
