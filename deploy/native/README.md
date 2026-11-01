@@ -14,11 +14,13 @@ The firewall is `/etc/nftables.conf`: 22, 80, 443 tcp, 443 udp, 7881 tcp, 50000-
 
 ## Updating
 
-- **chadd:** CI's `deploy-chadd` job does this on every push to `main` once the Linux checks pass. To do it by hand, build against trixie's glibc, then copy the binary over and restart.
+- **chadd:** CI's `deploy-chadd` job does this on a push to `main` once the Linux checks pass, but only when chadd's inputs changed since the commit in `/usr/local/bin/chadd.rev` (chadd, chad-proto, `Cargo.toml`/`Cargo.lock`, `.cargo/`, the Dockerfile). It writes that file after each deploy.
+  To do it by hand, build against trixie's glibc, then copy the binary over, restart, and record the commit. Without a `chadd.rev` (or with a commit CI doesn't know), the next push deploys.
   ```sh
   podman build -f deploy/chadd.Dockerfile -t irchad-chadd .
   podman cp $(podman create irchad-chadd):/usr/local/bin/chadd ./chadd
-  scp chadd chad-prod:/usr/local/bin/chadd && ssh chad-prod systemctl restart chadd
+  scp chadd chad-prod:/usr/local/bin/chadd.new && ssh chad-prod 'mv /usr/local/bin/chadd.new /usr/local/bin/chadd && systemctl restart chadd'
+  git rev-parse HEAD | ssh chad-prod 'cat > /usr/local/bin/chadd.rev'
   ```
 - **ergo.yaml changes:** regenerate the config on the server, then `systemctl reload ergo`.
   ```sh

@@ -180,3 +180,8 @@ The LAN registry is plain HTTP, so the Linux runner host's dockerd lists `192.0.
 Only clang and libclang are installed, not everything `llvm.sh` installs (lldb, lld, clangd, Python), since nothing uses the rest.
 It's Ubuntu 24.04, the same as the runner's `ubuntu-latest`, so release binaries keep the same glibc floor. Changing the base changes which distros can run the Linux binary.
 Windows jobs, and the jobs that only call the Gitea API or Docker, stay on the runner's defaults.
+
+## D33: CI deploys chadd only when it changed; Nightly runs nightly (2026-10-31)
+`deploy-chadd` used to rebuild chadd and restart it on prod on every push to `main`, though most pushes don't touch it. It now reads the deployed commit from `/usr/local/bin/chadd.rev` on prod and deploys only when chadd's inputs differ from it (`crates/chadd`, `crates/chad-proto`, `Cargo.toml`, `Cargo.lock`, `.cargo/`, `deploy/chadd.Dockerfile`). It diffs against prod rather than the push's `before`, so a deploy whose run was cancelled by a newer push still happens on the next one.
+Nightly ran on every push too, which queued two Windows builds per push on the single Windows runner. It now runs at 04:00 UTC and skips when the `nightly` tag already points at `main`'s HEAD. Running it by hand always rebuilds. Nightly users and chadd's landing page get builds up to a day behind `main`.
+CI skips pushes that touch only `docs/**` or Markdown.

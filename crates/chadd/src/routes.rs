@@ -253,7 +253,7 @@ fn invite_page(
   </div>
   {hint}
   <div class="others">{others}</div>
-  <footer>Nightly builds of IrChad · rebuilt on every change</footer>
+  <footer>Nightly builds of IrChad · rebuilt every night</footer>
 </main>
 </body>
 </html>

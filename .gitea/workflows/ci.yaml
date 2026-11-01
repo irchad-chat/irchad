@@ -3,9 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
-    # The job image rebuilds in ci-image.yml; a run here would still pull
-    # the old :latest. Pushes that touch anything else still run.
+    # Docs build nothing, and the job image rebuilds in ci-image.yml (a run
+    # here would still pull the old :latest). A push that also touches
+    # anything else still runs.
     paths-ignore:
+      - "docs/**"
+      - "**.md"
       - deploy/ci.Dockerfile
       - .gitea/workflows/ci-image.yml
   pull_request:
@@ -68,7 +71,10 @@ jobs:
       - run: cargo test --locked
 
   # Push to main: build chadd against trixie's glibc and swap it on chad-prod
-  # (deploy/native/README.md). PROD_SSH_KEY: a private key in root's
+  # (deploy/native/README.md), but only when chadd's inputs changed since the
+  # commit prod runs (/usr/local/bin/chadd.rev). Diffing against prod, not
+  # the push's `before`, means a deploy whose run was cancelled or failed is
+  # picked up by the next push. PROD_SSH_KEY: a private key in root's
   # authorized_keys on the server.
   deploy-chadd:
     needs: linux
@@ -80,18 +86,44 @@ jobs:
       HOST: root@64.177.55.62
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: |
-          docker build -f deploy/chadd.Dockerfile -t irchad-chadd .
-          docker cp "$(docker create irchad-chadd)":/usr/local/bin/chadd ./chadd
-      - name: Deploy
+        with:
+          # Full history, so the diff reaches back to prod's commit.
+          fetch-depth: 0
+      - name: SSH key
         env:
           KEY: ${{ secrets.PROD_SSH_KEY }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$KEY" > ~/.ssh/id && chmod 600 ~/.ssh/id
           echo "64.177.55.62 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJxUsvP6xFUASiojiJKnRe5VBg1J+JT6PrufoK9RoGcm" > ~/.ssh/known_hosts
-          # Write beside, then rename: overwriting a running binary fails with ETXTBSY.
-          ssh -i ~/.ssh/id "$HOST" 'cat > /usr/local/bin/chadd.new && chmod 755 /usr/local/bin/chadd.new \
+      - name: Changed since prod?
+        id: changed
+        run: |
+          # chadd's build inputs: itself, its only workspace dependency, the
+          # lockfile and workspace manifest, cargo config and its Dockerfile.
+          paths="crates/chadd crates/chad-proto Cargo.toml Cargo.lock .cargo deploy/chadd.Dockerfile"
+          prod=$(ssh -i ~/.ssh/id "$HOST" 'cat /usr/local/bin/chadd.rev 2>/dev/null' || true)
+          if ! git cat-file -e "${prod}^{commit}" 2>/dev/null; then
+            echo "prod's commit unknown (${prod:-none}): deploying"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$prod" "$GITHUB_SHA" -- $paths; then
+            echo "chadd unchanged since prod's ${prod:0:9}: skipping"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat "$prod" "$GITHUB_SHA" -- $paths
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build
+        if: steps.changed.outputs.deploy == 'true'
+        run: |
+          docker build -f deploy/chadd.Dockerfile -t irchad-chadd .
+          docker cp "$(docker create irchad-chadd)":/usr/local/bin/chadd ./chadd
+      - name: Deploy
+        if: steps.changed.outputs.deploy == 'true'
+        run: |
+          # Write beside, then rename: overwriting a running binary fails with
+          # ETXTBSY. Record the commit only once the new chadd is up.
+          ssh -i ~/.ssh/id "$HOST" "cat > /usr/local/bin/chadd.new && chmod 755 /usr/local/bin/chadd.new \
             && mv /usr/local/bin/chadd.new /usr/local/bin/chadd \
-            && systemctl restart chadd && sleep 2 && systemctl is-active chadd' < chadd
+            && systemctl restart chadd && sleep 2 && systemctl is-active chadd \
+            && echo $GITHUB_SHA > /usr/local/bin/chadd.rev" < chadd
