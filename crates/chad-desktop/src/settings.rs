@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 
 use chad_media::{AudioSettings, ScreenSettings};
-use egui::{FontId, ThemePreference};
+use egui::{FontId, ThemePreference, Visuals};
 use serde::{Deserialize, Serialize};
 
+use crate::catppuccin;
 use crate::platform::ptt::PttBind;
 use crate::screen::Layout;
 
@@ -14,7 +15,7 @@ pub const KEY: &str = "settings";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub theme: ThemePreference,
+    pub theme: Theme,
     pub font_size: f32,
     pub notify: Notify,
     pub audio: AudioSettings,
@@ -43,7 +44,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: ThemePreference::Dark,
+            theme: Theme::Dark,
             font_size: 14.0,
             notify: Notify::MentionsAndDms,
             audio: AudioSettings::default(),
@@ -69,12 +70,59 @@ pub enum Notify {
     Never,
 }
 
+/// egui's own looks plus the Catppuccin flavors. The first three keep the names
+/// `ThemePreference` serializes to, so older settings still load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Theme {
+    Dark,
+    Light,
+    System,
+    Latte,
+    Frappe,
+    Macchiato,
+    Mocha,
+}
+
+impl Theme {
+    fn palette(self) -> Option<catppuccin::Palette> {
+        match self {
+            Theme::Dark | Theme::Light | Theme::System => None,
+            Theme::Latte => Some(catppuccin::LATTE),
+            Theme::Frappe => Some(catppuccin::FRAPPE),
+            Theme::Macchiato => Some(catppuccin::MACCHIATO),
+            Theme::Mocha => Some(catppuccin::MOCHA),
+        }
+    }
+
+    pub fn apply(self, ctx: &egui::Context) {
+        // Back to stock first, so leaving a flavor leaves none of its colors behind.
+        ctx.set_visuals_of(egui::Theme::Dark, Visuals::dark());
+        ctx.set_visuals_of(egui::Theme::Light, Visuals::light());
+        match self.palette() {
+            None => ctx.set_theme(match self {
+                Theme::Light => ThemePreference::Light,
+                Theme::System => ThemePreference::System,
+                _ => ThemePreference::Dark,
+            }),
+            Some(p) => {
+                let theme = if p.dark {
+                    egui::Theme::Dark
+                } else {
+                    egui::Theme::Light
+                };
+                ctx.set_visuals_of(theme, p.visuals());
+                ctx.set_theme(theme);
+            }
+        }
+    }
+}
+
 /// Label column width, shared by every settings grid so they line up.
 pub const LABEL_W: f32 = 120.0;
 
 impl Settings {
     pub fn apply(&self, ctx: &egui::Context) {
-        ctx.set_theme(self.theme);
+        self.theme.apply(ctx);
         let k = self.font_size.clamp(10.0, 24.0) / 12.5;
         let defaults = egui::Style::default().text_styles;
         ctx.all_styles_mut(|style| {
@@ -96,10 +144,19 @@ impl Settings {
             .min_col_width(LABEL_W)
             .show(ui, |ui| {
                 ui.label("Theme");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.theme, ThemePreference::Dark, "Dark");
-                    ui.selectable_value(&mut self.theme, ThemePreference::Light, "Light");
-                    ui.selectable_value(&mut self.theme, ThemePreference::System, "Match system");
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.theme, Theme::Dark, "Dark");
+                        ui.selectable_value(&mut self.theme, Theme::Light, "Light");
+                        ui.selectable_value(&mut self.theme, Theme::System, "Match system");
+                    });
+                    ui.horizontal(|ui| {
+                        ui.weak("Catppuccin");
+                        ui.selectable_value(&mut self.theme, Theme::Latte, "Latte");
+                        ui.selectable_value(&mut self.theme, Theme::Frappe, "Frappé");
+                        ui.selectable_value(&mut self.theme, Theme::Macchiato, "Macchiato");
+                        ui.selectable_value(&mut self.theme, Theme::Mocha, "Mocha");
+                    });
                 });
                 ui.end_row();
 

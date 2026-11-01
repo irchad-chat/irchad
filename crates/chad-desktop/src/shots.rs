@@ -91,6 +91,10 @@ fn settings() {
     s.harness.run();
     s.click("Settings");
     s.shot("settings");
+    s.click("Mocha");
+    s.shot("settings_mocha");
+    s.click("Latte");
+    s.shot("settings_latte");
 }
 
 impl Shots {
