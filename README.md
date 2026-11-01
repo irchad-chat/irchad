@@ -7,8 +7,8 @@ Requires a network running [ergo](https://github.com/ergochat/ergo) (≥ 2.19) +
 Linux (Wayland and X11) is the primary platform, Windows is supported, and Android is planned.
 
 **Nightly builds** of `main` (rebuilt each night when `main` has changed):
-[Linux x86_64](https://git.gentoo.party/sam/irchad-ng/releases/download/nightly/irchad-linux-x86_64) ·
-[Windows x86_64 installer](https://git.gentoo.party/sam/irchad-ng/releases/download/nightly/irchad-windows-x86_64-setup.exe) ·
+[Linux x86_64](https://downloads.gentoo.party/irchad/nightly/irchad-linux-x86_64) ·
+[Windows x86_64 installer](https://downloads.gentoo.party/irchad/nightly/irchad-windows-x86_64-setup.exe) ·
 [release page](https://git.gentoo.party/sam/irchad-ng/releases/tag/nightly)
 
 Status: planning. See [docs/PLAN.md](docs/PLAN.md).

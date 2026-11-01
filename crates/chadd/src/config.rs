@@ -109,7 +109,7 @@ fn default_listen() -> SocketAddr {
 }
 
 fn default_downloads() -> Url {
-    Url::parse("https://git.gentoo.party/sam/irchad-ng/releases/download/").expect("static URL")
+    Url::parse("https://downloads.gentoo.party/irchad/").expect("static URL")
 }
 
 fn default_registration() -> Registration {

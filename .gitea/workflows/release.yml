@@ -187,6 +187,16 @@ jobs:
     needs: [release, linux, windows, android, chadd-image]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      # S3_ACCESS_KEY/S3_SECRET_KEY: garage's `gitea-actions` key (woodford).
+      # Mirrored while still a draft, so a failure here leaves it unpublished.
+      - name: Mirror to downloads.gentoo.party
+        env:
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          TOKEN: ${{ github.token }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+        run: deploy/s3-mirror.sh ${{ needs.release.outputs.id }} irchad/v${{ needs.release.outputs.version }} irchad/latest
       - name: Publish the draft
         run: |
           curl -fsS -X PATCH -H "Authorization: token ${{ github.token }}" -H "Content-Type: application/json" \

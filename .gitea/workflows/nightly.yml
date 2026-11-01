@@ -116,3 +116,17 @@ jobs:
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
             -F "attachment=@packaging/windows/irchad-setup.exe" `
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64-setup.exe"
+
+  # S3_ACCESS_KEY/S3_SECRET_KEY: garage's `gitea-actions` key (woodford).
+  mirror:
+    needs: [release, linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mirror to downloads.gentoo.party
+        env:
+          API: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}
+          TOKEN: ${{ github.token }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+        run: deploy/s3-mirror.sh ${{ needs.release.outputs.id }} irchad/nightly
