@@ -1788,6 +1788,21 @@ impl App {
             // The `@` list was open last frame, so Tab, Enter and Escape are its.
             let open_id = id.with("completing");
             let completing = ui.data(|d| d.get_temp(open_id)).unwrap_or(false);
+            // Typing or pasting while nothing has focus goes to the composer,
+            // this frame, so the first character isn't lost.
+            if active
+                && focused
+                && ui.memory(|m| m.focused().is_none())
+                && ui.input(|i| {
+                    i.events.iter().any(|e| match e {
+                        egui::Event::Text(t) => !t.is_empty(),
+                        egui::Event::Paste(_) | egui::Event::PasteImage(_) => true,
+                        _ => false,
+                    })
+                })
+            {
+                ui.memory_mut(|m| m.request_focus(id));
+            }
             if let Some((_, nick)) = &b.reply {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
@@ -2582,6 +2597,7 @@ impl App {
                     );
                 }
                 self.picker = None;
+                self.refocus_composer();
                 return;
             }
             _ => {}
@@ -2602,13 +2618,40 @@ impl App {
                     if let Some((network, target)) = self.on_screen()
                         && let Some(b) = self.buffer_mut(&network, &target)
                     {
-                        b.draft.push_str(&e);
+                        // At the caret, which then sits after the emoji.
+                        let id = egui::Id::unique(("composer", &network, &b.key));
+                        let state = egui::TextEdit::load_state(ctx, id);
+                        let end = b.draft.chars().count();
+                        let at = state
+                            .as_ref()
+                            .and_then(|s| s.cursor.char_range())
+                            .map_or(end, |r| usize::from(r.primary.index).min(end));
+                        let byte = b
+                            .draft
+                            .char_indices()
+                            .nth(at)
+                            .map_or(b.draft.len(), |(i, _)| i);
+                        b.draft.insert_str(byte, &e);
+                        if let Some(mut s) = state {
+                            let c = egui::text::CCursor::new(at + e.chars().count());
+                            s.cursor
+                                .set_char_range(Some(egui::text::CCursorRange::one(c)));
+                            s.store(ctx, id);
+                        }
                     }
                 }
             }
             self.picker = None;
+            self.refocus_composer();
         } else if close {
             self.picker = None;
+        }
+    }
+
+    /// Back to typing in the buffer on screen, e.g. after the picker.
+    fn refocus_composer(&mut self) {
+        if let Some(ni) = self.current.as_deref().and_then(|c| self.net_idx(c)) {
+            self.nets[ni].focus = true;
         }
     }
 
