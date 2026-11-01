@@ -118,7 +118,7 @@ impl Theme {
 }
 
 /// Label column width, shared by every settings grid so they line up.
-pub const LABEL_W: f32 = 120.0;
+pub const LABEL_W: f32 = 140.0;
 
 impl Settings {
     pub fn apply(&self, ctx: &egui::Context) {

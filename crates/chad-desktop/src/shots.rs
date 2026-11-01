@@ -30,6 +30,8 @@ impl Shots {
         let open = open.map(str::to_owned);
         let harness = Harness::builder()
             .with_size([1100.0, 720.0])
+            // Scroll-to-bottom animations take ~20 frames to settle.
+            .with_max_steps(64)
             // shortcut: some fields lack accessible names; re-enable once labelled.
             .with_accessibility_check(true)
             .wgpu()
@@ -98,9 +100,11 @@ fn settings() {
 }
 
 impl Shots {
-    /// Clicks the widget named `label` and lets the UI react.
+    /// Clicks the first widget named `label` and lets the UI react. First,
+    /// because a pane's title repeats its sidebar entry, which comes before it.
     pub fn click(&mut self, label: &str) {
-        self.harness.get_by_label(label).click();
+        let node = self.harness.get_all_by_label(label).next();
+        node.unwrap_or_else(|| panic!("no {label:?}")).click();
         let _guard = self._rt.enter();
         // Not `run()`: spinners and voice meters never settle.
         self.harness.run_steps(4);
@@ -447,7 +451,12 @@ fn live_e2ee() {
     s.wait_for("Done");
     s.shot("e2ee_verified");
     s.click("Done");
-    s.harness.get_by_label_contains(&bob).click();
+    // The sidebar's entry; the DM pane's title has the name too.
+    s.harness
+        .get_all_by_label_contains(&bob)
+        .next()
+        .unwrap()
+        .click();
     s.settle(1);
     s.shot("e2ee_dm_verified");
 }

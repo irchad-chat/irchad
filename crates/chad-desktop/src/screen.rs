@@ -576,7 +576,7 @@ impl ShareDialog {
                 ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            {
                 let target = match self.pick {
                     Some(Pick::Portal) => Some(Target::Portal {
                         restore_token: restore_token.clone(),
@@ -584,10 +584,11 @@ impl ShareDialog {
                     Some(Pick::Source(id)) => Some(Target::Source(id)),
                     None => None,
                 };
-                let go = ui.add_enabled(!busy && target.is_some(), egui::Button::new("Share"));
-                if go.clicked()
-                    && let Some(target) = target
-                {
+                let (go, cancel) = crate::app::footer(ui, "Share", !busy && target.is_some(), busy);
+                if cancel {
+                    outcome = DialogOutcome::Closed;
+                }
+                if go && let Some(target) = target {
                     let (tx, rx) = mpsc::channel();
                     let (v, s, app, ctx) = (
                         voice.clone(),
@@ -602,13 +603,7 @@ impl ShareDialog {
                     self.started = Some(rx);
                     self.error = None;
                 }
-                if busy {
-                    ui.spinner();
-                }
-                if ui.button("Cancel").clicked() {
-                    outcome = DialogOutcome::Closed;
-                }
-            });
+            }
         });
         outcome
     }

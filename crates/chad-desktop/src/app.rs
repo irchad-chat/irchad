@@ -218,6 +218,26 @@ use chad_core::view::key;
 
 /// The nicks a buffer's composer completes: the channel's members, or the
 /// other side of a DM.
+/// Narrowest a chat column gets before its pane hides the member list.
+const MIN_CHAT_W: f32 = 360.0;
+
+/// A dialog's button row: right-aligned, the primary action accent-filled and
+/// rightmost. Returns (primary clicked, cancel clicked).
+pub(crate) fn footer(ui: &mut egui::Ui, primary: &str, enabled: bool, busy: bool) -> (bool, bool) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let sel = ui.visuals().selection;
+        let go =
+            egui::Button::new(RichText::new(primary).color(sel.stroke.color)).fill(sel.bg_fill);
+        let go = ui.add_enabled(enabled, go).clicked();
+        let cancel = ui.button("Cancel").clicked();
+        if busy {
+            ui.spinner();
+        }
+        (go, cancel)
+    })
+    .inner
+}
+
 fn completable(
     members: &Option<Vec<Member>>,
     msgs: &[ChatMessage],
@@ -651,9 +671,12 @@ impl App {
                 {
                     focus = Some(p);
                 }
-                if self.view.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
-                    let fit = self.members_width(&pane, ni, bi);
-                    egui::Panel::right("members")
+                // A narrow pane drops the member list rather than crushing the chat.
+                let fit = (self.view.nets[ni].buffers[bi].info.kind == BufferKind::Channel)
+                    .then(|| self.members_width(&pane, ni, bi))
+                    .filter(|fit| rect.width() - fit >= MIN_CHAT_W);
+                if let Some(fit) = fit {
+                    egui::Panel::right(egui::Id::unique(("members", net, k)))
                         .default_size(200.0)
                         .size_range(fit..=360.0)
                         .show(&mut pane, |ui| self.members(ui, ni, bi));
@@ -701,6 +724,8 @@ impl App {
     }
 
     fn toast(&mut self, text: String) {
+        // The same message again just restarts its timer instead of stacking.
+        self.toasts.retain(|(t, _)| *t != text);
         self.toasts.push((text, Instant::now()));
         if self.toasts.len() > 5 {
             self.toasts.remove(0);
@@ -1906,11 +1931,16 @@ impl App {
                     })
                 });
             }
+            // Square buttons as tall as the one-line field beside them.
+            let side = vec2(1.0, 1.0) * (ui.text_style_height(&egui::TextStyle::Body) + 24.0);
             let out = ui
                 .horizontal(|ui| {
                     if uploads
                         && ui
-                            .button(RichText::new(icons::PAPERCLIP).size(18.0))
+                            .add(
+                                egui::Button::new(RichText::new(icons::PAPERCLIP).size(18.0))
+                                    .min_size(side),
+                            )
                             .tip("Upload a file")
                             .clicked()
                     {
@@ -1918,14 +1948,20 @@ impl App {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let e = ui
-                            .button(RichText::new(icons::SMILEY).size(18.0))
+                            .add(
+                                egui::Button::new(RichText::new(icons::SMILEY).size(18.0))
+                                    .min_size(side),
+                            )
                             .tip("Emoji");
                         if e.clicked() {
                             emoji_at = Some((e.rect.left_top(), false));
                         }
                         if gifs {
                             let g = ui
-                                .button(RichText::new("GIF").strong().size(13.0))
+                                .add(
+                                    egui::Button::new(RichText::new("GIF").strong().size(13.0))
+                                        .min_size(side),
+                                )
                                 .tip("GIFs");
                             if g.clicked() {
                                 emoji_at = Some((g.rect.left_top(), true));
@@ -2343,23 +2379,14 @@ impl App {
                 let ready = !j.invite.trim().is_empty()
                     && !j.account.trim().is_empty()
                     && (j.mode == JoinMode::Guest || !j.password.is_empty());
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    let label = match j.mode {
-                        JoinMode::Login => "Log in",
-                        JoinMode::Register => "Sign up",
-                        JoinMode::Guest => "Join",
-                    };
-                    submit = ui
-                        .add_enabled(ready && !busy, egui::Button::new(label))
-                        .clicked()
-                        || (ready && !busy && ui.input(|i| i.key_pressed(Key::Enter)));
-                    if busy {
-                        ui.spinner();
-                    }
-                });
+                let label = match j.mode {
+                    JoinMode::Login => "Log in",
+                    JoinMode::Register => "Sign up",
+                    JoinMode::Guest => "Join",
+                };
+                let (go, no) = footer(ui, label, ready && !busy, busy);
+                submit = go || (ready && !busy && ui.input(|i| i.key_pressed(Key::Enter)));
+                cancel = no;
             });
             if submit {
                 match invite::parse(&j.invite) {
@@ -2443,18 +2470,9 @@ impl App {
                 }
                 ui.add_space(8.0);
                 let ready = !s.account.trim().is_empty() && !s.password.is_empty() && !s.busy;
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    submit = ui
-                        .add_enabled(ready, egui::Button::new("Sign up"))
-                        .clicked()
-                        || (ready && ui.input(|i| i.key_pressed(Key::Enter)));
-                    if s.busy {
-                        ui.spinner();
-                    }
-                });
+                let (go, no) = footer(ui, "Sign up", ready, s.busy);
+                submit = go || (ready && ui.input(|i| i.key_pressed(Key::Enter)));
+                cancel = no;
             });
             if submit {
                 s.busy = true;
@@ -2518,13 +2536,14 @@ impl App {
                 );
                 ui.label("Your account stays, so you can join again later.");
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let leave = egui::Button::new(RichText::new("Leave").color(Color32::WHITE))
+                        .fill(Color32::from_rgb(218, 55, 60));
+                    let leave = ui.add(leave).clicked();
                     if ui.button("Cancel").clicked() {
                         close = true;
                     }
-                    let leave = egui::Button::new(RichText::new("Leave").color(Color32::WHITE))
-                        .fill(Color32::from_rgb(218, 55, 60));
-                    if ui.add(leave).clicked() {
+                    if leave {
                         self.core.send(Command::Remove {
                             network: network.clone(),
                         });
@@ -2867,10 +2886,7 @@ impl App {
                 }
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                close = ui.button("Cancel").clicked();
-                save = ui.button("Save").clicked();
-            });
+            (save, close) = footer(ui, "Save", true, false);
         });
         if save {
             let name = d.name.trim().to_owned();
