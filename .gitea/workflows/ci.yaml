@@ -42,12 +42,14 @@ jobs:
 
       # Also caches libwebrtc: webrtc-sys downloads its prebuilt into target/.
       # rust-cache keys on the job id alone, and nightly/release reuse these
-      # ids for release builds, so name the key. Save on failure too: a red
-      # clippy still compiled every dependency.
+      # ids for release builds, so name the key. Don't save on failure: a
+      # key is never overwritten until dependencies or rustc change, so a
+      # build that died early would pin a partial cache (it did, under
+      # v0-rust; bump prefix-key to start over).
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust
           shared-key: ci-linux
-          cache-on-failure: true
 
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
