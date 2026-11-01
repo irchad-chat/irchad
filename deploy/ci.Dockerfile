@@ -13,12 +13,20 @@ FROM docker.io/library/ubuntu:24.04
 COPY --from=docker.io/library/node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 
 # git/zstd/jq/curl for checkout, the cache action and release-asset uploads;
-# build-essential for rustc's linker; PipeWire headers for pipewire-sys;
-# lavapipe (software Vulkan) so the wgpu screenshot tests find an adapter.
+# build-essential for rustc's linker; lavapipe (software Vulkan) so the wgpu
+# screenshot tests find an adapter. Headers found through pkg-config:
+#   libpipewire-0.3-dev  pipewire-sys / libspa-sys
+#   libfontconfig-dev    yeslogic-fontconfig-sys
+#   libasound2-dev       alsa-sys (cpal always has it on Linux)
+#   libglib2.0-dev       webrtc-sys (glib/gobject/gio headers)
+#   libva-dev            webrtc-sys VAAPI encoders; without it they're
+#                        silently left out (libva is dlopened at runtime)
+# Wayland, X11, xkbcommon and EGL load at runtime; SQLite is bundled.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl wget git jq zstd xz-utils unzip build-essential \
-        libpipewire-0.3-dev libfontconfig-dev pkg-config \
+        pkg-config libpipewire-0.3-dev libfontconfig-dev libasound2-dev \
+        libglib2.0-dev libva-dev \
         mesa-vulkan-drivers libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 
