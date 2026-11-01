@@ -132,7 +132,8 @@ jobs:
 
   # Asset names stay the same across releases so Obtainium can track them (D40).
   android:
-    needs: release
+    # One fat-LTO link at a time: two in parallel OOM the runner (0.1.2).
+    needs: [release, linux]
     runs-on: ubuntu-latest
     container:
       image: 192.0.2.7:3000/sam/irchad-ci:latest
@@ -165,7 +166,7 @@ jobs:
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-android-arm64.apk"
 
   chadd-image:
-    needs: release
+    needs: [release, android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
