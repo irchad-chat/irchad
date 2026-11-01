@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::chatlog::{self, Action, ChatLog, Extras, Profile};
 use crate::icons::{self, Tip};
-use crate::media::Media;
+use crate::media::{self, Media};
 use crate::platform::idle::Idle;
 use crate::platform::ptt::Ptt;
 use crate::platform::{self, Os, Tray};
@@ -85,6 +85,8 @@ pub struct App {
     /// The emoji verification on screen: (network, nick, where it stands).
     verify: Option<(String, String, VerifyState)>,
     files: (mpsc::Sender<Picked>, mpsc::Receiver<Picked>),
+    /// Numbers attachments, for their preview's key.
+    attached: u64,
     idle: Idle,
     /// Whether the networks were last told we're away.
     away_sent: bool,
@@ -169,6 +171,15 @@ struct Buffer {
     voice: Vec<String>,
     /// Names of files on their way up.
     uploads: Vec<String>,
+    /// Files waiting in the composer, uploaded when the message is sent.
+    attached: Vec<Attachment>,
+}
+
+struct Attachment {
+    name: String,
+    bytes: Blob,
+    /// Its preview in the network's `Media`.
+    key: String,
 }
 
 #[derive(Default)]
@@ -345,6 +356,7 @@ impl App {
             profile: None,
             verify: None,
             files: mpsc::channel(),
+            attached: 0,
             idle: Idle::start({
                 let ctx = cc.egui_ctx.clone();
                 move || ctx.request_repaint()
@@ -398,8 +410,16 @@ impl App {
         let _ = self.files.0.send((network.to_owned(), target, path));
     }
 
-    /// Sends a file to chadd; the URL lands in the buffer's draft.
-    fn upload(&mut self, network: &str, target: Option<String>, name: String, bytes: Vec<u8>) {
+    /// Attaches a file to the buffer's composer, to go up when the message
+    /// is sent; an avatar (no target) goes to chadd right away.
+    fn upload(
+        &mut self,
+        ctx: &egui::Context,
+        network: &str,
+        target: Option<String>,
+        name: String,
+        bytes: Vec<u8>,
+    ) {
         let Some(max) = self
             .net_idx(network)
             .and_then(|i| self.nets[i].info.uploads)
@@ -412,10 +432,27 @@ impl App {
                 max >> 20
             ));
         }
-        if let Some(b) = target.as_deref().and_then(|t| self.buffer_mut(network, t)) {
-            b.uploads.push(name.clone());
-        }
         let bytes = Blob(bytes.into());
+        if let Some(t) = &target {
+            self.attached += 1;
+            let preview = format!("attach:{}", self.attached);
+            let Some(ni) = self.net_idx(network) else {
+                return;
+            };
+            let n = &mut self.nets[ni];
+            let Some(bi) = n.buffer(&key(t)) else {
+                return;
+            };
+            if media::media_kind(&name) == Some(media::Kind::Image) {
+                n.media.local(preview.clone(), bytes.clone(), ctx);
+            }
+            n.buffers[bi].attached.push(Attachment {
+                name,
+                bytes,
+                key: preview,
+            });
+            return;
+        }
         self.send(
             network,
             NetCommand::Upload {
@@ -838,6 +875,7 @@ impl App {
                             jump: None,
                             voice: Vec::new(),
                             uploads: Vec::new(),
+                            attached: Vec::new(),
                         });
                         n.buffers.sort_by(|a, b| {
                             (a.info.kind == BufferKind::Dm, &a.key)
@@ -978,14 +1016,14 @@ impl App {
                 result,
             } => {
                 match (&target, result) {
-                    (Some(t), Ok(url)) => {
-                        if let Some(b) = self.buffer_mut(&network, t) {
-                            if !b.draft.is_empty() && !b.draft.ends_with(char::is_whitespace) {
-                                b.draft.push(' ');
-                            }
-                            b.draft.push_str(url.as_str());
-                        }
-                    }
+                    (Some(t), Ok(url)) => self.send(
+                        &network,
+                        NetCommand::Send {
+                            target: t.clone(),
+                            text: url.to_string(),
+                            reply_to: None,
+                        },
+                    ),
                     (None, Ok(url)) => self.send(
                         &network,
                         NetCommand::SetAvatar {
@@ -1127,7 +1165,7 @@ impl App {
                 .and_then(|i| self.nets[i].info.uploads)
                 .unwrap_or(0);
             match read_file(&path, max) {
-                Ok(bytes) => self.upload(&network, target, name, bytes),
+                Ok(bytes) => self.upload(ctx, &network, target, name, bytes),
                 Err(e) => self.toast(format!("{name}: {e}")),
             }
         }
@@ -1834,6 +1872,39 @@ impl App {
                     ui.label(RichText::new(format!("Uploading {name}…")).small());
                 });
             }
+            let mut unattach = None;
+            ui.horizontal_wrapped(|ui| {
+                for (i, a) in b.attached.iter().enumerate() {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            match media::media_kind(&a.name) {
+                                Some(media::Kind::Image) => {
+                                    media.local_preview(ui, &a.key, vec2(160.0, 120.0))
+                                }
+                                Some(media::Kind::Video) => {
+                                    ui.label(RichText::new(icons::PLAY).size(32.0));
+                                }
+                                _ => {
+                                    ui.label(RichText::new(icons::FILE).size(32.0));
+                                }
+                            }
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Label::new(RichText::new(&a.name).small()).truncate());
+                                if ui
+                                    .small_button(icons::X)
+                                    .tip(&format!("Remove {}", a.name))
+                                    .clicked()
+                                {
+                                    unattach = Some(i);
+                                }
+                            });
+                        });
+                    });
+                }
+            });
+            if let Some(i) = unattach {
+                media.forget(&b.attached.remove(i).key);
+            }
             let id = egui::Id::unique(("composer", &network, &b.key));
             // The `@` list was open last frame, so Tab, Enter and Escape are its.
             let open_id = id.with("completing");
@@ -1924,6 +1995,7 @@ impl App {
                         let edit = egui::TextEdit::multiline(&mut b.draft)
                             .hint_text(format!("Message {target}"))
                             .desired_rows(1)
+                            .margin(egui::Margin::symmetric(14, 12))
                             .desired_width(f32::INFINITY)
                             .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
                             .lock_focus(true);
@@ -2003,18 +2075,30 @@ impl App {
                     } else {
                         no_gifs = true;
                     }
-                } else if !text.trim().is_empty() {
-                    let reply_to = b.reply.take().map(|(id, _)| id);
-                    send(NetCommand::Send {
-                        target: target.clone(),
-                        text,
-                        reply_to,
-                    });
+                } else if !text.trim().is_empty() || !b.attached.is_empty() {
+                    if !text.trim().is_empty() {
+                        let reply_to = b.reply.take().map(|(id, _)| id);
+                        send(NetCommand::Send {
+                            target: target.clone(),
+                            text,
+                            reply_to,
+                        });
+                    }
+                    // Each attachment follows as its own message once it's up.
+                    for a in b.attached.drain(..) {
+                        media.forget(&a.key);
+                        b.uploads.push(a.name.clone());
+                        send(NetCommand::Upload {
+                            target: Some(target.clone()),
+                            name: a.name,
+                            bytes: a.bytes,
+                        });
+                    }
                     b.draft.clear();
                     b.log.scroll_to_bottom();
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(12.0);
         });
 
         let dm = egui::CentralPanel::default().show(ui, |ui| {
@@ -2151,7 +2235,14 @@ impl App {
                 Pasted::File(path) => self.upload_file(&network, Some(target.clone()), path),
                 Pasted::Image(img) => match png(&img) {
                     Some(bytes) => {
-                        self.upload(&network, Some(target.clone()), "pasted.png".into(), bytes)
+                        let ctx = ui.ctx().clone();
+                        self.upload(
+                            &ctx,
+                            &network,
+                            Some(target.clone()),
+                            "pasted.png".into(),
+                            bytes,
+                        )
                     }
                     None => self.toast("Couldn't paste that image.".into()),
                 },

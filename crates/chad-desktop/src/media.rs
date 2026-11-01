@@ -38,19 +38,23 @@ pub fn kind(url: &str, network: &str) -> Option<Kind> {
     if !matches!(u.scheme(), "http" | "https") {
         return None;
     }
-    let ext = u
-        .path()
-        .rsplit_once('.')
-        .map(|(_, e)| e.to_ascii_lowercase())
-        .unwrap_or_default();
     let own = Url::parse(network).is_ok_and(|n| n.origin() == u.origin())
         && u.path().starts_with("/uploads/");
-    Some(match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => Kind::Image,
-        "mp4" | "webm" | "mov" => Kind::Video,
-        _ if own => Kind::File,
-        _ => Kind::Page,
+    Some(match media_kind(u.path()) {
+        Some(k) => k,
+        None if own => Kind::File,
+        None => Kind::Page,
     })
+}
+
+/// `Image` or `Video` by a file name's extension.
+pub fn media_kind(name: &str) -> Option<Kind> {
+    let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => Some(Kind::Image),
+        "mp4" | "webm" | "mov" => Some(Kind::Video),
+        _ => None,
+    }
 }
 
 struct Frames {
@@ -126,6 +130,35 @@ impl Media {
         });
     }
 
+    /// Decodes an attachment's bytes for a preview under `key`; never fetched.
+    pub fn local(&mut self, key: String, bytes: chad_core::Blob, ctx: &egui::Context) {
+        self.images.insert(key.clone(), Img::Loading);
+        self.bytes(key, Ok(bytes), ctx);
+    }
+
+    pub fn forget(&mut self, key: &str) {
+        self.images.remove(key);
+    }
+
+    /// An attachment's preview from `local`, fitted into `max`.
+    pub fn local_preview(&self, ui: &mut egui::Ui, key: &str, max: Vec2) {
+        match self.images.get(key) {
+            Some(Img::Ready(f)) => {
+                let scale = (max.x / f.size.x).min(max.y / f.size.y).min(1.0);
+                ui.add(
+                    egui::Image::new((frame_at(f, ui).id(), f.size * scale))
+                        .corner_radius(CornerRadius::same(4)),
+                );
+            }
+            Some(Img::Loading) => {
+                ui.add_sized(max * 0.5, egui::Spinner::new());
+            }
+            _ => {
+                ui.label(RichText::new(icons::FILE).size(32.0));
+            }
+        }
+    }
+
     /// Forgets failed images and previews, so they're asked for again: on
     /// (re)connecting, since the scrollback shown before that asked offline.
     pub fn retry_failed(&mut self) {
@@ -144,6 +177,10 @@ impl Media {
     /// Turns decoded images into textures; call once per frame.
     pub fn poll(&mut self, ctx: &egui::Context) {
         while let Ok((url, frames, bytes)) = self.decoded.1.try_recv() {
+            // Forgotten while decoding (a removed attachment).
+            if !self.images.contains_key(&url) {
+                continue;
+            }
             let img = match frames {
                 Some(frames) if !frames.is_empty() => {
                     let size = frames[0].0.size;
