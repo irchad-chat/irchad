@@ -336,6 +336,7 @@ fn live_e2ee() {
             secrets: Arc::new(chad_core::secrets::MemorySecrets::default()),
             notify: Arc::new(|| {}),
             media: None,
+            version: "IrChad test".into(),
         });
         core.send(Command::Join {
             invite: origin.clone(),

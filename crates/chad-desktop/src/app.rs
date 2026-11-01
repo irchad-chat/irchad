@@ -630,9 +630,10 @@ impl App {
                     focus = Some(p);
                 }
                 if self.nets[ni].buffers[bi].info.kind == BufferKind::Channel {
+                    let fit = self.members_width(&pane, ni, bi);
                     egui::Panel::right("members")
                         .default_size(200.0)
-                        .size_range(140.0..=360.0)
+                        .size_range(fit..=360.0)
                         .show(&mut pane, |ui| self.members(ui, ni, bi));
                 }
                 if self.chat(&mut pane, ni, bi, active, (n > 1).then_some(i), chats > 1) {
@@ -1196,84 +1197,93 @@ impl App {
     }
 
     fn rail(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-        ui.vertical_centered(|ui| {
-            let mut pick = None;
-            for n in &self.nets {
-                let selected = self.current.as_deref() == Some(&n.info.network);
-                let (rect, resp) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::click());
-                let p = ui.painter();
-                let round = if selected || resp.hovered() { 14 } else { 24 };
-                match &n.icon {
-                    Icon::Ready(tex) => {
-                        egui::Image::new(tex)
-                            .corner_radius(CornerRadius::same(round))
-                            .paint_at(ui, rect);
-                    }
-                    _ => {
-                        let fill = if selected {
-                            Color32::from_rgb(88, 101, 242)
-                        } else {
-                            ui.visuals().widgets.inactive.bg_fill
-                        };
-                        p.rect_filled(rect, round, fill);
-                        let initial: String = n.info.name.chars().take(1).collect();
-                        p.text(
-                            rect.center(),
-                            Align2::CENTER_CENTER,
-                            initial.to_uppercase(),
-                            FontId::proportional(20.0),
-                            ui.visuals().strong_text_color(),
-                        );
-                    }
-                }
-                if selected || n.unread() {
-                    let h = if selected { 36.0 } else { 8.0 };
-                    let pill = egui::Rect::from_center_size(
-                        egui::pos2(ui.max_rect().left() + 2.0, rect.center().y),
-                        vec2(4.0, h),
-                    );
-                    p.rect_filled(pill, 2.0, ui.visuals().strong_text_color());
-                }
-                let m = n.mentions();
-                if m > 0 {
-                    mention_badge(ui, rect.right_bottom() - vec2(6.0, 6.0), m);
-                }
-                if !matches!(n.info.state, ConnState::Connected) {
-                    p.circle_filled(rect.right_top() + vec2(-4.0, 4.0), 5.0, Color32::GRAY);
-                }
-                if resp.tip(&n.info.name).clicked() {
-                    pick = Some(n.info.network.clone());
-                }
-                ui.add_space(8.0);
-            }
-            if pick.is_some() {
-                self.current = pick;
-            }
-            if !self.nets.is_empty() {
-                ui.separator();
-            }
-            let add = ui
-                .add_sized(
-                    [48.0, 48.0],
-                    egui::Button::new(RichText::new("+").size(24.0)),
-                )
-                .tip("Join a network");
-            if add.clicked() {
-                self.join = Some(JoinDialog::default());
-            }
+        // Settings pinned to the bottom, networks from the top.
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.add_space(8.0);
             if ui
                 .add_sized(
                     [48.0, 48.0],
-                    egui::Button::new(RichText::new(icons::GEAR).size(20.0)),
+                    egui::Button::new(RichText::new(icons::GEAR).size(22.0)),
                 )
                 .tip("Settings")
                 .clicked()
             {
                 self.show_settings = !self.show_settings;
             }
+            ui.separator();
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                ui.add_space(8.0);
+                self.networks(ui);
+            });
         });
+    }
+
+    fn networks(&mut self, ui: &mut egui::Ui) {
+        let mut pick = None;
+        for n in &self.nets {
+            let selected = self.current.as_deref() == Some(&n.info.network);
+            let (rect, resp) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::click());
+            let p = ui.painter();
+            let round = if selected || resp.hovered() { 14 } else { 24 };
+            match &n.icon {
+                Icon::Ready(tex) => {
+                    egui::Image::new(tex)
+                        .corner_radius(CornerRadius::same(round))
+                        .paint_at(ui, rect);
+                }
+                _ => {
+                    let fill = if selected {
+                        Color32::from_rgb(88, 101, 242)
+                    } else {
+                        ui.visuals().widgets.inactive.bg_fill
+                    };
+                    p.rect_filled(rect, round, fill);
+                    let initial: String = n.info.name.chars().take(1).collect();
+                    p.text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        initial.to_uppercase(),
+                        FontId::proportional(20.0),
+                        ui.visuals().strong_text_color(),
+                    );
+                }
+            }
+            if selected || n.unread() {
+                let h = if selected { 36.0 } else { 8.0 };
+                // In the gutter left of the icon, clear of it.
+                let pill = egui::Rect::from_min_max(
+                    egui::pos2(rect.left() - 9.0, rect.center().y - h / 2.0),
+                    egui::pos2(rect.left() - 5.0, rect.center().y + h / 2.0),
+                );
+                p.rect_filled(pill, 2.0, ui.visuals().strong_text_color());
+            }
+            let m = n.mentions();
+            if m > 0 {
+                mention_badge(ui, rect.right_bottom() - vec2(6.0, 6.0), m);
+            }
+            if !matches!(n.info.state, ConnState::Connected) {
+                p.circle_filled(rect.right_top() + vec2(-4.0, 4.0), 5.0, Color32::GRAY);
+            }
+            if resp.tip(&n.info.name).clicked() {
+                pick = Some(n.info.network.clone());
+            }
+            ui.add_space(8.0);
+        }
+        if pick.is_some() {
+            self.current = pick;
+        }
+        if !self.nets.is_empty() {
+            ui.separator();
+        }
+        let add = ui
+            .add_sized(
+                [48.0, 48.0],
+                egui::Button::new(RichText::new("+").size(24.0)),
+            )
+            .tip("Join a network");
+        if add.clicked() {
+            self.join = Some(JoinDialog::default());
+        }
     }
 
     fn channels(&mut self, ui: &mut egui::Ui, ni: usize) {
@@ -1417,7 +1427,9 @@ impl App {
                                 BufferKind::Channel => "Join a channel",
                                 BufferKind::Dm => "Message someone",
                             };
-                            if ui.small_button("+").tip(hint).clicked() {
+                            let add = egui::Button::new(RichText::new("+").size(18.0))
+                                .min_size(vec2(24.0, 22.0));
+                            if ui.add(add).tip(hint).clicked() {
                                 self.adding = Some((kind, String::new()));
                             }
                         });
@@ -1466,12 +1478,13 @@ impl App {
                                 if *net == network && key(channel) == b.key
                         );
                         if b.info.voice && !in_call {
-                            let right = if b.info.mentions > 0 { 34.0 } else { 14.0 };
+                            let right = if b.info.mentions > 0 { 38.0 } else { 16.0 };
                             let at = egui::Rect::from_center_size(
                                 resp.rect.right_center() - vec2(right, 0.0),
-                                vec2(20.0, 20.0),
+                                vec2(26.0, 22.0),
                             );
-                            let join = egui::Button::new(RichText::new(icons::SPEAKER_HIGH).small()).frame(false);
+                            let join =
+                                egui::Button::new(RichText::new(icons::SPEAKER_HIGH).size(16.0));
                             if ui.put(at, join).tip("Join voice").clicked() {
                                 join_voice = Some(b.info.target.clone());
                             }
@@ -1574,6 +1587,39 @@ impl App {
         if let Some(channel) = join_voice {
             self.send(&network, NetCommand::JoinVoice { channel });
         }
+    }
+
+    /// The member list's narrowest width: its widest row, plus the panel's
+    /// margins, the scroll bar and a little air. Capped, since display names
+    /// can be long; past that they truncate.
+    fn members_width(&self, ui: &egui::Ui, ni: usize, bi: usize) -> f32 {
+        let profiles = &self.nets[ni].profiles;
+        let Some(members) = &self.nets[ni].buffers[bi].members else {
+            return 100.0;
+        };
+        let body = egui::TextStyle::Body.resolve(ui.style());
+        let small = egui::TextStyle::Small.resolve(ui.style());
+        let width = |text: String, font: &FontId| {
+            ui.painter()
+                .layout_no_wrap(text, font.clone(), Color32::WHITE)
+                .size()
+                .x
+        };
+        let away = members.iter().filter(|m| m.away).count();
+        let widest = members
+            .iter()
+            .map(|m| {
+                let name = chatlog::shown(profiles, &m.nick);
+                width(format!("{}{name}", m.prefix), &body)
+            })
+            .chain([
+                width(format!("ONLINE — {}", members.len() - away), &small),
+                width(format!("AWAY — {away}"), &small),
+            ])
+            .fold(0.0, f32::max);
+        let s = &ui.style().spacing.scroll;
+        let bar = s.bar_width + s.bar_inner_margin + s.bar_outer_margin;
+        (widest + 16.0 + bar + 12.0).clamp(100.0, 360.0)
     }
 
     fn members(&mut self, ui: &mut egui::Ui, ni: usize, bi: usize) {
