@@ -1699,6 +1699,9 @@ impl App {
         let uploads = self.nets[ni].info.uploads.is_some();
         let gifs = self.nets[ni].info.gifs.is_some();
         let auto_media = self.settings.load_media;
+        // Keys that aren't typing: the one being bound, and push-to-talk's.
+        let ptt_key = self.ptt.as_ref().map(|p| p.bind);
+        let binding_ptt = self.binding_ptt;
         let n = &mut self.nets[ni];
         let (b, profiles, media, devices) =
             (&mut n.buffers[bi], &n.profiles, &mut n.media, &n.devices);
@@ -1838,13 +1841,15 @@ impl App {
             // this frame, so the first character isn't lost.
             if active
                 && focused
+                && !binding_ptt
                 && ui.memory(|m| m.focused().is_none())
                 && ui.input(|i| {
-                    i.events.iter().any(|e| match e {
-                        egui::Event::Text(t) => !t.is_empty(),
-                        egui::Event::Paste(_) | egui::Event::PasteImage(_) => true,
-                        _ => false,
-                    })
+                    !ptt_key.is_some_and(|k| k.down(i))
+                        && i.events.iter().any(|e| match e {
+                            egui::Event::Text(t) => !t.is_empty(),
+                            egui::Event::Paste(_) | egui::Event::PasteImage(_) => true,
+                            _ => false,
+                        })
                 })
             {
                 ui.memory_mut(|m| m.request_focus(id));
