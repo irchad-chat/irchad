@@ -4,3 +4,8 @@
 /deploy/data/
 /deploy/.env
 /root.crt
+
+# Signing keys (release.yml takes the keystore from a secret).
+*.p12
+*.jks
+*.keystore
