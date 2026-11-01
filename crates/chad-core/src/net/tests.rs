@@ -710,6 +710,12 @@ fn voice_metadata_and_calls() {
     feed(&mut n, ":s 766 * bob chad/voice :Key deleted");
     feed(&mut n, ":alice!u@h NICK alicia");
     assert_eq!(voice_members(&events(&mut n), "#dev").unwrap(), ["alicia"]);
+    // Every device of carol's is gone: ergo auto-aways her, and her value is stale.
+    feed(&mut n, ":s 761 * carol chad/voice * #dev");
+    feed(&mut n, ":carol!u@h AWAY :User is currently disconnected");
+    assert_eq!(voice_members(&events(&mut n), "#dev").unwrap(), ["alicia"]);
+    feed(&mut n, ":alicia!u@h AWAY :brb");
+    assert!(voice_members(&events(&mut n), "#dev").is_none());
     feed(&mut n, ":alicia!u@h QUIT :bye");
     assert_eq!(
         voice_members(&events(&mut n), "#dev").unwrap(),

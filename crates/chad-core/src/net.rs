@@ -39,6 +39,8 @@ const TYPING_EVERY: Duration = Duration::from_secs(3);
 const CTCP_EVERY: Duration = Duration::from_secs(2);
 /// Metadata key for voice: a user's room (`#chan`), or `off` on a channel.
 pub const VOICE_KEY: &str = "chad/voice";
+/// ergo's away reason when an always-on user has no connected devices.
+const ERGO_AUTO_AWAY: &str = "User is currently disconnected";
 /// De-facto metadata keys other clients read too.
 pub const DISPLAY_NAME_KEY: &str = "display-name";
 pub const AVATAR_KEY: &str = "avatar";
@@ -1038,6 +1040,12 @@ impl Net {
             }
             "AWAY" => {
                 let away = m.param(0).is_some_and(|r| !r.is_empty());
+                // ergo's auto-away: no device is connected, so any `chad/voice`
+                // they left behind is stale (D16). A device that comes back
+                // and is in a call puts it back.
+                if m.param(0) == Some(ERGO_AUTO_AWAY) {
+                    self.set_voice_of(&from, None);
+                }
                 self.everywhere(&from, |mem| mem.away = away);
                 let key = self.fold(&from);
                 if let Some(b) = self.buffers.get_mut(&key)

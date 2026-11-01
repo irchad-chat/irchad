@@ -195,3 +195,8 @@ Cargo locks a target dir, so jobs sharing one wait for each other rather than co
 A guest network can turn into an account network (`NetCommand::Register`). The client QUITs and reconnects through the normal sign-up path: pre-registration `REGISTER *`, email `VERIFY` if needed, then a fresh SASL login with the device ID (D11). It doesn't use an in-session `REGISTER`, because ergo ties that to the current nick and the login would lack the `@device`.
 Until that login succeeds the network stays a guest on disk (meta `guest`). A failure at any step, including a restart, leaves it a guest, and a failure while connected reconnects it as one (`Event::SignUpFailed`).
 On success the network gets meta `account`, its password is saved, E2EE starts, and meta `rejoin` is set for one sync. The new account is always-on but in no channels yet, so that first sync JOINs the cached channels instead of dropping them. After that the server's list is the truth again.
+
+## D36: ergo's auto-away hides a crashed user's stale `chad/voice` (2026-11-01)
+Narrows D16's stale window. When an always-on user's last device disconnects, ergo's auto-away sends `AWAY :User is currently disconnected`.
+Clients that see that reason drop the user's voice presence locally. The metadata itself stays until their next launch clears it.
+Still stale: viewers who connect after the AWAY was sent (WHO's `G` flag carries no reason), and users who were already away by hand, assuming ergo keeps a manual away message rather than overwriting it (unverified).
