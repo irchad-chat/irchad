@@ -37,8 +37,13 @@ pub struct AudioSettings {
     pub ptt_release_ms: u32,
     /// The APM's acoustic echo canceller, fed the playback mix.
     pub echo_cancellation: bool,
+    /// The APM's own noise suppression.
+    pub noise_suppression: bool,
     /// RNNoise before the APM's own noise suppression.
     pub rnnoise: bool,
+    /// The APM's automatic gain control. Off by default: it pumps the level
+    /// up and down between words.
+    pub auto_gain: bool,
     /// Mic volume, 0.0..=2.0, after processing: what others hear.
     pub input_gain: f32,
     pub bitrate_kbps: u32,
@@ -53,7 +58,9 @@ impl Default for AudioSettings {
             vad_threshold_db: -50.0,
             ptt_release_ms: 200,
             echo_cancellation: true,
+            noise_suppression: true,
             rnnoise: false,
+            auto_gain: false,
             input_gain: 1.0,
             bitrate_kbps: 64,
         }

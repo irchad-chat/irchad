@@ -400,7 +400,15 @@ pub fn settings(
             ui.end_row();
 
             ui.label("Noise");
-            ui.checkbox(&mut s.audio.rnnoise, "Extra noise suppression (RNNoise)");
+            ui.vertical(|ui| {
+                ui.checkbox(&mut s.audio.noise_suppression, "Noise suppression");
+                ui.checkbox(&mut s.audio.rnnoise, "Extra noise suppression (RNNoise)");
+            });
+            ui.end_row();
+
+            ui.label("Gain");
+            ui.checkbox(&mut s.audio.auto_gain, "Automatic gain control")
+                .on_hover_text("Evens out your volume, but can make it pump between words.");
             ui.end_row();
 
             let l = ui.label("Quality");

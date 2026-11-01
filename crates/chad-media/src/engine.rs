@@ -45,7 +45,7 @@ pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 pub struct Source {
-    /// Track SID, or `loopback`.
+    /// Track SID, or [`LOOPBACK`].
     pub key: String,
     pub identity: String,
     /// Screen share audio, which has its own volume.
@@ -53,6 +53,24 @@ pub struct Source {
     rx: Consumer<i16>,
     gain: f32,
 }
+
+impl Source {
+    fn mix(&mut self, out: &mut [i16], deaf: bool) {
+        let excess = self.rx.slots().saturating_sub(MAX_QUEUE + out.len());
+        for _ in 0..excess {
+            let _ = self.rx.pop();
+        }
+        for o in out.iter_mut() {
+            let Ok(x) = self.rx.pop() else { break };
+            if !deaf {
+                *o = o.saturating_add((f32::from(x) * self.gain) as i16);
+            }
+        }
+    }
+}
+
+/// The mic test's source key.
+const LOOPBACK: &str = "loopback";
 
 #[derive(Default)]
 pub struct Rt {
@@ -348,17 +366,8 @@ impl Shared {
             return;
         };
         let deaf = self.deafened();
-        for s in rt.sources.iter_mut() {
-            let excess = s.rx.slots().saturating_sub(MAX_QUEUE + out.len());
-            for _ in 0..excess {
-                let _ = s.rx.pop();
-            }
-            for o in out.iter_mut() {
-                let Ok(x) = s.rx.pop() else { break };
-                if !deaf {
-                    *o = o.saturating_add((f32::from(x) * s.gain) as i16);
-                }
-            }
+        for s in rt.sources.iter_mut().filter(|s| s.key != LOOPBACK) {
+            s.mix(out, deaf);
         }
         if let Some((cue, pos)) = &mut rt.cue {
             for (o, &x) in out.iter_mut().zip(&cue[*pos..]) {
@@ -375,6 +384,11 @@ impl Shared {
                     break;
                 }
             }
+        }
+        // After the AEC reference: our own voice in it makes the AEC suppress
+        // the mic test as echo.
+        for s in rt.sources.iter_mut().filter(|s| s.key == LOOPBACK) {
+            s.mix(out, deaf);
         }
     }
 
@@ -427,8 +441,10 @@ pub fn stop_dsp(shared: &Shared) {
 }
 
 fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &AtomicBool) {
-    let mut aec = shared.settings().echo_cancellation;
-    let mut apm = AudioProcessingModule::new(aec, true, true, true);
+    let apm_config = |s: &AudioSettings| (s.echo_cancellation, s.auto_gain, s.noise_suppression);
+    let mut config = apm_config(&shared.settings());
+    let new_apm = |(aec, agc, ns)| AudioProcessingModule::new(aec, agc, true, ns);
+    let mut apm = new_apm(config);
     let mut denoiser = nnnoiseless::DenoiseState::new();
     let (mut frame, mut reference) = ([0i16; FRAME], [0i16; FRAME]);
     let (mut fin, mut fout) = ([0f32; FRAME], [0f32; FRAME]);
@@ -447,10 +463,10 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
         frame.iter_mut().for_each(|s| *s = near.pop().unwrap_or(0));
         let settings = shared.settings();
-        if settings.echo_cancellation != aec {
+        if apm_config(&settings) != config {
             // The APM has no runtime toggle; a fresh one re-converges in a second or two.
-            aec = settings.echo_cancellation;
-            apm = AudioProcessingModule::new(aec, true, true, true);
+            config = apm_config(&settings);
+            apm = new_apm(config);
         }
         if settings.rnnoise {
             fin.iter_mut()
@@ -498,10 +514,10 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
 
         match (shared.loopback.load(Relaxed), &mut loopback) {
-            (true, None) => loopback = shared.add_source("loopback", "", false),
+            (true, None) => loopback = shared.add_source(LOOPBACK, "", false),
             (false, Some(_)) => {
                 loopback = None;
-                shared.remove_source("loopback");
+                shared.remove_source(LOOPBACK);
             }
             _ => {}
         }
@@ -527,7 +543,7 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
     }
     if loopback.is_some() {
-        shared.remove_source("loopback");
+        shared.remove_source(LOOPBACK);
     }
 }
 
@@ -574,6 +590,21 @@ mod tests {
         assert!(shared.muted());
         shared.remove_source("a");
         assert_eq!(lock(&shared.rt).sources.len(), 1);
+    }
+
+    #[test]
+    fn mic_test_stays_out_of_the_aec_reference() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let (far_tx, mut far) = RingBuffer::new(RING);
+        lock(&shared.rt).far = Some(far_tx);
+        let mut lb = shared.add_source(LOOPBACK, "", false).unwrap();
+        let mut a = shared.add_source("a", "alice", false).unwrap();
+        lb.push(500).unwrap();
+        a.push(1000).unwrap();
+        let mut out = [0i16; 1];
+        shared.render(&mut out);
+        assert_eq!(out, [1500]);
+        assert_eq!(far.pop(), Ok(1000));
     }
 
     #[test]
