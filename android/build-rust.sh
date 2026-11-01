@@ -21,6 +21,8 @@ profile=${PROFILE:-dev}
 dir=$([ "$profile" = dev ] && echo debug || echo "$profile")
 # Debug info makes the APK ~150 MB; logcat backtraces still get symbol names.
 export CARGO_PROFILE_DEV_DEBUG=false CARGO_PROFILE_DEV_STRIP=debuginfo
+# uniffi-bindgen reads its metadata from symbols that `strip = true` removes; Gradle strips the .so later.
+export CARGO_PROFILE_RELEASE_STRIP=debuginfo
 
 # Only the ABIs built now: a stale .so would not match the new bindings.
 rm -rf "$out/jniLibs"
