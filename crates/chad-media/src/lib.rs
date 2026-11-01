@@ -35,6 +35,8 @@ pub struct AudioSettings {
     pub vad_threshold_db: f32,
     /// Push-to-talk keeps sending this long after the key is released.
     pub ptt_release_ms: u32,
+    /// The APM's acoustic echo canceller, fed the playback mix.
+    pub echo_cancellation: bool,
     /// RNNoise before the APM's own noise suppression.
     pub rnnoise: bool,
     /// Mic volume, 0.0..=2.0, after processing: what others hear.
@@ -50,6 +52,7 @@ impl Default for AudioSettings {
             mode: InputMode::VoiceActivity,
             vad_threshold_db: -50.0,
             ptt_release_ms: 200,
+            echo_cancellation: true,
             rnnoise: false,
             input_gain: 1.0,
             bitrate_kbps: 64,

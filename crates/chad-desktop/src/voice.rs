@@ -394,6 +394,11 @@ pub fn settings(
                 }
             }
 
+            ui.label("Echo");
+            ui.checkbox(&mut s.audio.echo_cancellation, "Echo cancellation")
+                .on_hover_text("Stops others hearing themselves through your speakers.");
+            ui.end_row();
+
             ui.label("Noise");
             ui.checkbox(&mut s.audio.rnnoise, "Extra noise suppression (RNNoise)");
             ui.end_row();

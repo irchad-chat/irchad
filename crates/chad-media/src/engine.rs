@@ -427,7 +427,8 @@ pub fn stop_dsp(shared: &Shared) {
 }
 
 fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &AtomicBool) {
-    let mut apm = AudioProcessingModule::new(true, true, true, true);
+    let mut aec = shared.settings().echo_cancellation;
+    let mut apm = AudioProcessingModule::new(aec, true, true, true);
     let mut denoiser = nnnoiseless::DenoiseState::new();
     let (mut frame, mut reference) = ([0i16; FRAME], [0i16; FRAME]);
     let (mut fin, mut fout) = ([0f32; FRAME], [0f32; FRAME]);
@@ -446,6 +447,11 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         }
         frame.iter_mut().for_each(|s| *s = near.pop().unwrap_or(0));
         let settings = shared.settings();
+        if settings.echo_cancellation != aec {
+            // The APM has no runtime toggle; a fresh one re-converges in a second or two.
+            aec = settings.echo_cancellation;
+            apm = AudioProcessingModule::new(aec, true, true, true);
+        }
         if settings.rnnoise {
             fin.iter_mut()
                 .zip(&frame)
