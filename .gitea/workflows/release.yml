@@ -116,9 +116,9 @@ jobs:
           makensis /DVERSION=$v /DEXE=..\..\target\release\irchad.exe packaging\windows\irchad.nsi
           $url = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets"
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
-            -F "attachment=@packaging/windows/irchad-setup.exe" "$url?name=irchad-windows-x86_64-setup.exe"
+            -F "attachment=@packaging/windows/irchad-setup.exe" "${url}?name=irchad-windows-x86_64-setup.exe"
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
-            -F "attachment=@target/release/irchad.exe" "$url?name=irchad-windows-x86_64.exe"
+            -F "attachment=@target/release/irchad.exe" "${url}?name=irchad-windows-x86_64.exe"
 
   chadd-image:
     needs: release
