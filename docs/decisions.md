@@ -241,4 +241,4 @@ LiveKit's signalling goes through OkHttp, which uses the Java trust store and no
 A call runs in a `microphone` foreground service, whose notification has mute, deafen and leave. Audio focus and headset or Bluetooth routing are the SDK's AudioSwitch defaults.
 
 ## D44: The landing page links the latest release, not nightly (2026-11-01)
-chadd's `downloads` now defaults to `releases/download/latest/`, which Gitea resolves to the newest non-prerelease release. The Android APK is only built for tagged releases, and the desktop update check (D27) compares against the latest release, so new chads start on the build that check expects. Nightly stays available on the releases page for testers.
+chadd's `downloads` now defaults to `releases/download/latest/`, which Gitea resolves to the newest non-prerelease release. The Android APK is only built for tagged releases, and the desktop update check (D27) compares against the latest release, so new chads start on the build that check expects. The footer links the visitor's nightly build on desktop; there is no Android nightly. `downloads` is the releases root and the page appends `latest/` or `nightly/`.

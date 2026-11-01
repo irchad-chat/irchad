@@ -141,17 +141,24 @@ fn join_url(origin: &Url, code: Option<&str>, channel: Option<&String>) -> Url {
     url
 }
 
-/// Client builds: (name, release asset, icon, User-Agent needle). Android
-/// comes before Linux because its User-Agent contains both.
-const PLATFORMS: [(&str, &str, &str, &str); 3] = [
-    ("Android", "irchad-android-arm64.apk", ANDROID, "Android"),
+/// Client builds: (name, asset, has a nightly, icon, User-Agent needle).
+/// Android comes before Linux because its User-Agent contains both.
+const PLATFORMS: [(&str, &str, bool, &str, &str); 3] = [
+    (
+        "Android",
+        "irchad-android-arm64.apk",
+        false,
+        ANDROID,
+        "Android",
+    ),
     (
         "Windows",
         "irchad-windows-x86_64-setup.exe",
+        true,
         WINDOWS,
         "Windows",
     ),
-    ("Linux", "irchad-linux-x86_64", LINUX, "Linux"),
+    ("Linux", "irchad-linux-x86_64", true, LINUX, "Linux"),
 ];
 
 fn invite_page(
@@ -171,21 +178,20 @@ fn invite_page(
         ),
         None => String::new(),
     };
-    let base = state.config.downloads.as_str().trim_end_matches('/');
-    let link = |label: &str, asset: &str, icon: &str, class: &str| {
-        format!(
-            r#"<a class="{class}" href="{}/{asset}" download>{icon}{label}</a>"#,
-            escape(base)
-        )
+    let base = escape(state.config.downloads.as_str().trim_end_matches('/'));
+    // `latest` is Gitea's newest non-prerelease release; `nightly` is a tag.
+    let link = |label: &str, release: &str, asset: &str, icon: &str, class: &str| {
+        format!(r#"<a class="{class}" href="{base}/{release}/{asset}" download>{icon}{label}</a>"#)
     };
     // Unknown OS (macOS, bots): offer Linux, the first-class platform.
     let mine = PLATFORMS
         .iter()
-        .position(|p| user_agent.contains(p.3))
+        .position(|p| user_agent.contains(p.4))
         .unwrap_or(PLATFORMS.len() - 1);
-    let (os, asset, icon, _) = PLATFORMS[mine];
+    let (os, asset, nightly, icon, _) = PLATFORMS[mine];
     let download = link(
         &format!("Download for {os}"),
+        "latest",
         asset,
         &format!("{DOWNLOAD}{icon}"),
         "btn secondary",
@@ -194,8 +200,16 @@ fn invite_page(
         .iter()
         .enumerate()
         .filter(|(i, _)| *i != mine)
-        .map(|(_, (os, asset, icon, _))| link(os, asset, icon, "chip"))
+        .map(|(_, (os, asset, _, icon, _))| link(os, "latest", asset, icon, "chip"))
         .collect();
+    let footer = if nightly {
+        format!(
+            "Want the newest? {} · rebuilt every night from main",
+            link("Nightly build", "nightly", asset, "", "")
+        )
+    } else {
+        String::new()
+    };
     let hint = if os == "Linux" {
         r#"<p class="hint">Then <code>chmod +x irchad-linux-x86_64</code> and run it.</p>"#
     } else {
@@ -253,7 +267,7 @@ fn invite_page(
   </div>
   {hint}
   <div class="others">{others}</div>
-  <footer>Nightly builds of IrChad · rebuilt every night</footer>
+  <footer>{footer}</footer>
 </main>
 </body>
 </html>
@@ -345,12 +359,14 @@ mod tests {
     #[tokio::test]
     async fn landing_offers_the_visitors_build() {
         let latest = "https://git.gentoo.party/sam/irchad-ng/releases/download/latest";
+        let nightly = "https://git.gentoo.party/sam/irchad-ng/releases/download/nightly";
         let (status, body) = get_as("/", "Mozilla/5.0 (X11; Linux x86_64)").await;
         assert_eq!(status, 200);
         assert!(body.contains("Click to Join Chad &lt;Network&gt;"));
         assert!(body.contains(&format!(
             r#"class="btn secondary" href="{latest}/irchad-linux-x86_64""#
         )));
+        assert!(body.contains(&format!(r#"href="{nightly}/irchad-linux-x86_64""#)));
 
         let (_, body) = get_as("/", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
         assert!(body.contains(&format!(
@@ -361,5 +377,6 @@ mod tests {
         assert!(body.contains(&format!(
             r#"class="btn secondary" href="{latest}/irchad-android-arm64.apk""#
         )));
+        assert!(!body.contains(nightly));
     }
 }

@@ -24,7 +24,7 @@ A network is one origin. Everything about it comes from the discovery document, 
 The whole point of chadd is that a single URL gets a user onto someone else's network.
 
 - **The invite URL** is `https://chat.example.com/invite[/<code>]`.
-  Opening it (or the bare origin) in a browser gives a chadd-served landing page with a "Click to Join" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download button for the visitor's OS, picked from the User-Agent (chadd's `downloads`, defaulting to the latest release).
+  Opening it (or the bare origin) in a browser gives a chadd-served landing page with a "Click to Join" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download button for the visitor's OS, picked from the User-Agent (chadd's `downloads`: the latest release, with a nightly link on desktop).
 - **Pasting** either form into the client's "Join a network" box works the same.
   A bare `chat.example.com` also works, defaulting to https.
 - **Scheme handler:** on Linux it's `x-scheme-handler/irchad` in the `.desktop` file, and on Windows it's a registry key.
