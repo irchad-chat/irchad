@@ -105,7 +105,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | GIFs | The picker's GIF tab searches through chadd (D30) and sends the GIF's URL as a plain message, so it shows inline like any other image. |
 | Typing | `+typing` |
 | Replies / reactions | `+draft/reply`, `+draft/react` |
-| Edit | Not in IRCv3. Parked. |
+| Edit | Not in IRCv3, so IrChad's own: a new PRIVMSG tagged `+chad/edit=<msgid>`, text `* <new text>` (D51) |
 | Delete | `draft/message-redaction` (`REDACT`) |
 | Unread | `draft/read-marker` (`MARKREAD`), synced across devices |
 | Encrypted DM | One PRIVMSG per recipient device with `+chad/e2e=<type>:<ciphertext>`, `+chad/e2e-from`/`-to=<device>` and a readable fallback body. Copies after the first carry `+chad/e2e-id=<first copy's msgid>` (D29). |

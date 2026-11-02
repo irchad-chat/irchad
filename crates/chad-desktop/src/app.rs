@@ -9,8 +9,9 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chad_core::{
-    Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, DeviceInfo,
-    Encryption, Event, Member, NetCommand, Typing, VerifyState, VerifyStep, VoiceState, invite,
+    Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, Crypt, DeviceInfo,
+    Encryption, Event, Member, MessageKind, NetCommand, Typing, VerifyState, VerifyStep,
+    VoiceState, invite,
 };
 use chad_media::{InputMode, Voice};
 use egui::{
@@ -166,12 +167,27 @@ struct BufUi {
     tab: Option<complete::Tab>,
     /// (msgid, nick) of the message being replied to.
     reply: Option<(String, String)>,
+    /// msgid of our message the draft replaces.
+    editing: Option<String>,
     /// A message to scroll to once `LoadAround` brings it in.
     jump: Option<String>,
     /// Names of files on their way up.
     uploads: Vec<String>,
     /// Files waiting in the composer, uploaded when the message is sent.
     attached: Vec<Attachment>,
+}
+
+impl BufUi {
+    /// Puts our message `m` in the composer to edit it.
+    fn start_edit(&mut self, m: &ChatMessage) {
+        if let Some(id) = &m.msgid {
+            self.reply = None;
+            self.editing = Some(id.clone());
+            // shortcut: the draft gets the text without its formatting;
+            // turn IRC codes back into markdown if people miss it.
+            self.draft = format::strip(&m.text);
+        }
+    }
 }
 
 struct Attachment {
@@ -1717,6 +1733,7 @@ impl App {
         let mut emoji_at = None;
         let (mut gif_query, mut no_gifs) = (String::new(), false);
         let mut pick_reaction = None;
+        let mut refocus = false;
         let mut pasted = Vec::new();
 
         if connected && b.info.kind == BufferKind::Channel && !b.ui.members_asked {
@@ -1889,6 +1906,17 @@ impl App {
             {
                 ui.memory_mut(|m| m.request_focus(id));
             }
+            if b.ui.editing.is_some() {
+                let mut cancel = false;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Editing your message").small());
+                    cancel = ui.small_button(icons::X).tip("Cancel edit").clicked();
+                });
+                if cancel || (!completing && ui.input(|i| i.key_pressed(Key::Escape))) {
+                    b.ui.editing = None;
+                    b.ui.draft.clear();
+                }
+            }
             if let Some((_, nick)) = &b.ui.reply {
                 let mut cancel = false;
                 ui.horizontal(|ui| {
@@ -1989,6 +2017,27 @@ impl App {
             // Screen readers get the hint as the field's name.
             ui.ctx()
                 .accesskit_node_builder(resp.id, |n| n.set_label(format!("Message {target}")));
+            // Up in an empty composer edits our last message.
+            if resp.has_focus()
+                && b.ui.draft.is_empty()
+                && ui.input(|i| i.key_pressed(Key::ArrowUp))
+                && let Some(m) = b.msgs.iter().rev().find(|m| {
+                    m.own
+                        && m.msgid.is_some()
+                        && !m.redacted
+                        && m.crypt != Crypt::Failed
+                        && m.kind != MessageKind::Notice
+                })
+            {
+                b.ui.start_edit(m);
+                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                    let end = egui::text::CCursor::new(b.ui.draft.chars().count());
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                    state.store(ui.ctx(), id);
+                }
+            }
             let mut changed = resp.changed() || out.accepted.is_some();
             if (changed || tab.is_some())
                 && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id)
@@ -2042,7 +2091,15 @@ impl App {
                         no_gifs = true;
                     }
                 } else if !text.trim().is_empty() || !b.ui.attached.is_empty() {
-                    if !text.trim().is_empty() {
+                    if let Some(msgid) = b.ui.editing.take() {
+                        if !text.trim().is_empty() {
+                            send(NetCommand::Edit {
+                                target: target.clone(),
+                                msgid,
+                                text: format::markdown(&text),
+                            });
+                        }
+                    } else if !text.trim().is_empty() {
                         let reply_to = b.ui.reply.take().map(|(id, _)| id);
                         send(NetCommand::Send {
                             target: target.clone(),
@@ -2137,6 +2194,10 @@ impl App {
                             emoji,
                         });
                     }
+                    Action::Edit(i) => {
+                        b.ui.start_edit(&b.msgs[i]);
+                        refocus = true;
+                    }
                     Action::Delete { msgid } => {
                         send(NetCommand::Redact {
                             target: target.clone(),
@@ -2162,6 +2223,9 @@ impl App {
         if let Some(nick) = dm.inner {
             send(NetCommand::OpenDm { nick: nick.clone() });
             select(&mut self.view.nets[ni], &key(&nick));
+        }
+        if refocus {
+            self.view.nets[ni].ui.focus = true;
         }
         if let Some((msgid, at)) = pick_reaction {
             self.picker = Some(Picker {

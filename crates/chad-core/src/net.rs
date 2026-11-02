@@ -314,7 +314,17 @@ impl Net {
                 target,
                 text,
                 reply_to,
-            } => self.send_text(&target, &text, reply_to),
+            } => self.send_text(&target, &text, reply_to, None),
+            NetCommand::Edit {
+                target,
+                msgid,
+                text,
+            } => {
+                if !text.trim().is_empty() && msgid.len() <= 128 {
+                    // The `* ` tells plain clients it's a correction (D51).
+                    self.send_text(&target, &format!("* {text}"), None, Some(msgid));
+                }
+            }
             NetCommand::MarkRead { target } => self.mark_read(&target),
             NetCommand::Push { subscription } => self.set_push(subscription),
             NetCommand::OpenDm { nick } if valid_name(&nick) && !self.is_channel(&nick) => {
@@ -491,7 +501,13 @@ impl Net {
         self.send_labeled(m, Pending::Who { channel });
     }
 
-    fn send_text(&mut self, target: &str, text: &str, reply_to: Option<String>) {
+    fn send_text(
+        &mut self,
+        target: &str,
+        text: &str,
+        reply_to: Option<String>,
+        edits: Option<String>,
+    ) {
         let text = text.trim_end_matches(['\n', '\r', ' ']);
         if text.trim().is_empty() {
             return;
@@ -501,10 +517,13 @@ impl Net {
             && !self.is_channel(target)
             && self.may_encrypt(target)
         {
+            if edits.is_some() {
+                return self.error("That edit is too long.");
+            }
             let piece = truncate(text, chad_e2ee::MAX_PLAINTEXT);
             let cut = piece.rfind('\n').filter(|&i| i > 0).unwrap_or(piece.len());
-            self.send_text(target, &text[..cut], reply_to.clone());
-            return self.send_text(target, &text[cut..], reply_to);
+            self.send_text(target, &text[..cut], reply_to.clone(), None);
+            return self.send_text(target, &text[cut..], reply_to, None);
         }
         self.next_local += 1;
         let local = ChatMessage {
@@ -518,6 +537,8 @@ impl Net {
             reply_to: reply_to.clone(),
             status: SendStatus::Pending,
             redacted: false,
+            edits,
+            edited: false,
             reactions: Vec::new(),
             mention: false,
             own: true,
@@ -531,7 +552,11 @@ impl Net {
     }
 
     fn send_plain(&mut self, target: &str, mut local: ChatMessage) {
-        let (text, reply_to) = (local.text.clone(), local.reply_to.clone());
+        let (text, reply_to, edits) = (
+            local.text.clone(),
+            local.reply_to.clone(),
+            local.edits.clone(),
+        );
         let pieces = split(&text);
         let limits = self.caps.enabled("draft/multiline").then(|| {
             let v = self.caps.value("draft/multiline").unwrap_or_default();
@@ -566,9 +591,15 @@ impl Net {
             local: Box::new(local),
             rest: Vec::new(),
         };
-        let reply = |m: Message| match &reply_to {
-            Some(id) => m.with_tag("+draft/reply", id.as_str()),
-            None => m,
+        let reply = |m: Message| {
+            let m = match &reply_to {
+                Some(id) => m.with_tag("+draft/reply", id.as_str()),
+                None => m,
+            };
+            match &edits {
+                Some(id) => m.with_tag("+chad/edit", id.as_str()),
+                None => m,
+            }
         };
         if pieces.len() == 1 {
             let m = reply(Message::new("PRIVMSG", [target, pieces[0].0]));
@@ -690,8 +721,10 @@ impl Net {
                             msg.crypt = Crypt::Encrypted;
                         }
                         let key = self.fold(&target);
-                        self.store.insert(&key, &msg);
-                        self.emit_messages(&target, vec![msg]);
+                        if !self.edit(&key, &msg) {
+                            self.store.insert(&key, &msg);
+                            self.emit_messages(&target, vec![msg]);
+                        }
                     }
                     (None, Some(error)) => {
                         local.status = SendStatus::Failed(error);
@@ -1293,8 +1326,13 @@ impl Net {
                     .tag("+draft/reply")
                     .filter(|i| i.len() <= 128)
                     .map(str::to_owned),
+                edits: head
+                    .tag("+chad/edit")
+                    .filter(|i| i.len() <= 128)
+                    .map(str::to_owned),
                 status: SendStatus::Sent,
                 redacted: false,
+                edited: false,
                 reactions: Vec::new(),
                 mention: !own && (dm || mentions(&text, &self.info.nick)),
                 own,
@@ -1332,6 +1370,9 @@ impl Net {
 
     fn live(&mut self, target: &str, msg: ChatMessage) {
         let key = self.fold(target);
+        if self.edit(&key, &msg) {
+            return;
+        }
         if !self.buffers.contains_key(&key) {
             let kind = if self.is_channel(target) {
                 BufferKind::Channel
@@ -1385,10 +1426,17 @@ impl Net {
             }
         }
         self.store.batch(|| {
-            for m in &messages {
+            for m in messages.iter().filter(|m| m.edits.is_none()) {
                 self.store.insert(key, m);
             }
         });
+        // After the inserts: an edit can follow its message in the same page.
+        for m in &messages {
+            if self.edit(key, m) {
+                touched.extend(m.edits.clone());
+            }
+        }
+        messages.retain(|m| m.edits.is_none());
         messages.sort_by_key(|m| m.time);
         if !messages.is_empty() {
             self.emit_messages(&name, messages);
@@ -1755,6 +1803,40 @@ impl Net {
     }
 
     /// Re-sends a stored message after a reaction or redaction.
+    /// If `msg` is an edit (D51), applies it to the stored message it names when
+    /// it has the same author, and returns true.
+    fn edit(&mut self, key: &str, msg: &ChatMessage) -> bool {
+        let Some(id) = &msg.edits else {
+            return false;
+        };
+        let Some((buffer, orig)) = self.store.get(id) else {
+            // shortcut: an edit of a message we haven't stored is dropped, so a page
+            // holding only the edit misses it; store pending edits if that bites.
+            return true;
+        };
+        let author = match (&orig.account, &msg.account) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => self.cm.eq(&orig.nick, &msg.nick),
+            _ => false,
+        };
+        // The server can forge plain edits, so only an encrypted one changes an encrypted message.
+        let crypt = match orig.crypt {
+            Crypt::Encrypted => msg.crypt == Crypt::Encrypted,
+            _ => msg.crypt == Crypt::Plain,
+        };
+        let text = msg.text.strip_prefix("* ").unwrap_or(&msg.text);
+        if buffer == key
+            && author
+            && crypt
+            && msg.status == SendStatus::Sent
+            && orig.kind != MessageKind::Notice
+            && self.store.edit(id, text, msg.time)
+        {
+            self.refresh(id);
+        }
+        true
+    }
+
     fn refresh(&mut self, msgid: &str) {
         if let Some((key, msg)) = self.store.get(msgid)
             && let Some(name) = self.buffers.get(&key).map(|b| b.name.clone())
@@ -1764,7 +1846,21 @@ impl Net {
         }
     }
 
-    fn emit_messages(&mut self, target: &str, messages: Vec<ChatMessage>) {
+    fn emit_messages(&mut self, target: &str, mut messages: Vec<ChatMessage>) {
+        // Our own edits on their way out aren't messages; only their failures show.
+        let mut failed = Vec::new();
+        messages.retain(|m| match (&m.edits, &m.status) {
+            (None, _) => true,
+            (Some(_), SendStatus::Failed(why)) => {
+                failed.push(format!("Your edit failed. {why}"));
+                false
+            }
+            _ => false,
+        });
+        failed.into_iter().for_each(|e| self.error(e));
+        if messages.is_empty() {
+            return;
+        }
         let network = self.id();
         self.events.push(Event::Messages {
             network,

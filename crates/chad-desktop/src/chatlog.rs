@@ -50,6 +50,7 @@ pub enum Action {
         msgid: String,
         emoji: String,
     },
+    Edit(usize),
     Delete {
         msgid: String,
     },
@@ -493,6 +494,9 @@ fn row_ui(
                 );
             } else {
                 body_ui(ui, m, name, dark);
+                if m.edited {
+                    ui.label(RichText::new("(edited)").weak().small());
+                }
                 links_ui(ui, m, extras);
             }
             if let SendStatus::Failed(why) = &m.status {
@@ -609,6 +613,12 @@ fn toolbar(
                             .clicked()
                         {
                             actions.push(Action::Reply(index));
+                        }
+                        if m.own
+                            && m.crypt != Crypt::Failed
+                            && ui.small_button(icons::PENCIL_SIMPLE).tip("Edit").clicked()
+                        {
+                            actions.push(Action::Edit(index));
                         }
                         if m.own && ui.small_button(icons::TRASH).tip("Delete").clicked() {
                             actions.push(Action::Delete { msgid: id.clone() });
@@ -763,6 +773,8 @@ mod tests {
             reply_to: None,
             status: SendStatus::Sent,
             redacted: false,
+            edits: None,
+            edited: false,
             reactions: vec![],
             mention: false,
             own: false,

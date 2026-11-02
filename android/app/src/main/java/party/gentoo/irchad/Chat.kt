@@ -707,6 +707,7 @@ private fun MessageRow(
                     color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
                 )
             }
+            if (m.edited && !m.redacted) Text("(edited)", style = MaterialTheme.typography.labelSmall, color = faint)
             MessageLinks(app, network, m)
             m.failed?.let { Text("Not sent: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
             if (m.reactions.isNotEmpty()) {

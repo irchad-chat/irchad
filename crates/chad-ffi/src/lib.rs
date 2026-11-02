@@ -371,6 +371,8 @@ pub struct Message {
     pub pending: bool,
     pub failed: Option<String>,
     pub redacted: bool,
+    /// Changed by an edit since it was sent.
+    pub edited: bool,
     pub encrypted: bool,
     /// Encrypted, but it didn't decrypt.
     pub undecryptable: bool,
@@ -882,6 +884,7 @@ impl Client {
                         _ => None,
                     },
                     redacted: m.redacted,
+                    edited: m.edited,
                     encrypted: m.crypt == Crypt::Encrypted,
                     undecryptable: m.crypt == Crypt::Failed,
                     mention: m.mention,

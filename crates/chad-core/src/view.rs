@@ -389,6 +389,8 @@ mod tests {
             reply_to: None,
             status: SendStatus::Sent,
             redacted: false,
+            edits: None,
+            edited: false,
             reactions: vec![],
             mention: false,
             own: false,

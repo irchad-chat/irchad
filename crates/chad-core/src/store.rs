@@ -65,7 +65,11 @@ CREATE TABLE IF NOT EXISTS e2e_pins (
 ";
 
 /// Run in order on older files; `PRAGMA user_version` counts how many have.
-const MIGRATIONS: &[&str] = &["ALTER TABLE messages ADD COLUMN crypt INTEGER NOT NULL DEFAULT 0"];
+const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE messages ADD COLUMN crypt INTEGER NOT NULL DEFAULT 0",
+    // The time of the edit that set `text`, 0 if never edited.
+    "ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0",
+];
 
 fn ok<T: Default>(what: &str, r: rusqlite::Result<T>) -> T {
     r.unwrap_or_else(|e| {
@@ -264,7 +268,7 @@ impl Store {
     pub fn recent(&self, buffer: &str, limit: u32) -> Vec<ChatMessage> {
         let read = || {
             let mut st = self.db.prepare(
-                "SELECT * FROM (SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt
+                "SELECT * FROM (SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited
                  FROM messages WHERE buffer = ?1 ORDER BY time DESC, id DESC LIMIT ?2) ORDER BY time, msgid",
             )?;
             st.query_map(params![buffer, limit], row)?.collect()
@@ -282,10 +286,10 @@ impl Store {
             "read message",
             self.db
                 .query_row(
-                    "SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, buffer
+                    "SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited, buffer
                      FROM messages WHERE msgid = ?1",
                     [msgid],
-                    |r| Ok((r.get(11)?, row(r)?)),
+                    |r| Ok((r.get(12)?, row(r)?)),
                 )
                 .optional(),
         );
@@ -305,6 +309,20 @@ impl Store {
                 )
                 .map(drop),
         );
+    }
+
+    /// Replaces a message's text, unless a later edit already did. True if it did.
+    pub fn edit(&self, msgid: &str, text: &str, time: i64) -> bool {
+        ok(
+            "edit",
+            self.db
+                .execute(
+                    "UPDATE messages SET text = ?2, edited = ?3
+                     WHERE msgid = ?1 AND redacted = 0 AND edited < ?3",
+                    params![msgid, text, time],
+                )
+                .map(|n| n == 1),
+        )
     }
 
     pub fn react(&self, msgid: &str, nick: &str, emoji: &str, add: bool) {
@@ -517,6 +535,8 @@ fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
         },
         text: r.get(5)?,
         reply_to: r.get(6)?,
+        edits: None,
+        edited: r.get::<_, i64>(11)? > 0,
         status: SendStatus::Sent,
         redacted: r.get(7)?,
         reactions: Vec::new(),
@@ -543,6 +563,8 @@ pub(crate) fn msg(msgid: &str, time: i64, nick: &str, text: &str) -> ChatMessage
         reply_to: None,
         status: SendStatus::Sent,
         redacted: false,
+        edits: None,
+        edited: false,
         reactions: Vec::new(),
         mention: false,
         own: false,

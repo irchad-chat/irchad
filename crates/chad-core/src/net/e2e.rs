@@ -319,6 +319,9 @@ impl Net {
             if let Some(r) = &local.reply_to {
                 m = m.with_tag("+draft/reply", r.as_str());
             }
+            if let Some(r) = &local.edits {
+                m = m.with_tag("+chad/edit", r.as_str());
+            }
             copies.push(m);
         }
         self.save_e2e();

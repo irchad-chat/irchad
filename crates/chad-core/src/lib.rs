@@ -139,6 +139,12 @@ pub enum NetCommand {
         msgid: String,
         emoji: String,
     },
+    /// Replace the text of one of your own messages (`+chad/edit`, D51).
+    Edit {
+        target: String,
+        msgid: String,
+        text: String,
+    },
     /// Delete one of your own messages.
     Redact {
         target: String,
@@ -528,6 +534,10 @@ pub struct ChatMessage {
     pub kind: MessageKind,
     pub text: String,
     pub reply_to: Option<String>,
+    /// This message is an edit of that msgid; it's applied there, never shown.
+    pub edits: Option<String>,
+    /// The text was changed by an edit.
+    pub edited: bool,
     pub status: SendStatus,
     pub redacted: bool,
     pub reactions: Vec<Reaction>,

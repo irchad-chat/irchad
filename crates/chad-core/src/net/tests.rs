@@ -624,6 +624,96 @@ fn reactions_redactions_typing() {
 }
 
 #[test]
+fn edits_apply_only_from_the_author_and_never_go_backwards() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=m1;account=alice;time={} :alice!u@h PRIVMSG #c :helo",
+            ts(1)
+        ),
+    );
+    events(&mut n);
+
+    // Someone else, or a guest with alice's nick, can't edit it.
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=x1;account=eve;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* pwned",
+            ts(2)
+        ),
+    );
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=x2;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* pwned",
+            ts(2)
+        ),
+    );
+    assert!(messages(&events(&mut n)).is_empty());
+
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=e2;account=alice;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* hello!",
+            ts(3)
+        ),
+    );
+    let m = messages(&events(&mut n));
+    assert_eq!(m.len(), 1, "the edit itself isn't a message");
+    assert_eq!(
+        (m[0].msgid.as_deref(), m[0].text.as_str(), m[0].edited),
+        (Some("m1"), "hello!", true)
+    );
+    // An older edit replayed later doesn't undo the newer one.
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=e1;account=alice;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* hello",
+            ts(2)
+        ),
+    );
+    assert!(messages(&events(&mut n)).is_empty());
+    assert_eq!(n.store.get("m1").unwrap().1.text, "hello!");
+
+    // Our own edit goes out tagged with the fallback prefix and shows no pending message.
+    feed(
+        &mut n,
+        &format!("@msgid=b1;time={} :bob!u@h PRIVMSG #c :typo", ts(4)),
+    );
+    events(&mut n);
+    n.command(NetCommand::Edit {
+        target: "#c".into(),
+        msgid: "b1".into(),
+        text: "fixed".into(),
+    });
+    assert!(messages(&events(&mut n)).is_empty());
+    let sent = out(&mut n);
+    assert!(sent[0].starts_with("@+chad/edit=b1;label="), "{sent:?}");
+    assert!(sent[0].ends_with("PRIVMSG #c :* fixed"), "{sent:?}");
+    let label = sent[0]
+        .split([';', ' '])
+        .nth(1)
+        .unwrap()
+        .strip_prefix("label=")
+        .unwrap()
+        .to_owned();
+    feed(
+        &mut n,
+        &format!(
+            "@label={label};msgid=b2;time={};+chad/edit=b1 :bob!u@h PRIVMSG #c :* fixed",
+            ts(5)
+        ),
+    );
+    let m = messages(&events(&mut n));
+    assert_eq!(
+        (m[0].msgid.as_deref(), m[0].text.as_str()),
+        (Some("b1"), "fixed")
+    );
+}
+
+#[test]
 fn caps_changes_reach_the_ui() {
     let mut n = net();
     attach(&mut n, &[]);

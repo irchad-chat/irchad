@@ -20,6 +20,7 @@ pub const MICROPHONE_SLASH: &str = "\u{E328}";
 pub const MONITOR: &str = "\u{E32E}";
 pub const MOON: &str = "\u{E330}";
 pub const MUSIC_NOTES: &str = "\u{E33C}";
+pub const PENCIL_SIMPLE: &str = "\u{E3B4}";
 pub const PAPERCLIP: &str = "\u{E39A}";
 pub const PHONE_DISCONNECT: &str = "\u{E3BC}";
 pub const PICTURE_IN_PICTURE: &str = "\u{E64C}";

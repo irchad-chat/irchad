@@ -331,6 +331,16 @@ fn live_polish() {
     s.harness.key_press(egui::Key::Enter);
     s.settle(2);
     s.shot("polish_named");
+    // Up in the empty composer edits that last message.
+    s.harness.key_press(egui::Key::ArrowUp);
+    s.harness.run_steps(4);
+    s.wait_for("Editing your message");
+    s.harness.get_by_label("Message #general").type_text(", edited");
+    s.harness.run();
+    s.harness.key_press(egui::Key::Enter);
+    s.wait_for("now with a name, edited");
+    s.wait_for("(edited)");
+    s.shot("polish_edited");
     s.harness
         .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
     s.harness.run();
