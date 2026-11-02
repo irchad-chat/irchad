@@ -7,6 +7,11 @@ const builds = [
   { os: "Windows", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer.", nightly: true },
   { os: "Android", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
 ];
+// Obtainium can't detect a self-hosted Gitea, so preset its Forgejo source ("Codeberg" class) or it scrapes HTML and makes up versions.
+const obtainium = "obtainium://app/" + encodeURIComponent(JSON.stringify({
+  id: "party.gentoo.irchad", url: repo, author: "sam", name: "IrChad",
+  overrideSource: "Codeberg", additionalSettings: JSON.stringify({ includePrereleases: false }),
+}));
 const features = [
   ["Paste a link, start chatting", "An invite URL carries the whole network config. Log in and you're in your channels, with no server lists or nickserv."],
   ["Voice in every channel", "Click a channel's speaker and you're talking. It runs on PipeWire natively and has push-to-talk that works on Wayland."],
@@ -85,6 +90,7 @@ const table = [
             <h3>{b.os}</h3>
             <p>{b.note} {b.nightly && <a href={`${releases}/nightly/${b.asset}`} download>Nightly build</a>}</p>
             <a class="btn primary" href={`${releases}/latest/${b.asset}`} download>Download for {b.os}</a>
+            {b.os === "Android" && <a class="btn secondary" href={obtainium}>Add to Obtainium</a>}
           </li>
         ))}
       </ul>
