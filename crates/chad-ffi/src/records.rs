@@ -223,4 +223,8 @@ pub struct Member {
     pub shown: String,
     pub prefix: String,
     pub away: bool,
+    /// IRC operator.
+    pub oper: bool,
+    /// Services account; `None` for guests (not logged in).
+    pub account: Option<String>,
 }

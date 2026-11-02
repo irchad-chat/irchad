@@ -47,6 +47,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -57,6 +59,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
@@ -315,27 +318,48 @@ private fun ChatScreen(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
             LazyColumn(Modifier.navigationBarsPadding()) {
-                items(list.orEmpty(), key = { it.nick }) { m ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                if (!m.nick.equals(net.nick, true)) {
-                                    c.openDm(net.network, m.nick)
-                                    selected[net.network] = m.nick
-                                    members = false
-                                }
-                            }
-                            .padding(horizontal = 24.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Avatar(m.nick)
-                        Spacer(Modifier.width(12.dp))
+                for ((away, title) in listOf(false to "ONLINE", true to "AWAY")) {
+                    val group = list.orEmpty().filter { it.away == away }
+                    if (group.isEmpty()) continue
+                    // '#' can't start a nick, so header keys never collide with member keys.
+                    item(key = "#$title") {
                         Text(
-                            m.prefix + m.shown,
-                            color = if (m.away) MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.onSurface,
+                            "$title — ${group.size}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 4.dp),
                         )
+                    }
+                    items(group, key = { it.nick }) { m ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    if (!m.nick.equals(net.nick, true)) {
+                                        c.openDm(net.network, m.nick)
+                                        selected[net.network] = m.nick
+                                        members = false
+                                    }
+                                }
+                                .padding(horizontal = 24.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Avatar(m.nick)
+                            Spacer(Modifier.width(12.dp))
+                            if (m.oper) {
+                                Icon(Icons.Default.Build, "IRC operator", Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            if (m.account == null) {
+                                Text("👻", Modifier.semantics { contentDescription = "Guest (not logged in)" })
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            Text(
+                                m.prefix + m.shown,
+                                color = if (m.away) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
                     }
                 }
             }

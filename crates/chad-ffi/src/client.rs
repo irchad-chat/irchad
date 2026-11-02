@@ -490,6 +490,8 @@ impl Client {
                     shown: n.shown(&m.nick).to_owned(),
                     prefix: m.prefix.clone(),
                     away: m.away,
+                    oper: m.oper,
+                    account: m.account.clone(),
                 })
                 .collect(),
         )
