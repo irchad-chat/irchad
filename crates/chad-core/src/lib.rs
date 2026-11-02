@@ -267,6 +267,11 @@ pub enum NetCommand {
     AcceptKeys {
         nick: String,
     },
+    /// Take one of our other devices' encrypted-DM records off the server (a
+    /// stale install). A device that's still running publishes itself again.
+    RemoveDevice {
+        id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

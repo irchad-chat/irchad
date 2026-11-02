@@ -108,7 +108,7 @@ impl App {
                             .on_hover_ui(|ui| {
                                 ui.label(tip);
                                 for d in devices.get(&b.key).into_iter().flatten() {
-                                    device_row(ui, d);
+                                    device_row(ui, d, false);
                                 }
                             });
                     }

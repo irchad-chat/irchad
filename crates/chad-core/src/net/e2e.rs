@@ -254,12 +254,18 @@ impl Net {
 
     /// Takes this device's record down, before forgetting the network.
     pub fn unpublish(&mut self) {
+        let Some(e) = &self.e2e else { return };
+        let id = e.device.clone();
+        self.remove_device(&id);
+    }
+
+    /// Deletes one of our devices' records and tells subscribers.
+    pub(super) fn remove_device(&mut self, id: &str) {
         let me = self.fold(&self.info.nick);
         let Some(e) = &self.e2e else { return };
         let Some(Some(devices)) = e.devices.get(&me) else {
             return;
         };
-        let id = e.device.clone();
         if !self.connected || !devices.iter().any(|d| d.id == id) {
             return;
         }
@@ -268,9 +274,14 @@ impl Net {
             .map(|d| d.id.as_str())
             .filter(|d| *d != id)
             .collect();
-        let rest = rest.join(" ");
+        let (rest, own) = (rest.join(" "), id == e.device);
         self.set_metadata(&format!("{RECORD_PREFIX}{id}"), "");
         self.set_metadata(DEVICES_KEY, &rest);
+        if !own {
+            // Same connection, so this LIST sees the delete.
+            let nick = self.info.nick.clone();
+            self.devices_changed(&nick);
+        }
     }
 
     /// A DM to someone: encrypted to every device of theirs and our other ones,

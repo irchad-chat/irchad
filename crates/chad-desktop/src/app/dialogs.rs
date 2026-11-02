@@ -551,6 +551,7 @@ impl App {
         let own = n.info.nick.clone();
         let avatar = n.profiles.get(&key(&own)).and_then(|p| p.avatar.clone());
         let (mut save, mut close, mut choose, mut remove) = (false, false, false, false);
+        let mut drop_device = None;
         let modal = egui::Modal::new(egui::Id::unique("profile")).show(ctx, |ui| {
             ui.set_width(320.0);
             ui.heading(format!("Your profile on {}", n.info.name));
@@ -587,7 +588,9 @@ impl App {
                     RichText::new(format!("{} Devices with encrypted DMs", icons::LOCK)).strong(),
                 );
                 for d in devices {
-                    device_row(ui, d);
+                    if device_row(ui, d, true) {
+                        drop_device = Some(d.id.clone());
+                    }
                 }
             }
             ui.add_space(8.0);
@@ -599,6 +602,9 @@ impl App {
         }
         if remove {
             self.send(&network, NetCommand::SetAvatar { url: String::new() });
+        }
+        if let Some(id) = drop_device {
+            self.send(&network, NetCommand::RemoveDevice { id });
         }
         if choose {
             let (tx, ctx) = (self.files.0.clone(), ctx.clone());

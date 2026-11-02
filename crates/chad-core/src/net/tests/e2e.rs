@@ -178,3 +178,32 @@ fn e2e_key_change_warns_until_accepted() {
         Encryption::Off
     );
 }
+
+#[test]
+fn e2e_removes_a_stale_device_of_ours() {
+    let alice = chad_e2ee::Olm::new();
+    let (mut n, _) = e2e_bob(&alice);
+    n.command(NetCommand::Devices { nick: "bob".into() });
+    let sent = out(&mut n);
+    let stale = chad_e2ee::Olm::new().record("bob", "b2");
+    answer(
+        &mut n,
+        &sent,
+        "METADATA bob LIST",
+        &[format!(":s 761 bob bob chad/e2e/d/b2 * :{stale}")],
+    );
+    out(&mut n);
+    // Not ours to remove: nothing happens.
+    n.command(NetCommand::RemoveDevice { id: "a1".into() });
+    assert!(out(&mut n).is_empty());
+    n.command(NetCommand::RemoveDevice { id: "b2".into() });
+    let sent = out(&mut n);
+    assert!(
+        sent.iter().any(|l| l == "METADATA * SET chad/e2e/d/b2"),
+        "{sent:?}"
+    );
+    assert!(
+        sent.iter().any(|l| l.contains("METADATA bob LIST")),
+        "{sent:?}"
+    );
+}

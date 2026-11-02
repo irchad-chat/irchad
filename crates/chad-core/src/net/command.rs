@@ -186,6 +186,7 @@ impl Net {
                 self.store.trust(&key, None);
                 self.emit_buffer(&key);
             }
+            NetCommand::RemoveDevice { id } => self.remove_device(&id),
             NetCommand::JoinChannel { channel } => self.out.push(Message::new("JOIN", [channel])),
             NetCommand::Part { channel } => self.out.push(Message::new("PART", [channel])),
             NetCommand::OpenDm { .. } => {}

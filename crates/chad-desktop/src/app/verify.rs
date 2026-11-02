@@ -3,15 +3,28 @@
 use super::*;
 
 /// One encrypted-DM device: its name, whether it's verified, and its fingerprint.
-pub(super) fn device_row(ui: &mut egui::Ui, d: &DeviceInfo) {
-    ui.horizontal(|ui| {
-        let name = if d.this { "This device" } else { d.id.as_str() };
-        ui.label(name);
-        if d.verified {
-            ui.label(icons::SHIELD_CHECK).on_hover_text("Verified");
-        }
-    });
+/// `removable` adds a Remove button (not on this device); returns whether it was clicked.
+pub(super) fn device_row(ui: &mut egui::Ui, d: &DeviceInfo, removable: bool) -> bool {
+    let remove = ui
+        .horizontal(|ui| {
+            let name = if d.this { "This device" } else { d.id.as_str() };
+            ui.label(name);
+            if d.verified {
+                ui.label(icons::SHIELD_CHECK).on_hover_text("Verified");
+            }
+            removable
+                && !d.this
+                && ui
+                    .small_button("Remove")
+                    .on_hover_text(
+                        "Stop sending encrypted DMs to this device. \
+                         If it's still in use, it adds itself back.",
+                    )
+                    .clicked()
+        })
+        .inner;
     ui.label(RichText::new(&d.fingerprint).monospace().small().weak());
+    remove
 }
 
 impl App {
