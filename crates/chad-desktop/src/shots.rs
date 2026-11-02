@@ -335,7 +335,9 @@ fn live_polish() {
     s.harness.key_press(egui::Key::ArrowUp);
     s.harness.run_steps(4);
     s.wait_for("Editing your message");
-    s.harness.get_by_label("Message #general").type_text(", edited");
+    s.harness
+        .get_by_label("Message #general")
+        .type_text(", edited");
     s.harness.run();
     s.harness.key_press(egui::Key::Enter);
     s.wait_for("now with a name, edited");

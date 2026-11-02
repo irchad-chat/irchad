@@ -67,11 +67,11 @@ impl OsTx {
 /// A desktop notification (freedesktop Notifications / Windows toast).
 pub fn notify(summary: String, body: String) {
     tokio::task::spawn_blocking(move || {
-        let r = notify_rust::Notification::new()
-            .appname("IrChad")
-            .summary(&summary)
-            .body(&body)
-            .show();
+        let mut n = notify_rust::Notification::new();
+        n.appname("IrChad").summary(&summary).body(&body);
+        #[cfg(windows)]
+        n.app_id(APP_ID);
+        let r = n.show();
         if let Err(e) = r {
             tracing::warn!("notification: {e}");
         }

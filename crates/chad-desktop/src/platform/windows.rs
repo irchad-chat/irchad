@@ -109,6 +109,12 @@ pub fn register_scheme() {
         None,
         &format!("\"{}\" \"%1\"", exe.display()),
     );
+    // Toasts show this name; without a registered AUMID they claim to be PowerShell.
+    set(
+        &format!(r"Software\Classes\AppUserModelId\{}", super::APP_ID),
+        Some("DisplayName"),
+        "IrChad",
+    );
 }
 
 /// shortcut: no tray on Windows yet (Phase 1 only asks for SNI); add a

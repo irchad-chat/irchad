@@ -371,7 +371,8 @@ impl ChatLog {
         // would lag a frame behind the new total, so redo the pass pinned.
         if changed && was_bottom {
             self.to_bottom = true;
-            ui.ctx().request_discard("chat log height changed at bottom");
+            ui.ctx()
+                .request_discard("chat log height changed at bottom");
         }
         if self.shift != 0.0 {
             ui.ctx().request_repaint();
