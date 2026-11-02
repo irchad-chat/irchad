@@ -34,18 +34,35 @@ pub const USER_CIRCLE: &str = "\u{E4C4}";
 pub const WARNING: &str = "\u{E4E0}";
 pub const X: &str = "\u{E4F6}";
 
+/// The font family for bold message text: egui's `strong()` only brightens.
+pub const BOLD: &str = "bold";
+
 /// Adds the icon font as a lowest-priority proportional fallback, so icons mix
 /// into ordinary labels. Its glyphs live in the Private Use Area, so it never
-/// shadows text or emoji.
+/// shadows text or emoji. Also adds the [`BOLD`] family: Ubuntu Bold (egui's
+/// text is Ubuntu Light) ahead of the same fallbacks.
 pub fn install(ctx: &egui::Context) {
-    ctx.add_font(egui::epaint::text::FontInsert::new(
-        "phosphor",
-        egui::FontData::from_static(include_bytes!("../assets/Phosphor.ttf")),
-        vec![egui::epaint::text::InsertFontFamily {
-            family: egui::FontFamily::Proportional,
-            priority: egui::epaint::text::FontPriority::Lowest,
-        }],
-    ));
+    use egui::{FontData, FontFamily};
+    use std::sync::Arc;
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "phosphor".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../assets/Phosphor.ttf"
+        ))),
+    );
+    fonts.font_data.insert(
+        "ubuntu-bold".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../assets/Ubuntu-Bold.ttf"
+        ))),
+    );
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    proportional.push("phosphor".into());
+    let mut bold = proportional.clone();
+    bold.insert(0, "ubuntu-bold".into());
+    fonts.families.insert(FontFamily::Name(BOLD.into()), bold);
+    ctx.set_fonts(fonts);
 }
 
 pub trait Tip {

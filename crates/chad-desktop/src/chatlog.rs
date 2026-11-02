@@ -644,48 +644,81 @@ fn links_ui(ui: &mut egui::Ui, m: &ChatMessage, extras: &mut Extras) {
 
 fn body_ui(ui: &mut egui::Ui, m: &ChatMessage, name: &str, dark: bool) {
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        if m.kind == MessageKind::Action {
-            ui.label(
-                RichText::new(format!("{name} "))
-                    .italics()
-                    .strong()
-                    .color(nick_color(&m.nick, dark)),
-            );
+    // Per line, as plain clients see it: each line is its own PRIVMSG to them.
+    let lines: Vec<_> = m.text.split('\n').map(format::parse).collect();
+    let mut first = true;
+    for group in lines.chunk_by(|a, b| format::code_line(a) == format::code_line(b)) {
+        if format::code_line(&group[0]) {
+            egui::Frame::new()
+                .fill(ui.visuals().extreme_bg_color)
+                .corner_radius(4)
+                .inner_margin(6)
+                .show(ui, |ui| {
+                    let text: Vec<String> = group
+                        .iter()
+                        .map(|l| l.iter().map(|s| s.text.as_str()).collect())
+                        .collect();
+                    ui.label(RichText::new(text.join("\n")).monospace());
+                });
+            first = false;
+            continue;
         }
-        for span in format::parse(&m.text) {
-            let mut t = RichText::new(&span.text);
-            if span.bold {
-                t = t.strong();
-            }
-            if span.italic || m.kind == MessageKind::Action {
-                t = t.italics();
-            }
-            if span.underline {
-                t = t.underline();
-            }
-            if span.strike {
-                t = t.strikethrough();
-            }
-            if span.mono {
-                t = t.monospace();
-            }
-            if let Some([r, g, b]) = span.fg {
-                t = t.color(Color32::from_rgb(r, g, b));
-            } else if weak {
-                t = t.weak();
-            }
-            if let Some([r, g, b]) = span.bg {
-                t = t.background_color(Color32::from_rgb(r, g, b));
-            }
-            if span.link {
-                ui.hyperlink_to(t, &span.text);
-            } else {
-                ui.label(t);
-            }
+        for spans in group {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if std::mem::take(&mut first) && m.kind == MessageKind::Action {
+                    ui.label(
+                        RichText::new(format!("{name} "))
+                            .italics()
+                            .strong()
+                            .color(nick_color(&m.nick, dark)),
+                    );
+                }
+                if spans.is_empty() {
+                    ui.label(" ");
+                }
+                for span in spans {
+                    span_ui(ui, m, span, weak);
+                }
+            });
         }
-    });
+    }
+}
+
+fn span_ui(ui: &mut egui::Ui, m: &ChatMessage, span: &format::Span, weak: bool) {
+    let mut t = RichText::new(&span.text);
+    if span.bold {
+        t = t.strong();
+    }
+    // A family overrides `monospace()`, so bold code stays monospace.
+    if span.bold && !span.mono {
+        t = t.family(egui::FontFamily::Name(icons::BOLD.into()));
+    }
+    if span.italic || m.kind == MessageKind::Action {
+        t = t.italics();
+    }
+    if span.underline {
+        t = t.underline();
+    }
+    if span.strike {
+        t = t.strikethrough();
+    }
+    if span.mono {
+        t = t.monospace();
+    }
+    if let Some([r, g, b]) = span.fg {
+        t = t.color(Color32::from_rgb(r, g, b));
+    } else if weak {
+        t = t.weak();
+    }
+    if let Some([r, g, b]) = span.bg {
+        t = t.background_color(Color32::from_rgb(r, g, b));
+    }
+    if span.link {
+        ui.hyperlink_to(t, &span.text);
+    } else {
+        ui.label(t);
+    }
 }
 
 fn separator(ui: &mut egui::Ui, text: &str, color: Color32) {

@@ -132,6 +132,101 @@ pub fn strip(text: &str) -> String {
     parse(text).into_iter().map(|s| s.text).collect()
 }
 
+/// The composer's markdown as IRC codes, so plain clients see the same styles:
+/// `**bold**`, `*italic*`, `` `code` `` and ```` ``` ```` fenced blocks
+/// (each line monospace on its own, since every line is its own PRIVMSG to them).
+pub fn markdown(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(i) = rest.find("```") {
+        let Some(j) = rest[i + 3..].find("```") else {
+            break;
+        };
+        inline(&rest[..i], &mut out);
+        let mut body = &rest[i + 3..i + 3 + j];
+        // A first line after the fence is the language, as in markdown.
+        if let Some((_, b)) = body.split_once('\n') {
+            body = b;
+        }
+        let body = body.strip_suffix('\n').unwrap_or(body);
+        for (n, line) in body.split('\n').enumerate() {
+            if n > 0 {
+                out.push('\n');
+            }
+            // A space keeps a blank line inside the block.
+            let line = if line.is_empty() { " " } else { line };
+            out.push('\x11');
+            out.push_str(line);
+            out.push('\x11');
+        }
+        rest = &rest[i + 3 + j + 3..];
+    }
+    inline(rest, &mut out);
+    out
+}
+
+fn inline(text: &str, out: &mut String) {
+    for (n, line) in text.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        inline_line(line, out);
+    }
+}
+
+fn inline_line(mut rest: &str, out: &mut String) {
+    while let Some(i) = rest.find(['`', '*']) {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let (code, inner, len) = if let Some((c, n)) = delimited(tail, "`") {
+            ('\x11', c, n)
+        } else if let Some((c, n)) = delimited(tail, "***") {
+            out.push_str("\x02\x1d");
+            inline_line(c, out);
+            out.push_str("\x1d\x02");
+            rest = &tail[n..];
+            continue;
+        } else if let Some((c, n)) = delimited(tail, "**") {
+            ('\x02', c, n)
+        } else if let Some((c, n)) = delimited(tail, "*") {
+            ('\x1d', c, n)
+        } else {
+            out.push_str(&tail[..1]);
+            rest = &tail[1..];
+            continue;
+        };
+        out.push(code);
+        if code == '\x11' {
+            out.push_str(inner);
+        } else {
+            inline_line(inner, out);
+        }
+        out.push(code);
+        rest = &tail[len..];
+    }
+    out.push_str(rest);
+}
+
+/// `d…d` at the start of `s`: the inside and the whole length. Like markdown,
+/// the inside can't start or end with a space, so `2 * 3 * 4` stays as it is.
+fn delimited<'a>(s: &'a str, d: &str) -> Option<(&'a str, usize)> {
+    let body = s.strip_prefix(d)?;
+    body.match_indices(d).find_map(|(j, _)| {
+        let inner = &body[..j];
+        let ok = !inner.is_empty()
+            && !inner.starts_with(char::is_whitespace)
+            && !inner.starts_with(d)
+            && !inner.ends_with(char::is_whitespace)
+            && !(d == "*" && body[j + 1..].starts_with('*'));
+        ok.then_some((inner, d.len() * 2 + j))
+    })
+}
+
+/// A line that is all monospace, as a fenced block sends it: shown as a block.
+pub fn code_line(spans: &[Span]) -> bool {
+    !spans.is_empty() && spans.iter().all(|s| s.mono)
+}
+
 fn digits(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<usize> {
     let mut n = None;
     for _ in 0..2 {
@@ -322,6 +417,26 @@ mod tests {
             Some(Kind::File)
         );
         assert_eq!(kind("ftp://x.org/a.png", net), None);
+    }
+
+    #[test]
+    fn markdown_to_codes() {
+        assert_eq!(
+            markdown("**b** *i* `c*x*`"),
+            "\x02b\x02 \x1di\x1d \x11c*x*\x11"
+        );
+        assert_eq!(markdown("**b *i* b**"), "\x02b \x1di\x1d b\x02");
+        assert_eq!(markdown("***bi***"), "\x02\x1dbi\x1d\x02");
+        assert_eq!(markdown("2 * 3 * 4; ** x; *x *"), "2 * 3 * 4; ** x; *x *");
+        assert_eq!(markdown("*a\nb*"), "*a\nb*");
+        assert_eq!(
+            markdown("see:\n```rust\nfn a() {\n\n  *x*\n}\n```\ndone"),
+            "see:\n\x11fn a() {\x11\n\x11 \x11\n\x11  *x*\x11\n\x11}\x11\ndone"
+        );
+        assert_eq!(markdown("```one```"), "\x11one\x11");
+        assert_eq!(markdown("``` unclosed"), "``` unclosed");
+        assert!(code_line(&parse("\x11  x\x11")));
+        assert!(!code_line(&parse("a \x11x\x11")));
     }
 
     #[test]

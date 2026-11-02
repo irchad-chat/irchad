@@ -412,7 +412,10 @@ fn live_e2ee() {
     );
     g.send(net(NetCommand::Send {
         target: alice.clone(),
-        text: "hello from a plain IRC client".into(),
+        // As the composer sends it: markdown becomes IRC codes.
+        text: chad_core::format::markdown(
+            "hello from a **plain** *IRC* client, `inline` and:\n```rust\nfn main() {\n\n    println!(\"*hi*\");\n}\n```\nafter",
+        ),
         reply_to: None,
     }));
     // bob is in #general too: his name there opens the DM.

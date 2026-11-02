@@ -2046,7 +2046,7 @@ impl App {
                         let reply_to = b.ui.reply.take().map(|(id, _)| id);
                         send(NetCommand::Send {
                             target: target.clone(),
-                            text,
+                            text: format::markdown(&text),
                             reply_to,
                         });
                     }

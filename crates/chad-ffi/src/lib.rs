@@ -662,7 +662,7 @@ impl Client {
             network,
             NetCommand::Send {
                 target,
-                text,
+                text: format::markdown(&text),
                 reply_to,
             },
         );
