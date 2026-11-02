@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
@@ -290,10 +291,12 @@ class BootReceiver : android.content.BroadcastReceiver() {
 fun BackgroundChoices(app: IrChad) {
     val n = app.notifier
     val ctx = LocalContext.current
+    // In a dialog LocalContext is a ContextThemeWrapper, not the Activity.
+    val activity = LocalActivity.current!!
     val has = remember(n.resumes) { n.hasDistributor() }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     fun pick(m: Background) {
-        n.choose(m, ctx as Activity)
+        n.choose(m, activity)
         if (m != Background.OFF && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -341,13 +344,13 @@ fun BackgroundChoices(app: IrChad) {
 fun BackgroundOnboarding(app: IrChad) {
     val n = app.notifier
     if (n.mode != null) return
-    val ctx = LocalContext.current
+    val activity = LocalActivity.current!!
     val has = remember(n.resumes) { n.hasDistributor() }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     var later by remember { mutableStateOf(false) }
     LaunchedEffect(has) {
         if (has) {
-            n.choose(Background.PUSH, ctx as Activity)
+            n.choose(Background.PUSH, activity)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ask.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
