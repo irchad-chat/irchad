@@ -524,3 +524,34 @@ fn caps_changes_reach_the_ui() {
         matches!(&ev[1], Event::CapsChanged { removed, .. } if removed == &["away-notify", "draft/multiline"])
     );
 }
+
+#[test]
+fn members_sort_by_prefix_then_nick() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    n.command(NetCommand::Members {
+        channel: "#c".into(),
+    });
+    let who = out(&mut n);
+    for l in [
+        format!("@label={} :s BATCH +w labeled-response", label_of(&who[0])),
+        "@batch=w :s 354 bob 1 #c amy H 0".into(),
+        "@batch=w :s 354 bob 1 #c Zed H+ 0".into(),
+        "@batch=w :s 354 bob 1 #c bea H@ 0".into(),
+        "@batch=w :s 354 bob 1 #c cal H+ 0".into(),
+        "@batch=w :s 354 bob 1 #c ann H 0".into(),
+        "@batch=w :s 315 bob #c :End".into(),
+        ":s BATCH -w".into(),
+    ] {
+        feed(&mut n, &l);
+    }
+    let m = events(&mut n)
+        .into_iter()
+        .find_map(|e| match e {
+            Event::Members { members, .. } => Some(members),
+            _ => None,
+        })
+        .unwrap();
+    let nicks: Vec<_> = m.iter().map(|m| m.nick.as_str()).collect();
+    assert_eq!(nicks, ["bea", "cal", "Zed", "amy", "ann"]);
+}

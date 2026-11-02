@@ -567,7 +567,13 @@ impl Net {
             return;
         };
         let mut members: Vec<Member> = b.members.values().cloned().collect();
-        members.sort_by_key(|a| a.nick.to_lowercase());
+        // Highest PREFIX first (ISUPPORT order), unprefixed last, then by nick.
+        let order = self.isupport.prefix();
+        let rank = |m: &Member| {
+            let p = m.prefix.chars().next();
+            order.iter().position(|(_, s)| Some(*s) == p).unwrap_or(order.len())
+        };
+        members.sort_by_cached_key(|m| (rank(m), m.nick.to_lowercase()));
         let (network, channel) = (self.id(), b.name.clone());
         self.events.push(Event::Members {
             network,
