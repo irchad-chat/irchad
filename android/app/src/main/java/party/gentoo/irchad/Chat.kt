@@ -50,6 +50,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
+import party.gentoo.irchad.core.Sas
+import party.gentoo.irchad.core.SasStep
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -132,6 +134,8 @@ fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: 
     LaunchedEffect(Unit) {
         app.notices.collect { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show() }
     }
+    val verify by app.verify.collectAsState()
+    verify?.let { VerifyDialog(app, it) }
     // The core lists saved networks shortly after start; give it a moment
     // before deciding there are none. A join in progress is listed too, so
     // the join screen stays up by `adding`, not by the list being empty.
@@ -249,6 +253,13 @@ private fun ChatScreen(
                                 Icon(Icons.Default.Call, "Join voice")
                             }
                         }
+                        if (buf != null && buf.dm && net.status == null &&
+                            (buf.encryption == Lock.ON || buf.encryption == Lock.CHANGED)
+                        ) {
+                            TextButton(onClick = { c.verification(net.network, buf.target, SasStep.START) }) {
+                                Text("Verify")
+                            }
+                        }
                         if (buf != null && !buf.dm) {
                             IconButton(onClick = { members = true }) { Icon(Icons.Default.Person, "Members") }
                         }
@@ -263,6 +274,7 @@ private fun ChatScreen(
                     .imePadding(),
             ) {
                 StatusBanner(app, net)
+                if (buf?.encryption == Lock.CHANGED) KeysChanged(app, net, buf)
                 if (buf == null) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text("No channels yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -415,6 +427,81 @@ private fun Drawer(
 }
 
 /** Connecting, reconnecting, a failed login, or a sign-up waiting on its code. */
+@Composable
+private fun KeysChanged(app: IrChad, net: Network, buf: Buffer) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "${buf.target}'s encryption keys changed. That's normal after they reinstall, " +
+                    "but it can also mean someone is listening in. Verify to be sure.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            TextButton(onClick = { app.client.acceptKeys(net.network, buf.target) }) {
+                Text("Accept the new keys")
+            }
+        }
+    }
+}
+
+/** Comparing emoji with someone (SAS). */
+@Composable
+private fun VerifyDialog(app: IrChad, v: Verify) {
+    val step = { s: SasStep -> app.client.verification(v.network, v.nick, s) }
+    val close = { app.verify.value = null }
+    val finished = v.state is Sas.Done || v.state is Sas.Failed
+    AlertDialog(
+        onDismissRequest = { if (finished) close() else step(SasStep.CANCEL) },
+        title = { Text("Verify ${v.nick}") },
+        text = {
+            when (val s = v.state) {
+                Sas.Incoming -> Text(
+                    "${v.nick} wants to make sure your messages to each other are private, by comparing emoji.",
+                )
+                Sas.Waiting -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text("Waiting for ${v.nick}…")
+                }
+                is Sas.Compare -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "Check that ${v.nick} sees the same emoji, in the same order. " +
+                            "Compare them in person or on a call, not by message.",
+                    )
+                    // Seven emoji: four on top, three below, so they fit a phone.
+                    s.emoji.chunked(4).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                            row.forEach { e ->
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(e.emoji, style = MaterialTheme.typography.headlineMedium)
+                                    Text(e.name, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                }
+                Sas.Done -> Text("${v.nick}'s device is verified. Nobody is listening in.")
+                is Sas.Failed -> Text(s.reason)
+            }
+        },
+        confirmButton = {
+            when (v.state) {
+                Sas.Incoming -> TextButton(onClick = { step(SasStep.ACCEPT) }) { Text("Start") }
+                Sas.Waiting -> TextButton(onClick = { step(SasStep.CANCEL) }) { Text("Cancel") }
+                is Sas.Compare -> TextButton(onClick = { step(SasStep.MATCH) }) { Text("They match") }
+                Sas.Done -> TextButton(onClick = close) { Text("Done") }
+                is Sas.Failed -> TextButton(onClick = close) { Text("Close") }
+            }
+        },
+        dismissButton = {
+            when (v.state) {
+                Sas.Incoming -> TextButton(onClick = { step(SasStep.CANCEL) }) { Text("Not now") }
+                is Sas.Compare -> TextButton(onClick = { step(SasStep.CANCEL) }) { Text("They don't match") }
+                else -> {}
+            }
+        },
+    )
+}
+
 @Composable
 private fun StatusBanner(app: IrChad, net: Network) {
     val status = net.status ?: return

@@ -43,6 +43,9 @@ pub trait Listener: Send + Sync {
     /// A DM or mention from `from` (as shown) just arrived on the live
     /// connection; `target` is the buffer. The app decides whether to show it.
     fn notify(&self, network: String, target: String, from: String, text: String, channel: bool);
+    /// A verification (SAS emoji comparison) with `nick` moved on; answer with
+    /// `Client::verification`.
+    fn verification(&self, network: String, nick: String, state: Sas);
 }
 
 /// Per-network credentials, kept by the app (Android Keystore).
@@ -227,6 +230,57 @@ pub struct GifPage {
     pub error: Option<String>,
 }
 
+/// Where a verification with someone is (`chad_core::VerifyState`).
+#[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
+pub enum Sas {
+    /// They asked: `SasStep::Accept` or `Cancel`.
+    Incoming,
+    Waiting,
+    /// Compare with what they see: `SasStep::Match` or `Cancel`.
+    Compare {
+        emoji: Vec<SasEmoji>,
+    },
+    Done,
+    Failed {
+        reason: String,
+    },
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct SasEmoji {
+    pub emoji: String,
+    pub name: String,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SasStep {
+    Start,
+    Accept,
+    Match,
+    Cancel,
+}
+
+impl From<chad_core::VerifyState> for Sas {
+    fn from(s: chad_core::VerifyState) -> Self {
+        use chad_core::VerifyState as V;
+        match s {
+            V::Incoming => Sas::Incoming,
+            V::Waiting => Sas::Waiting,
+            V::Compare(e) => Sas::Compare {
+                emoji: e
+                    .into_iter()
+                    .map(|(emoji, name)| SasEmoji {
+                        emoji: emoji.into(),
+                        name: name.into(),
+                    })
+                    .collect(),
+            },
+            V::Done => Sas::Done,
+            V::Failed(reason) => Sas::Failed { reason },
+        }
+    }
+}
+
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkKind {
     Image,
@@ -385,6 +439,11 @@ impl Client {
                         listener.notice(error)
                     }
                     Event::JoinFailed { invite, error } => listener.join_failed(invite, error),
+                    Event::Verification {
+                        network,
+                        nick,
+                        state,
+                    } => listener.verification(network, nick, state.into()),
                     Event::Preview {
                         network,
                         url,
@@ -560,6 +619,23 @@ impl Client {
 
     pub fn verify(&self, network: String, code: String) {
         self.net(network, NetCommand::Verify { code });
+    }
+
+    /// Start, answer or end a verification with `nick` (see `Listener::verification`).
+    pub fn verification(&self, network: String, nick: String, step: SasStep) {
+        use chad_core::VerifyStep as V;
+        let step = match step {
+            SasStep::Start => V::Start,
+            SasStep::Accept => V::Accept,
+            SasStep::Match => V::Match,
+            SasStep::Cancel => V::Cancel,
+        };
+        self.net(network, NetCommand::Verification { nick, step });
+    }
+
+    /// Keep using `nick`'s devices after their keys changed, without verifying.
+    pub fn accept_keys(&self, network: String, nick: String) {
+        self.net(network, NetCommand::AcceptKeys { nick });
     }
 
     pub fn sign_in(&self, network: String, password: String) {
@@ -1006,6 +1082,7 @@ mod tests {
         fn gifs(&self, _: String, _: String, _: Option<String>, _: GifPage) {}
         fn push_available(&self, _: String, _: String) {}
         fn notify(&self, _: String, _: String, _: String, _: String, _: bool) {}
+        fn verification(&self, _: String, _: String, _: Sas) {}
     }
     impl Voice for Nop {
         fn join(&self, _: u64, _: String, _: String, _: Arc<Call>) {}

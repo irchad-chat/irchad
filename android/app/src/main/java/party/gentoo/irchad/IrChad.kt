@@ -12,6 +12,8 @@ import party.gentoo.irchad.core.Credentials
 import party.gentoo.irchad.core.GifPage
 import party.gentoo.irchad.core.LinkPreview
 import party.gentoo.irchad.core.Listener
+import party.gentoo.irchad.core.Sas
+import party.gentoo.irchad.core.SasStep
 import party.gentoo.irchad.core.Secrets
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -26,6 +28,8 @@ class IrChad : Application() {
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
     /** (invite, error) for a join that failed. */
     val joinFailures = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 4)
+    /** The verification on screen, one person at a time. */
+    val verify = MutableStateFlow<Verify?>(null)
 
     val calls by lazy { Calls(this) }
     val media by lazy { Media(this) }
@@ -65,10 +69,21 @@ class IrChad : Application() {
 
                 override fun notify(network: String, target: String, from: String, text: String, channel: Boolean) =
                     notifier.live(network, target, from, text, channel)
+
+                override fun verification(network: String, nick: String, state: Sas) {
+                    // A request from someone else waits behind the one on screen.
+                    val cur = verify.value
+                    val busy = cur != null && (cur.network != network || !cur.nick.equals(nick, true)) &&
+                        cur.state !is Sas.Done && cur.state !is Sas.Failed
+                    if (!busy) verify.value = Verify(network, nick, state)
+                    else if (state is Sas.Incoming) client.verification(network, nick, SasStep.CANCEL)
+                }
             },
         )
     }
 }
+
+data class Verify(val network: String, val nick: String, val state: Sas)
 
 /**
  * Passwords encrypted with an AES key that never leaves the Android Keystore,
