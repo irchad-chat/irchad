@@ -29,6 +29,13 @@ pub trait Listener: Send + Sync {
     fn notice(&self, text: String);
     /// A join never became a network (wrong password, bad invite).
     fn join_failed(&self, invite: String, error: String);
+    /// The answer to `Client::preview`: `None` if the page has none.
+    fn preview(&self, network: String, url: String, preview: Option<LinkPreview>);
+    /// The answer to `Client::media`: the image's bytes (≤ 8 MB, not yet
+    /// checked to be an image), or `None` if it couldn't be fetched.
+    fn media(&self, network: String, url: String, bytes: Option<Vec<u8>>);
+    /// The answer to `Client::gifs`.
+    fn gifs(&self, network: String, query: String, pos: Option<String>, page: GifPage);
 }
 
 /// Per-network credentials, kept by the app (Android Keystore).
@@ -148,6 +155,8 @@ pub struct Network {
     /// Waiting for the code from the sign-up email (`verify`).
     pub needs_code: bool,
     pub guest: bool,
+    /// Who GIF search comes from, if the network has it.
+    pub gifs: Option<String>,
     pub unread: bool,
     pub mentions: u32,
     pub voice: Option<String>,
@@ -181,6 +190,52 @@ pub struct Buffer {
 }
 
 #[derive(uniffi::Record)]
+pub struct LinkPreview {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub site: Option<String>,
+    /// Load with `Client::media`, never directly (D25).
+    pub image: Option<String>,
+}
+
+#[derive(uniffi::Record)]
+pub struct Gif {
+    /// May be empty.
+    pub title: String,
+    /// A small rendition for the picker.
+    pub preview: String,
+    /// What goes in the message.
+    pub url: String,
+    /// Of `preview`, in pixels.
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(uniffi::Record)]
+pub struct GifPage {
+    pub gifs: Vec<Gif>,
+    /// Pass as `pos` for the next page; `None` at the end.
+    pub next: Option<String>,
+    /// Why there are no GIFs, in words for the user.
+    pub error: Option<String>,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkKind {
+    Image,
+    Video,
+    /// One of this network's uploads that isn't media.
+    File,
+    Page,
+}
+
+#[derive(uniffi::Record, Debug, PartialEq, Eq)]
+pub struct Link {
+    pub url: String,
+    pub kind: LinkKind,
+}
+
+#[derive(uniffi::Record)]
 pub struct Reaction {
     pub emoji: String,
     pub nicks: Vec<String>,
@@ -209,6 +264,8 @@ pub struct Message {
     pub mention: bool,
     pub own: bool,
     pub reactions: Vec<Reaction>,
+    /// The http(s) links in `text`, in order.
+    pub links: Vec<Link>,
 }
 
 #[derive(uniffi::Record)]
@@ -302,6 +359,57 @@ impl Client {
                         listener.notice(error)
                     }
                     Event::JoinFailed { invite, error } => listener.join_failed(invite, error),
+                    Event::Preview {
+                        network,
+                        url,
+                        preview,
+                    } => listener.preview(
+                        network,
+                        url,
+                        preview.map(|p| LinkPreview {
+                            title: p.title,
+                            description: p.description,
+                            site: p.site,
+                            image: p.image.map(String::from),
+                        }),
+                    ),
+                    Event::Media {
+                        network,
+                        url,
+                        result,
+                    } => listener.media(network, url, result.ok().map(|b| b.0.to_vec())),
+                    Event::Gifs {
+                        network,
+                        query,
+                        pos,
+                        result,
+                    } => listener.gifs(
+                        network,
+                        query,
+                        pos,
+                        result.map_or_else(
+                            |e| GifPage {
+                                gifs: Vec::new(),
+                                next: None,
+                                error: Some(e),
+                            },
+                            |p| GifPage {
+                                gifs: p
+                                    .gifs
+                                    .into_iter()
+                                    .map(|g| Gif {
+                                        title: g.title,
+                                        preview: g.preview.into(),
+                                        url: g.url.into(),
+                                        width: g.width,
+                                        height: g.height,
+                                    })
+                                    .collect(),
+                                next: p.next,
+                                error: None,
+                            },
+                        ),
+                    ),
                     Event::Uploaded { result: Err(e), .. } => {
                         listener.notice(format!("Upload failed: {e}"))
                     }
@@ -432,6 +540,22 @@ impl Client {
         self.net(network, NetCommand::SignIn { password });
     }
 
+    /// What a link says about itself, through chadd: `Listener::preview`.
+    pub fn preview(&self, network: String, url: String) {
+        self.net(network, NetCommand::Preview { url });
+    }
+
+    /// An image's bytes (own uploads directly, the rest through chadd):
+    /// `Listener::media`.
+    pub fn media(&self, network: String, url: String) {
+        self.net(network, NetCommand::Media { url });
+    }
+
+    /// A page of GIFs; empty `query` for trending: `Listener::gifs`.
+    pub fn gifs(&self, network: String, query: String, pos: Option<String>) {
+        self.net(network, NetCommand::Gifs { query, pos });
+    }
+
     pub fn networks(&self) -> Vec<Network> {
         let v = self.view();
         v.nets
@@ -456,6 +580,7 @@ impl Client {
                     failed,
                     needs_code,
                     guest: n.info.guest,
+                    gifs: n.info.gifs.clone(),
                     unread: n.unread(),
                     mentions: n.mentions(),
                     voice,
@@ -504,6 +629,7 @@ impl Client {
             .iter()
             .map(|m| {
                 let profile = n.profiles.get(&chad_core::view::key(&m.nick));
+                let text = strip_formatting(&m.text);
                 Message {
                     key: m
                         .msgid
@@ -516,7 +642,8 @@ impl Client {
                     avatar: profile
                         .and_then(|p| p.avatar.as_ref())
                         .map(|u| u.to_string()),
-                    text: strip_formatting(&m.text),
+                    links: links(&text, &network),
+                    text,
                     action: m.kind == MessageKind::Action,
                     notice: m.kind == MessageKind::Notice,
                     reply_to: m.reply_to.clone(),
@@ -559,6 +686,53 @@ impl Client {
                 .collect(),
         )
     }
+}
+
+/// Emoji whose name or GitHub shortcode contains `query`, all of them for an
+/// empty one, in Unicode's order.
+#[uniffi::export]
+pub fn emojis(query: String) -> Vec<String> {
+    let q = query.trim().to_lowercase();
+    emojis::iter()
+        .filter(|e| q.is_empty() || e.name().contains(&q) || e.shortcodes().any(|s| s.contains(&q)))
+        .map(|e| e.as_str().to_owned())
+        .collect()
+}
+
+/// The http(s) links in `text`, the same way desktop finds them.
+// shortcut: a copy of desktop's `format::split_links` and `media::kind`;
+// move both into chad-core when Android renders formatting spans.
+fn links(text: &str, network: &str) -> Vec<Link> {
+    let own = url::Url::parse(network).ok().map(|n| n.origin());
+    text.split_whitespace()
+        .filter_map(|w| {
+            let w = &w[w.find("http")?..];
+            let mut u = w.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '"', '>']);
+            if u.ends_with(')') && !u.contains('(') {
+                u = &u[..u.len() - 1];
+            }
+            let p = url::Url::parse(u).ok()?;
+            if !matches!(p.scheme(), "http" | "https") || p.host().is_none() {
+                return None;
+            }
+            let ext = p
+                .path()
+                .rsplit_once('.')
+                .map(|(_, e)| e.to_ascii_lowercase());
+            let kind = match ext.as_deref() {
+                Some("png" | "jpg" | "jpeg" | "gif" | "webp") => LinkKind::Image,
+                Some("mp4" | "webm" | "mov") => LinkKind::Video,
+                _ if own.as_ref() == Some(&p.origin()) && p.path().starts_with("/uploads/") => {
+                    LinkKind::File
+                }
+                _ => LinkKind::Page,
+            };
+            Some(Link {
+                url: u.to_owned(),
+                kind,
+            })
+        })
+        .collect()
 }
 
 /// IRC formatting codes removed.
@@ -617,11 +791,41 @@ mod tests {
         assert_eq!(strip_formatting("日本\x02語"), "日本語");
     }
 
+    #[test]
+    fn finds_links() {
+        let net = "https://chat.example";
+        let got = links(
+            "see (https://a.example/x.PNG), https://chat.example/uploads/1/a.zip and \
+             <https://b.example/page>. not:https://c.example/v.mp4 http:// ftp://x",
+            net,
+        );
+        let k: Vec<_> = got.iter().map(|l| (l.url.as_str(), l.kind)).collect();
+        assert_eq!(
+            k,
+            [
+                ("https://a.example/x.PNG", LinkKind::Image),
+                ("https://chat.example/uploads/1/a.zip", LinkKind::File),
+                ("https://b.example/page", LinkKind::Page),
+                ("https://c.example/v.mp4", LinkKind::Video),
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_emoji() {
+        assert!(emojis("thumbsup".into()).contains(&"👍".to_owned()));
+        assert!(emojis("".into()).len() > 1000);
+        assert!(emojis("zzzzqqq".into()).is_empty());
+    }
+
     struct Nop;
     impl Listener for Nop {
         fn changed(&self) {}
         fn notice(&self, _: String) {}
         fn join_failed(&self, _: String, _: String) {}
+        fn preview(&self, _: String, _: String, _: Option<LinkPreview>) {}
+        fn media(&self, _: String, _: String, _: Option<Vec<u8>>) {}
+        fn gifs(&self, _: String, _: String, _: Option<String>, _: GifPage) {}
     }
     impl Voice for Nop {
         fn join(&self, _: u64, _: String, _: String, _: Arc<Call>) {}

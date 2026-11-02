@@ -90,6 +90,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -97,6 +106,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import party.gentoo.irchad.core.Buffer
+import party.gentoo.irchad.core.Link
 import party.gentoo.irchad.core.Lock
 import party.gentoo.irchad.core.Message
 import party.gentoo.irchad.core.Network
@@ -297,7 +307,7 @@ private fun ChatScreen(
         }
     }
 
-    dialog?.let { kind ->
+    if (dialog == "settings") AutoLoadDialog(app) { dialog = null } else dialog?.let { kind ->
         var name by remember { mutableStateOf(if (kind == "channel") "#" else "") }
         AlertDialog(
             onDismissRequest = { dialog = null },
@@ -351,6 +361,9 @@ private fun Drawer(
         }
         item {
             IconButton(onClick = onAdd) { Icon(Icons.Default.Add, "Join a network") }
+        }
+        item {
+            IconButton(onClick = { onDialog("settings") }) { Icon(Icons.Default.Settings, "Settings") }
         }
     }
     HorizontalDivider()
@@ -433,6 +446,7 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
     // Newest at the bottom: the list is reversed so it starts there.
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf<Message?>(null) }
+    var reactTo by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(net.network, buf.target, msgs.size, buf.unread) {
         if (buf.unread > 0u) c.markRead(net.network, buf.target)
@@ -457,11 +471,17 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
                 val head = prev == null || prev.nick != m.nick || m.time - prev.time > GROUP_GAP_MS ||
                     prev.action || m.action
                 Box {
-                    MessageRow(m, head, buf.dm, onLong = { menu = m })
+                    MessageRow(app, net.network, m, head, buf.dm, onLong = { menu = m })
                     DropdownMenu(expanded = menu?.key == m.key, onDismissRequest = { menu = null }) {
                         for (e in listOf("👍", "❤", "😂", "😮")) {
                             DropdownMenuItem(text = { Text("React $e") }, onClick = {
                                 m.msgid?.let { c.react(net.network, buf.target, it, e) }
+                                menu = null
+                            })
+                        }
+                        if (m.msgid != null) {
+                            DropdownMenuItem(text = { Text("React…") }, onClick = {
+                                reactTo = m.msgid
                                 menu = null
                             })
                         }
@@ -474,6 +494,12 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
                     }
                 }
             }
+        }
+        reactTo?.let { id ->
+            Picker(app, net.network, null, onEmoji = {
+                c.react(net.network, buf.target, id, it)
+                reactTo = null
+            }, onGif = {}, onDismiss = { reactTo = null })
         }
         if (buf.typing.isNotEmpty()) {
             val who = buf.typing
@@ -496,7 +522,7 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageRow(m: Message, head: Boolean, dm: Boolean, onLong: () -> Unit) {
+private fun MessageRow(app: IrChad, network: String, m: Message, head: Boolean, dm: Boolean, onLong: () -> Unit) {
     val time = remember(m.time) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(m.time)) }
     val bar = if (m.mention && !dm) MaterialTheme.colorScheme.primary else Color.Transparent
     Row(
@@ -527,8 +553,12 @@ private fun MessageRow(m: Message, head: Boolean, dm: Boolean, onLong: () -> Uni
                 m.redacted -> Text("Message deleted", fontStyle = FontStyle.Italic, color = faint)
                 m.undecryptable -> Text("Couldn't decrypt this message.", fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.error)
                 m.action -> Text("* ${m.shown} ${m.text}", fontStyle = FontStyle.Italic)
-                else -> Text(m.text, color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified)
+                else -> Text(
+                    linked(m.text, m.links, MaterialTheme.colorScheme.primary),
+                    color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
+                )
             }
+            MessageLinks(app, network, m)
             m.failed?.let { Text("Not sent: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
             if (m.reactions.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
@@ -571,11 +601,43 @@ private fun nickColor(nick: String): Color {
     return Color.hsv(hue, 0.55f, if (dark) 0.9f else 0.55f)
 }
 
+/** `text` with its links tappable. */
+private fun linked(text: String, links: List<Link>, color: Color) = buildAnnotatedString {
+    var i = 0
+    for (l in links) {
+        val at = text.indexOf(l.url, i)
+        if (at < 0) continue
+        append(text.substring(i, at))
+        withLink(LinkAnnotation.Url(l.url, TextLinkStyles(SpanStyle(color = color)))) { append(l.url) }
+        i = at + l.url.length
+    }
+    append(text.substring(i))
+}
+
 private fun Color.luminance(): Float = 0.2126f * red + 0.7152f * green + 0.0722f * blue
 
 @Composable
 private fun Composer(app: IrChad, net: Network, buf: Buffer) {
-    var draft by rememberSaveable(net.network, buf.target) { mutableStateOf("") }
+    var draft by rememberSaveable(net.network, buf.target, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue())
+    }
+    var picker by remember { mutableStateOf(false) }
+    if (picker) {
+        Picker(
+            app, net.network, net.gifs,
+            onEmoji = { e ->
+                val t = draft.text
+                val (a, b) = draft.selection.min to draft.selection.max
+                draft = TextFieldValue(t.substring(0, a) + e + t.substring(b), TextRange(a + e.length))
+            },
+            // Posted as a plain link: every client can open it, and IrChad shows it inline.
+            onGif = {
+                app.client.send(net.network, buf.target, it, null)
+                picker = false
+            },
+            onDismiss = { picker = false },
+        )
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -583,6 +645,7 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer) {
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        IconButton(onClick = { picker = true }) { Icon(Icons.Default.Face, "Emoji and GIFs") }
         TextField(
             draft, { draft = it },
             placeholder = { Text("Message ${buf.target}") },
@@ -595,10 +658,10 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer) {
             modifier = Modifier.weight(1f),
         )
         IconButton(
-            enabled = draft.isNotBlank(),
+            enabled = draft.text.isNotBlank(),
             onClick = {
-                app.client.send(net.network, buf.target, draft.trimEnd(), null)
-                draft = ""
+                app.client.send(net.network, buf.target, draft.text.trimEnd(), null)
+                draft = TextFieldValue()
             },
         ) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
     }

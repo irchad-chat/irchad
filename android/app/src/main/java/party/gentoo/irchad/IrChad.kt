@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import party.gentoo.irchad.core.Client
 import party.gentoo.irchad.core.Credentials
+import party.gentoo.irchad.core.GifPage
+import party.gentoo.irchad.core.LinkPreview
 import party.gentoo.irchad.core.Listener
 import party.gentoo.irchad.core.Secrets
 import java.security.KeyStore
@@ -26,6 +28,7 @@ class IrChad : Application() {
     val joinFailures = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 4)
 
     val calls by lazy { Calls(this) }
+    val media by lazy { Media(this) }
 
     val client: Client by lazy {
         Client(
@@ -44,6 +47,16 @@ class IrChad : Application() {
 
                 override fun joinFailed(invite: String, error: String) {
                     joinFailures.tryEmit(invite to error)
+                }
+
+                override fun preview(network: String, url: String, preview: LinkPreview?) =
+                    media.gotPreview(network, url, preview)
+
+                override fun media(network: String, url: String, bytes: ByteArray?) =
+                    media.gotMedia(network, url, bytes)
+
+                override fun gifs(network: String, query: String, pos: String?, page: GifPage) {
+                    media.gifs.tryEmit(Triple(query, pos, page))
                 }
             },
         )

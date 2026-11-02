@@ -1133,9 +1133,11 @@ name = "chad-ffi"
 version = "0.1.2"
 dependencies = [
  "chad-core",
+ "emojis",
  "tokio",
  "tracing",
  "uniffi",
+ "url",
 ]
 
 [[package]]
