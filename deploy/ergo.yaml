@@ -1194,7 +1194,7 @@ metadata:
 # with no public IP listeners, only Tor/I2P listeners).
 webpush:
     # are push notifications enabled at all?
-    enabled: false
+    enabled: true # irchad: Android push via UnifiedPush (D39)
     # request timeout for POST'ing the http notification
     timeout: 10s
     # delay sending the notification for this amount of time, then suppress it

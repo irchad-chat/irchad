@@ -213,9 +213,16 @@ class Media(private val app: IrChad) {
 fun AutoLoadDialog(app: IrChad, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Load images and link previews") },
+        title = { Text("Settings") },
         text = {
             Column {
+                Text("Notifications while IrChad is closed", style = MaterialTheme.typography.titleSmall)
+                BackgroundChoices(app)
+                Text(
+                    "Load images and link previews",
+                    Modifier.padding(top = 16.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                )
                 for ((a, label) in listOf(
                     Media.AutoLoad.ALWAYS to "Always",
                     Media.AutoLoad.UNMETERED to "On Wi‑Fi only",

@@ -116,14 +116,18 @@ import java.util.Date
 /** A new header after this much quiet, even from the same person. */
 private const val GROUP_GAP_MS = 5 * 60 * 1000L
 
+/** A network (and buffer) to show. Compared by identity, so showing it again works. */
+class Focus(val network: String, val target: String?)
+
 @Composable
-fun Root(app: IrChad, invite: String?, pip: Boolean, inviteTaken: () -> Unit) {
+fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: () -> Unit) {
     val tick by app.version.collectAsState()
     val call by app.calls.state.collectAsState()
     val nets = remember(tick) { app.client.networks() }
     var adding by rememberSaveable { mutableStateOf(false) }
     // The network (and channel) a finished join should show.
-    var focus by remember { mutableStateOf<Pair<String, String?>?>(null) }
+    var focus by remember { mutableStateOf<Focus?>(null) }
+    LaunchedEffect(open) { if (open != null) focus = open }
     val ctx = LocalContext.current
     LaunchedEffect(Unit) {
         app.notices.collect { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show() }
@@ -141,13 +145,14 @@ fun Root(app: IrChad, invite: String?, pip: Boolean, inviteTaken: () -> Unit) {
     when {
         invite != null || adding -> JoinScreen(
             app, invite, nets,
-            onDone = { origin, channel -> focus = origin to channel; close() },
+            onDone = { origin, channel -> focus = Focus(origin, channel); close() },
             onCancel = if (nets.isEmpty()) null else close,
         )
         nets.isEmpty() -> Surface(Modifier.fillMaxSize()) {}
         call?.watching != null && pip -> ScreenViewer(app, call!!, pip = true)
         else -> Box(Modifier.fillMaxSize()) {
             ChatScreen(app, tick, nets, focus, call) { adding = true }
+            BackgroundOnboarding(app)
             call?.takeIf { it.watching != null }?.let { ScreenViewer(app, it, pip = false) }
         }
     }
@@ -159,7 +164,7 @@ private fun ChatScreen(
     app: IrChad,
     tick: Long,
     nets: List<Network>,
-    focus: Pair<String, String?>?,
+    focus: Focus?,
     call: CallState?,
     onAdd: () -> Unit,
 ) {
@@ -170,9 +175,9 @@ private fun ChatScreen(
     // Selected buffer per network, by name as the server spells it.
     val selected = remember { mutableStateMapOf<String, String>() }
     LaunchedEffect(focus) {
-        val (origin, channel) = focus ?: return@LaunchedEffect
-        current = origin
-        if (channel != null) selected[origin] = channel
+        val f = focus ?: return@LaunchedEffect
+        current = f.network
+        if (f.target != null) selected[f.network] = f.target
     }
     val target = selected[net.network]?.takeIf { s -> buffers.any { it.target.equals(s, true) } }
         ?: buffers.firstOrNull()?.target
@@ -448,6 +453,7 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
     var menu by remember { mutableStateOf<Message?>(null) }
     var reactTo by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(net.network, buf.target) { app.notifier.dismiss(net.network, buf.target) }
     LaunchedEffect(net.network, buf.target, msgs.size, buf.unread) {
         if (buf.unread > 0u) c.markRead(net.network, buf.target)
     }

@@ -10,8 +10,7 @@ use std::time::{Duration, Instant};
 
 use chad_core::{
     Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, DeviceInfo,
-    Encryption, Event, Member, NetCommand, SendStatus, Typing, VerifyState, VerifyStep, VoiceState,
-    invite,
+    Encryption, Event, Member, NetCommand, Typing, VerifyState, VerifyStep, VoiceState, invite,
 };
 use chad_media::{InputMode, Voice};
 use egui::{
@@ -33,8 +32,6 @@ use crate::voice;
 use crate::{complete, emoji, format, gifs, update};
 
 const TOAST_TTL: Duration = Duration::from_secs(8);
-/// Only messages this fresh notify; gap-fill after a restart stays quiet.
-const NOTIFY_WINDOW_MS: i64 = 60_000;
 /// The AWAY reason other clients show.
 const AWAY: &str = "Away";
 
@@ -1052,7 +1049,8 @@ impl App {
             | Event::VoiceMembers { .. }
             | Event::Profile { .. }
             | Event::Devices { .. }
-            | Event::Sounds { .. } => {}
+            | Event::Sounds { .. }
+            | Event::PushAvailable { .. } => {}
         }
     }
 
@@ -3015,13 +3013,12 @@ fn adding_id() -> egui::Id {
 }
 
 fn should_notify(rule: Notify, m: &ChatMessage) -> bool {
-    let fresh = chad_core::time::now_ms() - m.time < NOTIFY_WINDOW_MS;
     let wanted = match rule {
         Notify::All => true,
         Notify::MentionsAndDms => m.mention,
         Notify::Never => false,
     };
-    wanted && fresh && !m.own && m.status == SendStatus::Sent && !m.redacted
+    wanted && chad_core::view::notifiable(m)
 }
 
 fn mention_badge(ui: &egui::Ui, center: egui::Pos2, n: u32) {

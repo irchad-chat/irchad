@@ -141,6 +141,11 @@ pub enum NetCommand {
         target: String,
         state: Typing,
     },
+    /// Web push (D39) to this subscription, renewed on every connection
+    /// after `Event::PushAvailable`; `None` stops it.
+    Push {
+        subscription: Option<PushSubscription>,
+    },
     /// Everything in the buffer has been seen.
     MarkRead {
         target: String,
@@ -384,12 +389,27 @@ pub enum Event {
         nick: String,
         devices: Vec<DeviceInfo>,
     },
+    /// Connected, and the network can push (`draft/webpush`): subscribe with
+    /// its VAPID public key (base64url) and answer with `NetCommand::Push`.
+    PushAvailable {
+        network: String,
+        vapid: String,
+    },
     /// A verification with `nick` moved on.
     Verification {
         network: String,
         nick: String,
         state: VerifyState,
     },
+}
+
+/// Where ergo sends our pushes (`draft/webpush`): the push service's URL and
+/// the receiving device's keys (RFC 8291), base64url.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushSubscription {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -37,6 +37,9 @@ adb shell "run-as party.gentoo.irchad sh -c 'mkdir -p files/certs && cp /data/lo
 
 Then join `irchad.test:8443` as `bob` / `bobpass` (from `deploy/seed.py`).
 
+Push (D47): install ntfy on the emulator and leave its server at ntfy.sh. ergo refuses push endpoints on private or loopback addresses, so a self-hosted ntfy on the LAN won't work.
+Pushes only come for DMs and for channel messages that name the account (`bob`), and ergo has to reach ntfy.sh over the internet.
+
 ## Release signing
 
 `release.yml` signs with a PKCS12 keystore from the `ANDROID_KEYSTORE` secret (base64), whose store and key (alias `irchad`) share `ANDROID_KEYSTORE_PASSWORD`.

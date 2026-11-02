@@ -12,9 +12,18 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use crate::{
-    BufferInfo, BufferKind, ChatMessage, ConnState, DeviceInfo, Event, Member, NetworkInfo, Sound,
-    Typing, VoiceState,
+    BufferInfo, BufferKind, ChatMessage, ConnState, DeviceInfo, Event, Member, NetworkInfo,
+    SendStatus, Sound, Typing, VoiceState,
 };
+
+/// Only messages this fresh notify; gap-fill after a restart stays quiet.
+const NOTIFY_WINDOW_MS: i64 = 60_000;
+
+/// Someone else's message, just now: notify for it if the user's rule says so.
+pub fn notifiable(m: &ChatMessage) -> bool {
+    let fresh = crate::time::now_ms() - m.time < NOTIFY_WINDOW_MS;
+    fresh && !m.own && m.status == SendStatus::Sent && !m.redacted
+}
 
 /// How long a typing notice holds without another one.
 pub const TYPING_TTL: Duration = Duration::from_secs(6);

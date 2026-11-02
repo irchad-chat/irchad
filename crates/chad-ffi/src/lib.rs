@@ -36,6 +36,13 @@ pub trait Listener: Send + Sync {
     fn media(&self, network: String, url: String, bytes: Option<Vec<u8>>);
     /// The answer to `Client::gifs`.
     fn gifs(&self, network: String, query: String, pos: Option<String>, page: GifPage);
+    /// The network can push (D39): register with the UnifiedPush distributor
+    /// using this VAPID key and hand the endpoint to `Client::push`.
+    /// Comes again on every connection.
+    fn push_available(&self, network: String, vapid: String);
+    /// A DM or mention from `from` (as shown) just arrived on the live
+    /// connection; `target` is the buffer. The app decides whether to show it.
+    fn notify(&self, network: String, target: String, from: String, text: String, channel: bool);
 }
 
 /// Per-network credentials, kept by the app (Android Keystore).
@@ -353,8 +360,27 @@ impl Client {
         let v = view.clone();
         rt.spawn(async move {
             while let Some(ev) = events.recv().await {
-                v.lock().unwrap_or_else(|e| e.into_inner()).apply(&ev);
+                let applied = v.lock().unwrap_or_else(|e| e.into_inner()).apply(&ev);
                 match ev {
+                    Event::Messages {
+                        network,
+                        target,
+                        messages,
+                    } => {
+                        let notes = notes(
+                            &v.lock().unwrap_or_else(|e| e.into_inner()),
+                            &network,
+                            &target,
+                            &messages,
+                            &applied.fresh,
+                        );
+                        for (from, text, channel) in notes {
+                            listener.notify(network.clone(), target.clone(), from, text, channel);
+                        }
+                    }
+                    Event::PushAvailable { network, vapid } => {
+                        listener.push_available(network, vapid)
+                    }
                     Event::Error { error, .. } | Event::SignUpFailed { error, .. } => {
                         listener.notice(error)
                     }
@@ -556,6 +582,16 @@ impl Client {
         self.net(network, NetCommand::Gifs { query, pos });
     }
 
+    /// Pushes for this network go to this UnifiedPush endpoint; `None` stops them.
+    pub fn push(&self, network: String, subscription: Option<PushSubscription>) {
+        let subscription = subscription.map(|s| chad_core::PushSubscription {
+            endpoint: s.endpoint,
+            p256dh: s.p256dh,
+            auth: s.auth,
+        });
+        self.net(network, NetCommand::Push { subscription });
+    }
+
     pub fn networks(&self) -> Vec<Network> {
         let v = self.view();
         v.nets
@@ -688,6 +724,103 @@ impl Client {
     }
 }
 
+/// A UnifiedPush endpoint and the keys the distributor made for it (base64url).
+#[derive(uniffi::Record)]
+pub struct PushSubscription {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+}
+
+/// What a push from ergo (`draft/webpush`) says.
+#[derive(uniffi::Enum, Debug, PartialEq, Eq)]
+pub enum Push {
+    /// A DM or a mention; `target` is the buffer (their nick for a DM).
+    Message {
+        target: String,
+        from: String,
+        text: String,
+        channel: bool,
+    },
+    /// Read on another device: clear `target`'s notification.
+    Read { target: String },
+}
+
+/// A decrypted push payload, which is one IRC line. ergo keeps only the
+/// `time`, `msgid` and `account` tags, so an encrypted DM arrives as its
+/// readable fallback (`+chad/e2e` is gone). `None` for anything else, such as
+/// the `PING` that tests a new subscription. D14: the line is the server's.
+#[uniffi::export]
+pub fn read_push(line: String) -> Option<Push> {
+    if line.len() > 8192 {
+        return None;
+    }
+    let m = chad_irc::Message::parse(&line).ok()?;
+    let p = |i| m.param(i).filter(|s| !s.is_empty());
+    match m.command.as_str() {
+        "PRIVMSG" | "NOTICE" => {
+            let (to, text) = (p(0)?, p(1)?);
+            let nick = snippet(m.source_nick().filter(|n| !n.is_empty())?, 64);
+            let action = text
+                .strip_prefix("\x01ACTION ")
+                .map(|t| t.trim_end_matches('\x01'));
+            if action.is_none() && text.starts_with('\x01') {
+                return None;
+            }
+            let channel = to.starts_with('#');
+            let text = match action {
+                Some(a) => format!("* {nick} {}", strip_formatting(a)),
+                None => strip_formatting(text),
+            };
+            Some(Push::Message {
+                target: if channel {
+                    snippet(to, 64)
+                } else {
+                    nick.clone()
+                },
+                from: nick,
+                text: snippet(&text, 200),
+                channel,
+            })
+        }
+        "MARKREAD" => Some(Push::Read {
+            target: snippet(p(0)?, 64),
+        }),
+        _ => None,
+    }
+}
+
+/// `(from, text, channel)` for each fresh DM or mention in `messages`.
+fn notes(
+    v: &View,
+    network: &str,
+    target: &str,
+    messages: &[chad_core::ChatMessage],
+    fresh: &[usize],
+) -> Vec<(String, String, bool)> {
+    let (Some(ni), Some(b)) = (v.net(network), v.buf(network, target)) else {
+        return Vec::new();
+    };
+    let channel = b.info.kind == chad_core::BufferKind::Channel;
+    fresh
+        .iter()
+        .filter_map(|&i| messages.get(i))
+        .filter(|m| m.mention && chad_core::view::notifiable(m))
+        .map(|m| {
+            let from = snippet(v.nets[ni].shown(&m.nick), 64);
+            (from, snippet(&strip_formatting(&m.text), 200), channel)
+        })
+        .collect()
+}
+
+/// At most `max` chars of `s`, with an ellipsis if cut.
+fn snippet(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((i, _)) => format!("{}…", &s[..i]),
+        None => s.to_owned(),
+    }
+}
+
 /// Emoji whose name or GitHub shortcode contains `query`, all of them for an
 /// empty one, in Unicode's order.
 #[uniffi::export]
@@ -812,6 +945,51 @@ mod tests {
     }
 
     #[test]
+    fn reads_pushes() {
+        let dm = "@time=2026-11-01T10:00:00.000Z;msgid=x;account=al :alice!a@h PRIVMSG bob :hi \x02there\x02";
+        assert_eq!(
+            read_push(dm.into()),
+            Some(Push::Message {
+                target: "alice".into(),
+                from: "alice".into(),
+                text: "hi there".into(),
+                channel: false,
+            })
+        );
+        let me = ":alice!a@h PRIVMSG #dev :\x01ACTION waves at bob\x01";
+        assert_eq!(
+            read_push(me.into()),
+            Some(Push::Message {
+                target: "#dev".into(),
+                from: "alice".into(),
+                text: "* alice waves at bob".into(),
+                channel: true,
+            })
+        );
+        let long = format!(":alice!a@h PRIVMSG bob :{}", "é".repeat(300));
+        let Some(Push::Message { text, .. }) = read_push(long) else {
+            panic!()
+        };
+        assert_eq!(text.chars().count(), 201);
+        assert_eq!(
+            read_push(":srv MARKREAD #dev timestamp=2026-11-01T10:00:00.000Z".into()),
+            Some(Push::Read {
+                target: "#dev".into()
+            })
+        );
+        for junk in [
+            "PING webpush",
+            ":alice!a@h PRIVMSG bob :\x01VERSION\x01",
+            ":alice!a@h PRIVMSG bob",
+            ":srv 001 bob :hi",
+            "",
+        ] {
+            assert_eq!(read_push(junk.into()), None, "{junk:?}");
+        }
+        assert_eq!(read_push("x".repeat(9000)), None);
+    }
+
+    #[test]
     fn finds_emoji() {
         assert!(emojis("thumbsup".into()).contains(&"👍".to_owned()));
         assert!(emojis("".into()).len() > 1000);
@@ -826,6 +1004,8 @@ mod tests {
         fn preview(&self, _: String, _: String, _: Option<LinkPreview>) {}
         fn media(&self, _: String, _: String, _: Option<Vec<u8>>) {}
         fn gifs(&self, _: String, _: String, _: Option<String>, _: GifPage) {}
+        fn push_available(&self, _: String, _: String) {}
+        fn notify(&self, _: String, _: String, _: String, _: String, _: bool) {}
     }
     impl Voice for Nop {
         fn join(&self, _: u64, _: String, _: String, _: Arc<Call>) {}

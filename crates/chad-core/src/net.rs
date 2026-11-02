@@ -14,7 +14,7 @@ use chad_irc::label::Labels;
 use crate::store::{Store, StoredBuffer};
 use crate::{
     BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind, NetCommand,
-    NetworkInfo, SendStatus, Typing, VoiceState, time,
+    NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, time,
 };
 
 mod e2e;
@@ -141,6 +141,9 @@ pub struct Net {
     /// Our CTCP VERSION reply.
     pub version: String,
     ctcp_at: Option<Instant>,
+    /// Where ergo pushes to, and whether this connection has registered it.
+    push: Option<PushSubscription>,
+    push_registered: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -181,6 +184,8 @@ impl Net {
             e2e: None,
             version: "IrChad".into(),
             ctcp_at: None,
+            push: None,
+            push_registered: false,
         }
     }
 
@@ -248,6 +253,12 @@ impl Net {
         if !self.guest && self.caps.enabled("draft/persistence") {
             self.out.push(Message::new("PERSISTENCE", ["GET"]));
         }
+        self.push_registered = false;
+        let vapid = self.isupport.get("VAPID").filter(|v| is_base64url(v, 200));
+        if let Some(vapid) = vapid.filter(|_| !self.guest && self.caps.enabled("draft/webpush")) {
+            let (network, vapid) = (self.id(), vapid.to_owned());
+            self.events.push(Event::PushAvailable { network, vapid });
+        }
         // ergo sends the reattach burst (our JOINs) before reading this, so the reply
         // marks the point where the server's channel list is complete.
         self.send_labeled(Message::new("PING", ["sync"]), Pending::Sync);
@@ -305,6 +316,7 @@ impl Net {
                 reply_to,
             } => self.send_text(&target, &text, reply_to),
             NetCommand::MarkRead { target } => self.mark_read(&target),
+            NetCommand::Push { subscription } => self.set_push(subscription),
             NetCommand::OpenDm { nick } if valid_name(&nick) && !self.is_channel(&nick) => {
                 let key = self.fold(&nick);
                 if !self.buffers.contains_key(&key) && self.add_buffer(&nick, BufferKind::Dm) {
@@ -1796,6 +1808,61 @@ impl Net {
     }
 }
 
+impl Net {
+    fn set_push(&mut self, sub: Option<PushSubscription>) {
+        // D14 for the distributor's values too: they go out as IRC params.
+        let sub = sub.filter(|s| {
+            let ok = url::Url::parse(&s.endpoint).is_ok_and(|u| u.scheme() == "https")
+                && s.endpoint.len() <= 1000
+                && !s
+                    .endpoint
+                    .contains(|c: char| c.is_whitespace() || c.is_control())
+                && is_base64url(&s.p256dh, 200)
+                && is_base64url(&s.auth, 100);
+            if !ok {
+                tracing::warn!("{}: unusable push subscription", self.info.network);
+            }
+            ok
+        });
+        if sub == self.push && (self.push_registered || !self.connected) {
+            return;
+        }
+        if let Some(old) = self
+            .push
+            .take()
+            .filter(|_| self.connected && self.push_registered)
+        {
+            let same = sub.as_ref().is_some_and(|s| s.endpoint == old.endpoint);
+            if !same {
+                self.out.push(Message::new(
+                    "WEBPUSH",
+                    ["UNREGISTER", old.endpoint.as_str()],
+                ));
+            }
+        }
+        self.push_registered = false;
+        if let Some(s) = &sub
+            && self.connected
+            && self.caps.enabled("draft/webpush")
+        {
+            let keys = format!("p256dh={};auth={}", s.p256dh, s.auth);
+            self.out.push(Message::new(
+                "WEBPUSH",
+                ["REGISTER", s.endpoint.as_str(), keys.as_str()],
+            ));
+            self.push_registered = true;
+        }
+        self.push = sub;
+    }
+}
+
+fn is_base64url(s: &str, max: usize) -> bool {
+    !s.is_empty()
+        && s.len() <= max
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'=')
+}
+
 /// A plain-words error from a `FAIL` or error numeric, if that's what this is.
 pub fn failure(item: &Item) -> Option<String> {
     let Item::Message(m) = item else { return None };
@@ -1804,6 +1871,10 @@ pub fn failure(item: &Item) -> Option<String> {
     let text = match (m.command.as_str(), numeric) {
         ("FAIL", _) => match (p(0), p(1)) {
             ("REGISTER", "ACCOUNT_EXISTS" | "USERNAME_EXISTS") => "That username is taken.".into(),
+            ("WEBPUSH", _) => format!(
+                "Push notifications didn't turn on: {}",
+                m.params.last().map_or("", |s| s.as_str())
+            ),
             (_, "RATE_LIMITED") => "Slow down a little and try again.".into(),
             _ => m.params.last().cloned().unwrap_or_default(),
         },

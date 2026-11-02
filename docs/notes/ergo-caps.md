@@ -12,7 +12,7 @@ The raw output is in the appendix.
 `no-implicit-names`, `draft/pre-away`, `draft/persistence`, and `sasl=PLAIN,EXTERNAL,SCRAM-SHA-256`.
 ISUPPORT: `CASEMAPPING=ascii`, `UTF8ONLY`, `CHANTYPES=#`, `PREFIX=(qaohv)~&@%+`, `MSGREFTYPES=msgid,timestamp`, `NICKLEN=32`, `CHANNELLEN=64`, `TOPICLEN=390`.
 
-Not offered: `draft/webpush`, because `webpush.enabled` is false in our config. Turn it on in Phase 6.
+`draft/webpush` is offered only with `webpush.enabled`, which our config turns on since Phase 6 (D47). It then advertises ISUPPORT `VAPID`.
 
 ### Metadata limits
 - **key + value ≤ 350 bytes**, hardcoded (`maxCombinedMetadataLenBytes`).

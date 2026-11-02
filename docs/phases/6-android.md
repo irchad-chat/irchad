@@ -25,8 +25,14 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
   Enters on Home while watching (`onUserLeaveHint`). Checked on the emulator. Not done: auto-enter on gesture nav (API 31 `setAutoEnterEnabled`), and an aspect ratio taken from the frame (it's fixed at 16:9).
 - [ ] Rotate to landscape or pinch-zoom in the screen-share viewer. A desktop share is small on a portrait phone.
 - [ ] Disconnect shortly after backgrounding, and catch up via chathistory on resume (D39).
-- [ ] Push via ergo `draft/webpush` → UnifiedPush only, no FCM (D39). Turn on `webpush.enabled` in the dev ergo config. Notification content is decrypted on device for E2EE DMs.
-- [ ] No distributor: onboarding suggests ntfy. Otherwise the user picks a persistent socket in a foreground service, or offline.
+- [x] Push via ergo `draft/webpush` → UnifiedPush only, no FCM (D39). Turn on `webpush.enabled` in the dev ergo config. Notification content is decrypted on device for E2EE DMs.
+  D47. `Notify.kt` (`Notifier`, `PushService`), `read_push` in chad-ffi, and `NetCommand::Push` / `Event::PushAvailable` in chad-core. Tapping a notification opens its conversation, and viewing it or a `MARKREAD` push clears it.
+  E2EE DMs can't be decrypted from the push, because ergo drops `+chad/e2e`, so they show the fallback text (D47).
+  Not checked live yet: the dev stack couldn't start (the `/run/user` tmpfs was full). Unit tests cover the REGISTER/renew/UNREGISTER lines and the push parsing.
+  To check: emulator + ntfy (ntfy.sh server, since ergo refuses private IPs), `bob` gets a DM from desktop with the app swiped away.
+- [x] No distributor: onboarding suggests ntfy. Otherwise the user picks a persistent socket in a foreground service, or offline.
+  `BackgroundOnboarding` asks once (it picks push by itself when a distributor is installed). The same choice is in the settings gear. "Stay connected" is `KeepService` (`specialUse`).
+  Not done: restarting it after a reboot, and noticing that the distributor was uninstalled (push then just stops).
 - [ ] E2EE: the phone is a new Olm device, trusted the same way as a new desktop device (Phase 4). No mobile-specific flow.
 - [x] Keystore-backed storage for credentials and E2EE keys.
   `KeystoreSecrets` uses AES-GCM with a Keystore key over SharedPreferences. The E2EE store key goes through the same `SecretStore` (`<origin>#e2e`).

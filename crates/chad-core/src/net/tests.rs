@@ -1056,3 +1056,62 @@ fn e2e_key_change_warns_until_accepted() {
         Encryption::Off
     );
 }
+
+#[test]
+fn web_push_registers_once_per_connection() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * NEW :draft/webpush"));
+    n.caps.handle(&line("CAP * ACK :draft/webpush"));
+    let vapid =
+        "BCx1-gdmg_SOyTmh2jWxBSCEXyQqTBQqkm5fhpoG4nnlBVLf2dg6Uhb7xTZ3p3nM4EqfKwBe1_VDZb-8Wg2cYTE";
+    n.isupport
+        .handle(&line(&format!(":s 005 bob VAPID={vapid} :are supported")));
+    let sub = PushSubscription {
+        endpoint: "https://ntfy.sh/upAbc?up=1".into(),
+        p256dh: "BNcR-key_".into(),
+        auth: "c2VjcmV0".into(),
+    };
+    // Offline: kept for later, nothing sent.
+    n.command(NetCommand::Push {
+        subscription: Some(sub.clone()),
+    });
+    assert!(n.out.is_empty());
+
+    n.attach("bob");
+    assert!(
+        events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::PushAvailable { vapid: v, .. } if v == vapid))
+    );
+    out(&mut n);
+    let register = "WEBPUSH REGISTER https://ntfy.sh/upAbc?up=1 p256dh=BNcR-key_;auth=c2VjcmV0";
+    for _ in 0..2 {
+        n.command(NetCommand::Push {
+            subscription: Some(sub.clone()),
+        });
+    }
+    assert_eq!(out(&mut n), [register]);
+
+    // A new connection renews it.
+    n.detach();
+    n.attach("bob");
+    out(&mut n);
+    n.command(NetCommand::Push {
+        subscription: Some(sub.clone()),
+    });
+    assert_eq!(out(&mut n), [register]);
+
+    // D14: a param that would break the line is refused, and the old one stops.
+    n.command(NetCommand::Push {
+        subscription: Some(PushSubscription {
+            endpoint: "https://a b".into(),
+            ..sub.clone()
+        }),
+    });
+    assert_eq!(
+        out(&mut n),
+        ["WEBPUSH UNREGISTER https://ntfy.sh/upAbc?up=1"]
+    );
+    n.command(NetCommand::Push { subscription: None });
+    assert!(out(&mut n).is_empty());
+}

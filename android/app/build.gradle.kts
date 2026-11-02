@@ -84,5 +84,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("net.java.dev.jna:jna:5.17.0@aar")
     implementation("io.livekit:livekit-android:2.29.2")
+    // Push without FCM (D39); it also decrypts the pushes (RFC 8291).
+    implementation("org.unifiedpush.android:connector:3.3.5") {
+        // Plain Tink brings full protobuf, which clashes with LiveKit's protobuf-lite.
+        exclude(group = "com.google.crypto.tink", module = "tink")
+    }
+    implementation("com.google.crypto.tink:tink-android:1.23.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

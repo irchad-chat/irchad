@@ -28,6 +28,7 @@ pub const WANTED: &[&str] = &[
     "draft/persistence",
     "draft/pre-away",
     "draft/read-marker",
+    "draft/webpush",
     "echo-message",
     "extended-join",
     "extended-monitor",
@@ -246,7 +247,7 @@ mod tests {
 
     #[test]
     fn full_ergo_ls_requests_everything_wanted_within_line_limit() {
-        let ls = "account-notify account-tag away-notify batch cap-notify chghost draft/account-registration=before-connect draft/channel-rename draft/chathistory draft/event-playback draft/extended-isupport draft/languages=17,en,~bs draft/message-redaction draft/metadata-2=before-connect,max-subs=100,max-keys=100 draft/metadata-3=before-connect,max-subs=100,max-keys=100 draft/multiline=max-bytes=4096,max-lines=100 draft/persistence draft/pre-away draft/read-marker draft/relaymsg=/ draft/whoami echo-message ergo.chat/nope extended-join extended-monitor invite-notify labeled-response message-tags multi-prefix no-implicit-names sasl=PLAIN,EXTERNAL,SCRAM-SHA-256 server-time setname standard-replies userhost-in-names znc.in/playback znc.in/self-message";
+        let ls = "account-notify account-tag away-notify batch cap-notify chghost draft/account-registration=before-connect draft/channel-rename draft/chathistory draft/event-playback draft/extended-isupport draft/languages=17,en,~bs draft/message-redaction draft/metadata-2=before-connect,max-subs=100,max-keys=100 draft/metadata-3=before-connect,max-subs=100,max-keys=100 draft/multiline=max-bytes=4096,max-lines=100 draft/persistence draft/pre-away draft/read-marker draft/relaymsg=/ draft/webpush draft/whoami echo-message ergo.chat/nope extended-join extended-monitor invite-notify labeled-response message-tags multi-prefix no-implicit-names sasl=PLAIN,EXTERNAL,SCRAM-SHA-256 server-time setname standard-replies userhost-in-names znc.in/playback znc.in/self-message";
         let mut n = Negotiator::new();
         let reqs = n.handle(&Message::new("CAP", ["*", "LS", ls]));
         let lines: Vec<String> = reqs.iter().map(|m| m.to_line().unwrap()).collect();

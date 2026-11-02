@@ -23,17 +23,39 @@ class MainActivity : ComponentActivity() {
     /** An `irchad://` invite that opened the app, until the join screen takes it. */
     private val invite = mutableStateOf<String?>(null)
     private val pip = mutableStateOf(false)
+    /** A notification that was tapped: the conversation to show. */
+    private val open = mutableStateOf<Focus?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) invite.value = intent.inviteOrNull()
+        if (savedInstanceState == null) {
+            invite.value = intent.inviteOrNull()
+            open.value = intent.focusOrNull()
+        }
         val app = application as IrChad
         setContent {
             IrChadTheme {
-                Root(app, invite.value, pip.value) { invite.value = null }
+                Root(app, invite.value, open.value, pip.value) { invite.value = null }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val n = (application as IrChad).notifier
+        n.visible = true
+        n.keepConnected()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        (application as IrChad).notifier.resumes++
+    }
+
+    override fun onStop() {
+        super.onStop()
+        (application as IrChad).notifier.visible = false
     }
 
     /** Leaving the app while watching a screen share keeps it in a small window. */
@@ -52,7 +74,13 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.inviteOrNull()?.let { invite.value = it }
+        intent.focusOrNull()?.let { open.value = it }
     }
+}
+
+private fun Intent.focusOrNull(): Focus? {
+    val network = getStringExtra(Notifier.EXTRA_NETWORK) ?: return null
+    return Focus(network, getStringExtra(Notifier.EXTRA_TARGET))
 }
 
 private fun Intent.inviteOrNull(): String? =

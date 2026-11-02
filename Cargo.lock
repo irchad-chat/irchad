@@ -1133,6 +1133,7 @@ name = "chad-ffi"
 version = "0.1.2"
 dependencies = [
  "chad-core",
+ "chad-irc",
  "emojis",
  "tokio",
  "tracing",

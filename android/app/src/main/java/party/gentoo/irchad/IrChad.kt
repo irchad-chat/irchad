@@ -29,6 +29,7 @@ class IrChad : Application() {
 
     val calls by lazy { Calls(this) }
     val media by lazy { Media(this) }
+    val notifier by lazy { Notifier(this) }
 
     val client: Client by lazy {
         Client(
@@ -58,6 +59,12 @@ class IrChad : Application() {
                 override fun gifs(network: String, query: String, pos: String?, page: GifPage) {
                     media.gifs.tryEmit(Triple(query, pos, page))
                 }
+
+                override fun pushAvailable(network: String, vapid: String) =
+                    notifier.pushAvailable(network, vapid)
+
+                override fun notify(network: String, target: String, from: String, text: String, channel: Boolean) =
+                    notifier.live(network, target, from, text, channel)
             },
         )
     }
