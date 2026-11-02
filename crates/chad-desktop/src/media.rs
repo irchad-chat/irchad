@@ -161,7 +161,10 @@ impl Media {
                         .map(|(i, (img, delay))| {
                             period += delay;
                             let name = format!("media:{url}:{i}");
-                            (ctx.load_texture(name, img, Default::default()), delay)
+                            // Mipmaps: avatars and thumbs draw far smaller than the texture.
+                            let opts = egui::TextureOptions::LINEAR
+                                .with_mipmap_mode(Some(egui::TextureFilter::Linear));
+                            (ctx.load_texture(name, img, opts), delay)
                         })
                         .collect();
                     Img::Ready(Frames {
@@ -395,7 +398,12 @@ impl Media {
         {
             self.want_image(u.as_str());
             if let Some(Img::Ready(f)) = self.images.get(u.as_str()) {
+                // Centre-crop to a square so portraits aren't squashed.
+                let side = f.size.min_elem();
+                let (u, v) = (side / f.size.x, side / f.size.y);
+                let uv = egui::Rect::from_center_size(egui::pos2(0.5, 0.5), vec2(u, v));
                 egui::Image::new((frame_at(f, ui).id(), rect.size()))
+                    .uv(uv)
                     .corner_radius(CornerRadius::same(255))
                     .paint_at(ui, rect);
                 return;
@@ -480,7 +488,12 @@ pub fn decode(bytes: &[u8], max: u32) -> Option<Vec<(egui::ColorImage, f32)>> {
         return (!frames.is_empty()).then_some(frames);
     }
     r.limits(limits());
-    Some(vec![(fit(r.decode().ok()?), 0.0)])
+    // Phone photos are stored sideways with an EXIF tag saying how to turn them.
+    let mut d = r.into_decoder().ok()?;
+    let orientation = d.orientation().ok()?;
+    let mut img = image::DynamicImage::from_decoder(d).ok()?;
+    img.apply_orientation(orientation);
+    Some(vec![(fit(img), 0.0)])
 }
 
 #[cfg(test)]
@@ -496,5 +509,20 @@ mod tests {
         let f = decode(&png, 800).unwrap();
         assert_eq!(f[0].0.size, [800, 4]);
         assert!(decode(b"not an image", 800).is_none());
+    }
+
+    #[test]
+    fn applies_exif_orientation() {
+        use image::ImageEncoder;
+        // Little-endian TIFF with one IFD entry: Orientation (0x112) = 6, rotate 90° CW.
+        let exif = [
+            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut jpg = Vec::new();
+        let mut e = image::codecs::jpeg::JpegEncoder::new(&mut jpg);
+        e.set_exif_metadata(exif.to_vec()).unwrap();
+        e.write_image(&[0; 20 * 10 * 3], 20, 10, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        assert_eq!(decode(&jpg, 800).unwrap()[0].0.size, [10, 20]);
     }
 }
