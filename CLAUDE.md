@@ -61,6 +61,7 @@ crates/chad-ffi       UniFFI bindings (Phase 6)
 crates/chadd          server (binary: chadd)
 deploy/               docker compose: ergo + livekit + chadd + caddy
 android/              (Phase 6)
+site/                 project website (Astro, static)
 docs/
 ```
 
@@ -72,6 +73,7 @@ docs/
   To add a scenario, put a test in `crates/chad-desktop/src/shots.rs` that drives the UI through accesskit (`get_by_label(..).click()`) and then calls `shot("name")`.
 - Dev server stack: `docker compose -f deploy/compose.yaml up -d --build` (podman compose works).
   Then `python3 deploy/seed.py` creates the test accounts and channels. See `deploy/README.md`.
+- Project website: `cd site && pnpm install && pnpm dev` (or `pnpm build` → `site/dist/`).
 - Dev origin: `https://chat.localhost:8443` (Caddy internal CA, so pass `curl -k`). Raw IRC: `127.0.0.1:6667`.
 
 ## Conventions

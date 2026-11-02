@@ -1,0 +1,153 @@
+---
+// Same release roots and asset names as chadd's landing page (crates/chadd/src/routes.rs, D44).
+const repo = "https://git.gentoo.party/sam/irchad-ng";
+const releases = "https://downloads.gentoo.party/irchad";
+const builds = [
+  { os: "Linux", asset: "irchad-linux-x86_64", note: "x86_64 binary. Run chmod +x, then start it.", nightly: true },
+  { os: "Windows", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer.", nightly: true },
+  { os: "Android", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
+];
+const features = [
+  ["Paste a link, start chatting", "An invite URL carries the whole network config. Log in and you're in your channels, with no server lists or nickserv."],
+  ["Voice in every channel", "Click a channel's speaker and you're talking. It runs on PipeWire natively and has push-to-talk that works on Wayland."],
+  ["Screen share with audio", "Share a screen or a window, sound included, on Wayland, on X11 and on Windows. Hardware encoding is used when your GPU has it."],
+  ["Encrypted DMs", "DMs use the Olm double ratchet. You verify each other's devices by comparing emoji, and the server never sees the plaintext."],
+  ["It's still IRC", "Text goes over IRCv3 to ergo, and everyone on plain IRC clients still sees a normal channel. IrChad's extras fall back to readable text for them."],
+  ["You host it", "One compose file runs ergo, LiveKit and chadd behind Caddy, on your own server with no third party involved."],
+];
+// [feature, details, Linux, Windows]. Keep in step with docs/phases/; claim only what's ticked there.
+const table = [
+  ["Invite links", "Paste an https:// or irchad:// link. Join as a guest, log in, or sign up without leaving the app.", "✓", "✓"],
+  ["Several networks", "Be on more than one network at once, each in the server rail.", "✓", "✓"],
+  ["History", "Scrollback comes from the server (IRCv3 chathistory) and is cached locally, so it shows up instantly. Read markers sync across your devices.", "✓", "✓"],
+  ["Replies, reactions, typing", "Reply to a message, react with emoji, see who's typing, and delete your own messages.", "✓", "✓"],
+  ["Emoji and GIFs", "An emoji picker, :shortcodes:, and GIF search from the composer or with /gif.", "✓", "✓"],
+  ["Uploads and previews", "Share files and images, with inline media and link previews. Previews are fetched by the server, so your IP isn't leaked. You can also set media to click-to-load.", "✓", "✓"],
+  ["Profiles and presence", "Display names, avatars, and away status that follows your idle time.", "✓", "✓"],
+  ["Voice channels", "Echo cancellation, noise suppression (with optional RNNoise), and voice activity or push-to-talk. Audio is PipeWire-native on Linux.", "✓", "✓"],
+  ["Soundboard", "The network's own clips, played into the call with a separate volume.", "✓", "✓"],
+  ["Screen share", "A screen or a window at 720p30, 1080p60 or source resolution, with hardware encoding where available.", "✓", "Untested"],
+  ["App audio in shares", "Share one app's sound without your notifications or music coming along.", "✓", "Untested"],
+  ["Watching shares", "Stage view, fullscreen, pop-out, a floating window, or a tile next to your chat.", "✓", "✓"],
+  ["Encrypted DMs", "End-to-end encrypted with Olm. Verify devices by comparing emoji, and get a warning when a contact's keys change.", "✓", "✓"],
+  ["Desktop integration", "Notifications, tray icon, Ctrl+K quick switcher, input methods for CJK, and screen-reader support.", "✓", "✓"],
+  ["Plays nice with IRC", "People on plain IRC clients see normal messages. IrChad's extras fall back to readable text.", "✓", "✓"],
+];
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IrChad</title>
+  <meta name="description" content="A Discord-style client for IRC, with voice, screen share and encrypted DMs." />
+</head>
+<body>
+  <main>
+    <header>
+      <div class="logo" aria-hidden="true">#</div>
+      <h1>IrChad</h1>
+      <p class="lede">A Discord-style client for IRC, with voice, screen share and encrypted DMs.<br />Paste an invite link and you're in.</p>
+      <p class="cta">
+        <a class="btn primary" href="#download">Download</a>
+        <a class="btn secondary" href="#host">Host a network</a>
+      </p>
+    </header>
+
+    <section aria-labelledby="features">
+      <h2 id="features">What you get</h2>
+      <ul class="grid">
+        {features.map(([title, body]) => <li class="card"><h3>{title}</h3><p>{body}</p></li>)}
+      </ul>
+    </section>
+
+    <section aria-labelledby="all-features">
+      <h2 id="all-features">Features</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th scope="col">Feature</th><th scope="col">Details</th><th scope="col">Linux</th><th scope="col">Windows</th></tr></thead>
+          <tbody>
+            {table.map(([name, details, linux, windows]) => (
+              <tr><th scope="row">{name}</th><td>{details}</td><td class="mark">{linux}</td><td class="mark">{windows}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Windows screen capture builds in CI but hasn't been tested on a real machine yet. On Android, voice and watching screen shares work. The rest of the Android app is still in progress.</p>
+    </section>
+
+    <section aria-labelledby="download">
+      <h2 id="download">Download</h2>
+      <p class="muted">Linux (Wayland and X11) comes first, and Windows is supported. These links point to the latest release.</p>
+      <ul class="grid">
+        {builds.map((b) => (
+          <li class="card">
+            <h3>{b.os}</h3>
+            <p>{b.note} {b.nightly && <a href={`${releases}/nightly/${b.asset}`} download>Nightly build</a>}</p>
+            <a class="btn primary" href={`${releases}/latest/${b.asset}`} download>Download for {b.os}</a>
+          </li>
+        ))}
+      </ul>
+      <p class="muted small">Nightly builds are rebuilt each night from <code>main</code>, so expect some breakage. <a href={`${repo}/releases`}>All releases</a></p>
+    </section>
+
+    <section aria-labelledby="host">
+      <h2 id="host">Host a network</h2>
+      <p>An IrChad network has four parts:</p>
+      <ul class="plain">
+        <li><b>ergo</b> (2.19 or newer), the IRC server. IrChad only supports ergo.</li>
+        <li><b>LiveKit</b>, which carries voice and screen share.</li>
+        <li><b>chadd</b>, a small server for discovery, login, voice tokens and uploads.</li>
+        <li><b>Caddy</b>, which serves all of them over one HTTPS origin.</li>
+      </ul>
+      <p>The <a href={`${repo}/src/branch/main/deploy`}><code>deploy/</code></a> directory has a compose file for all four. It's a dev stack, so replace every secret in it before you expose it.</p>
+      <p>Admins manage the network with any normal IRC client. IrChad doesn't have an admin UI yet.</p>
+    </section>
+  </main>
+  <footer>
+    <a href={repo}>Source</a> · <a href={`${repo}/src/branch/main/docs/PLAN.md`}>Roadmap</a>
+  </footer>
+</body>
+</html>
+
+<style is:global>
+  /* Palette matches chadd's landing page so both feel like one product. */
+  :root { color-scheme: light dark; --bg: #f2f3f5; --glow: #5865f233; --card: #ffffffcc; --line: #0000001a; --fg: #1e1f22; --muted: #5c5e66; --accent: #5865f2; --accent-2: #8b5cf6; --link: #4752c4; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111214; --glow: #5865f240; --card: #1e1f22cc; --line: #ffffff14; --fg: #f2f3f5; --muted: #949ba4; --link: #8c95ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent), var(--bg);
+    color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  main, footer { max-width: 64rem; margin: 0 auto; padding: 0 16px; }
+  a { color: var(--link); }
+  header { text-align: center; padding: 5rem 0 3rem; }
+  .logo { width: 4rem; height: 4rem; margin: 0 auto; display: grid; place-items: center; border-radius: 1.25rem;
+    color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); font-size: 2rem; font-weight: 700; }
+  h1 { font-size: clamp(2.5rem, 8vw, 4rem); margin: 1rem 0 0; letter-spacing: -.02em; }
+  .lede { font-size: 1.2rem; color: var(--muted); margin: .5rem auto 0; max-width: 36rem; }
+  .cta { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; margin-top: 2rem; }
+  section { padding: 2.5rem 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.75rem; margin: 0 0 1rem; }
+  h3 { font-size: 1.05rem; margin: 0 0 .25rem; }
+  .grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+  .card { padding: 1.25rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--card); backdrop-filter: blur(12px);
+    display: flex; flex-direction: column; gap: .5rem; }
+  .card p { margin: 0; color: var(--muted); flex: 1; }
+  .btn { display: inline-block; padding: .65rem 1.25rem; border-radius: .75rem; font-weight: 600; text-decoration: none; text-align: center; }
+  .btn:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .secondary { color: var(--fg); border: 1px solid var(--line); }
+  .muted { color: var(--muted); }
+  .small { font-size: .85rem; }
+  .plain { padding-left: 1.25rem; }
+  code { font-size: .9em; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 1rem; background: var(--card); }
+  table { width: 100%; border-collapse: collapse; min-width: 36rem; }
+  th, td { padding: .75rem 1rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
+  thead th { border-top: 0; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  @media (min-width: 48rem) { tbody th { white-space: nowrap; } }
+  td { color: var(--muted); }
+  td.mark { text-align: center; white-space: nowrap; color: var(--fg); }
+  footer { padding-top: 1.5rem; padding-bottom: 3rem; color: var(--muted); font-size: .875rem; border-top: 1px solid var(--line); }
+</style>
