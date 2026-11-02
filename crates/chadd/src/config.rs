@@ -32,6 +32,30 @@ pub struct Config {
     pub gifs: Option<Gifs>,
     /// Leave out for no soundboard.
     pub sounds: Option<Sounds>,
+    /// Leave out to keep nothing on disk; concurrent fetches are still shared.
+    pub cache: Option<Cache>,
+}
+
+/// Link previews and `/api/media` images, kept on disk for a day. Must not be
+/// under `uploads.dir`, which is served publicly.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cache {
+    pub dir: std::path::PathBuf,
+    /// Least recently used items go past this.
+    #[serde(default = "default_cache_bytes")]
+    pub max_bytes: u64,
+    /// Bigger items are served but not kept.
+    #[serde(default = "default_cache_item")]
+    pub max_item: u64,
+}
+
+fn default_cache_bytes() -> u64 {
+    1 << 30
+}
+
+fn default_cache_item() -> u64 {
+    8 << 20
 }
 
 /// The soundboard: every mp3, ogg, wav or flac file in `dir`, named after the

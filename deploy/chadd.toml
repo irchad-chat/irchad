@@ -20,3 +20,7 @@ max_bytes = 26214400
 # Soundboard: every mp3/ogg/wav/flac in here (deploy/sounds, mounted read-only).
 [sounds]
 dir = "/var/lib/chadd/sounds"
+
+# Link previews and proxied images. Not under uploads (that dir is public).
+[cache]
+dir = "/var/lib/chadd/cache"

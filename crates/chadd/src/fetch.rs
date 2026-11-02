@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use axum::{
     Json,
-    body::Body,
+    body::{Body, Bytes},
     extract::State,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
@@ -25,6 +25,7 @@ use crate::routes::AppState;
 const MAX_PAGE: usize = 512 << 10;
 pub const MAX_IMAGE: usize = 8 << 20;
 const MAX_FIELD: usize = 300;
+const MAX_URL: usize = 8 << 10;
 
 /// Global unicast only: no loopback, private, link-local, CGNAT, multicast or
 /// reserved ranges, so a link can't reach chadd's own network.
@@ -140,10 +141,19 @@ pub async fn capped(res: &mut reqwest::Response, max: usize) -> reqwest::Result<
     Ok(body)
 }
 
-fn throttle(state: &AppState, headers: &HeaderMap) -> Result<String, (StatusCode, Json<ApiError>)> {
+/// The account, if signed in and under the throttle and `url` is sane.
+fn throttle(
+    state: &AppState,
+    headers: &HeaderMap,
+    url: &str,
+) -> Result<String, (StatusCode, Json<ApiError>)> {
     let account = api::session_account(state, headers)?;
     if !state.fetches.allow(account.to_ascii_lowercase()) {
         return Err(fail(StatusCode::TOO_MANY_REQUESTS, "Slow down a little."));
+    }
+    // It's a cache key, kept in memory and on disk.
+    if url.len() > MAX_URL {
+        return Err(fail(StatusCode::BAD_REQUEST, "That link is too long."));
     }
     Ok(account)
 }
@@ -153,12 +163,22 @@ pub async fn preview(
     headers: HeaderMap,
     Json(req): Json<PreviewRequest>,
 ) -> ApiResult<LinkPreview> {
-    throttle(&state, &headers)?;
-    let (url, body) = get(&state, &req.url, MAX_PAGE)
+    throttle(&state, &headers, &req.url)?;
+    let s = state.clone();
+    let json = state
+        .cache
+        .get(format!("preview {}", req.url), async move {
+            let (url, body) = get(&s, &req.url, MAX_PAGE).await?;
+            let p = parse_html(&String::from_utf8_lossy(&body), &url);
+            serde_json::to_vec(&p)
+                .map(Bytes::from)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        })
         .await
         .map_err(|s| fail(s, "Couldn't fetch that link."))?;
-    let html = String::from_utf8_lossy(&body);
-    Ok(Json(parse_html(&html, &url)))
+    serde_json::from_slice(&json)
+        .map(Json)
+        .map_err(|_| fail(StatusCode::BAD_GATEWAY, "Couldn't fetch that link."))
 }
 
 pub async fn media(
@@ -166,30 +186,48 @@ pub async fn media(
     headers: HeaderMap,
     Json(req): Json<PreviewRequest>,
 ) -> Response {
-    if let Err(e) = throttle(&state, &headers) {
+    if let Err(e) = throttle(&state, &headers, &req.url) {
         return e.into_response();
     }
-    let body = match get(&state, &req.url, MAX_IMAGE + 1).await {
-        Ok((_, b)) if b.len() <= MAX_IMAGE => b,
-        Ok(_) => {
-            return fail(StatusCode::PAYLOAD_TOO_LARGE, "That image is too big.").into_response();
+    let s = state.clone();
+    let res = state
+        .cache
+        .get(format!("media {}", req.url), async move {
+            let (_, body) = get(&s, &req.url, MAX_IMAGE + 1).await?;
+            if body.len() > MAX_IMAGE {
+                return Err(StatusCode::PAYLOAD_TOO_LARGE);
+            }
+            if image_type(&body).is_none() {
+                return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
+            }
+            Ok(Bytes::from(body))
+        })
+        .await;
+    let body = match res {
+        Ok(b) => b,
+        Err(s @ StatusCode::PAYLOAD_TOO_LARGE) => {
+            return fail(s, "That image is too big.").into_response();
+        }
+        Err(s @ StatusCode::UNSUPPORTED_MEDIA_TYPE) => {
+            return fail(s, "That isn't an image.").into_response();
         }
         Err(s) => return fail(s, "Couldn't fetch that image.").into_response(),
     };
-    let kind = match sniff(&body) {
-        Some("png") => "image/png",
-        Some("jpg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        _ => {
-            return fail(StatusCode::UNSUPPORTED_MEDIA_TYPE, "That isn't an image.")
-                .into_response();
-        }
-    };
+    let kind = image_type(&body).unwrap_or("application/octet-stream");
     let mut res = Body::from(body).into_response();
     res.headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
     res
+}
+
+fn image_type(body: &[u8]) -> Option<&'static str> {
+    match sniff(body)? {
+        "png" => Some("image/png"),
+        "jpg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
 }
 
 /// OpenGraph tags, falling back to `<title>` and `description`. Tolerant of

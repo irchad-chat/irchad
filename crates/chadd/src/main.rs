@@ -4,6 +4,7 @@ use anyhow::Context;
 use tracing_subscriber::EnvFilter;
 
 mod api;
+mod cache;
 mod config;
 mod fetch;
 mod files;

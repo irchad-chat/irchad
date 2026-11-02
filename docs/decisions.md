@@ -279,3 +279,10 @@ Partly supersedes D29's "stays listed until someone deletes it by hand". Each of
 ## D53: One download per desktop platform (2026-11-02)
 
 Releases and nightlies ship `irchad-linux-x86_64.tar.gz` (binary, `install.sh`, desktop files) and `irchad-windows-x86_64-setup.exe` only. The bare binaries were the same bytes uncompressed (Linux 59 MiB vs 25 MiB gzipped). The tarball name carries no version so `latest/` and `nightly/` links keep working. Nightlies from before this look for the old asset name and won't see newer nightlies; their users update by hand once.
+
+## D54: chadd caches previews and proxied images on disk (2026-11-02)
+
+A link posted to a busy channel made every reader's client ask chadd for its preview and image, so chadd fetched it N times.
+Now `/api/preview` and `/api/media` go through a cache (`[cache]` in chadd.toml). Concurrent requests for the same URL share one fetch, which runs in its own task so it finishes even if every requester hangs up; errors are shared with whoever was waiting but not kept.
+Successes go to `<cache.dir>` for a day. The URLs come from anyone (D14), so the total is capped (`max_bytes`, default 1 GiB, least recently used evicted down to 90%), each item is capped (`max_item`, default 8 MiB; bigger is served, not kept), every file is charged at least 4 KiB so tiny items can't bloat the index, URLs over 8 KiB are refused, and each file stores its own URL so a hash collision is a miss rather than someone else's bytes. Non-images aren't kept. Without `[cache]`, fetches are still shared while in flight.
+Flooding unique URLs can only push others out of the cache, within the existing per-account throttle; it can't grow the disk.

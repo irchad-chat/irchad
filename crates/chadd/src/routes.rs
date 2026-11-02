@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, fetch, files, gifs, sounds};
+use crate::{api, cache, fetch, files, gifs, sounds};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -30,6 +30,8 @@ pub struct AppState {
     pub gifs: api::Throttle,
     /// Public addresses only (`fetch::client`).
     pub fetcher: reqwest::Client,
+    /// What `fetcher` got, shared by everyone who asks.
+    pub cache: cache::Cache,
 }
 
 impl AppState {
@@ -40,6 +42,7 @@ impl AppState {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
+        let cache = cache::Cache::new(config.cache.as_ref())?;
         Ok(Self {
             config,
             discovery,
@@ -51,6 +54,7 @@ impl AppState {
             fetches: api::Throttle::new(300),
             gifs: api::Throttle::new(60),
             fetcher: fetch::client()?,
+            cache,
         })
     }
 }
