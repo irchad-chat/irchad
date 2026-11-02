@@ -461,7 +461,9 @@ async fn session(
             }
         }
         sink.send(net.events.drain(..));
+        let push_retry = net.push_retry_at();
         tokio::select! {
+            () = tokio::time::sleep_until(push_retry.unwrap_or_else(std::time::Instant::now).into()), if push_retry.is_some() => net.retry_push(),
             r = ws.recv() => match r {
                 Ok(Some(m)) => {
                     if m.command == "ERROR" {

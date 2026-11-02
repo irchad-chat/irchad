@@ -21,6 +21,9 @@ impl Net {
         if sub == self.push && (self.push_registered || !self.connected) {
             return;
         }
+        if sub != self.push {
+            (self.push_tries, self.push_retry) = (0, None);
+        }
         if let Some(old) = self
             .push
             .take()
@@ -47,5 +50,15 @@ impl Net {
             self.push_registered = true;
         }
         self.push = sub;
+    }
+
+    /// When to send REGISTER again after ergo's test push failed.
+    pub fn push_retry_at(&self) -> Option<Instant> {
+        self.push_retry
+    }
+
+    pub fn retry_push(&mut self) {
+        self.push_retry = None;
+        self.set_push(self.push.clone());
     }
 }

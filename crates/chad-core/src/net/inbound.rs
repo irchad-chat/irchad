@@ -574,6 +574,18 @@ impl Net {
                 self.isupport.handle(&m);
                 self.cm = self.isupport.casemapping();
             }
+            // ergo's test push failed. ntfy answers 507 until the distributor has
+            // subscribed to a new topic, which races our REGISTER: try again later.
+            "FAIL"
+                if m.param(0) == Some("WEBPUSH")
+                    && m.param(1) == Some("INVALID_PARAMS")
+                    && m.param(2) == Some("REGISTER")
+                    && self.push_tries < PUSH_TRIES =>
+            {
+                self.push_registered = false;
+                self.push_retry = Some(Instant::now() + Duration::from_secs(5 << self.push_tries));
+                self.push_tries += 1;
+            }
             _ => {
                 if let Some(e) = failure(&Item::Message(m)) {
                     self.error(e);

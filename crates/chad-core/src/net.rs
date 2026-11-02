@@ -41,6 +41,8 @@ const MAX_PIECE: usize = 350;
 const TYPING_EVERY: Duration = Duration::from_secs(3);
 /// At most one CTCP reply this often, so nobody can make us flood ourselves off.
 const CTCP_EVERY: Duration = Duration::from_secs(2);
+/// REGISTER retries after ergo's test push fails (5s, 10s, 20s, 40s).
+const PUSH_TRIES: u32 = 4;
 /// Metadata key for voice: a user's room (`#chan`), or `off` on a channel.
 pub const VOICE_KEY: &str = "chad/voice";
 /// ergo's away reason when an always-on user has no connected devices.
@@ -148,6 +150,9 @@ pub struct Net {
     /// Where ergo pushes to, and whether this connection has registered it.
     push: Option<PushSubscription>,
     push_registered: bool,
+    /// Failed REGISTERs on this connection, and when to try again.
+    push_tries: u32,
+    push_retry: Option<Instant>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -190,6 +195,8 @@ impl Net {
             ctcp_at: None,
             push: None,
             push_registered: false,
+            push_tries: 0,
+            push_retry: None,
         }
     }
 
@@ -258,6 +265,7 @@ impl Net {
             self.out.push(Message::new("PERSISTENCE", ["GET"]));
         }
         self.push_registered = false;
+        (self.push_tries, self.push_retry) = (0, None);
         let vapid = self.isupport.get("VAPID").filter(|v| is_base64url(v, 200));
         if let Some(vapid) = vapid.filter(|_| !self.guest && self.caps.enabled("draft/webpush")) {
             let (network, vapid) = (self.id(), vapid.to_owned());

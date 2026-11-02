@@ -279,6 +279,23 @@ fn web_push_registers_once_per_connection() {
     });
     assert_eq!(out(&mut n), [register]);
 
+    // ergo's test push failed (ntfy's 507 race): retried quietly, then reported.
+    let fail = ":s FAIL WEBPUSH INVALID_PARAMS REGISTER https://ntfy.sh/upAbc?up=1 :Test push message failed to send";
+    events(&mut n);
+    for _ in 0..4 {
+        feed(&mut n, fail);
+        assert!(n.push_retry_at().is_some() && events(&mut n).is_empty());
+        n.retry_push();
+        assert_eq!(out(&mut n), [register]);
+    }
+    feed(&mut n, fail);
+    assert!(n.push_retry_at().is_none());
+    assert!(
+        events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::Error { .. }))
+    );
+
     // D14: a param that would break the line is refused, and the old one stops.
     n.command(NetCommand::Push {
         subscription: Some(PushSubscription {
