@@ -9,6 +9,9 @@ They are reference material only, so don't copy code from them blindly.
 
 ## Where to start in a session
 
+For a bug fix or a small, specific change, skip this section. Go straight to the code, and don't read `docs/` unless the task needs it.
+For phase or roadmap work:
+
 1. Read `docs/PLAN.md` to find the **current phase**, then open its file in `docs/phases/`.
 2. Work through the unchecked items in order. Tick boxes as you go, and add tasks you discover to the same file.
 3. Record any new architectural decision in `docs/decisions.md` (it's append-only, and you supersede an entry rather than edit it).
@@ -67,7 +70,9 @@ docs/
 
 ## Commands
 
-- `cargo build`, `cargo clippy --all-targets`, `cargo fmt`, `cargo test` (CI runs clippy with `-D warnings`). Building `chad-media` examples needs clang ≥ 21 (webrtc-sys) and PipeWire headers.
+- `cargo build`, `cargo clippy --all-targets`, `cargo fmt`, `cargo test` (CI runs clippy with `-D warnings`).
+  To keep output small, use `-q`, scope to the crate you touched, and use short diagnostics:
+  `cargo clippy -q -p <crate> --all-targets --message-format=short`, `cargo test -q -p <crate>`. Building `chad-media` examples needs clang ≥ 21 (webrtc-sys) and PipeWire headers.
 - Run the client: `cargo run -p chad-desktop` (binary `irchad`)
 - Screenshots of the UI (to check visual changes): `cargo test -p chad-desktop shots -- --nocapture` renders the real `App` headless and writes `target/shots/*.png`.
   To add a scenario, put a test in `crates/chad-desktop/src/shots.rs` that drives the UI through accesskit (`get_by_label(..).click()`) and then calls `shot("name")`.
@@ -75,6 +80,12 @@ docs/
   Then `python3 deploy/seed.py` creates the test accounts and channels. See `deploy/README.md`.
 - Project website: `cd site && pnpm install && pnpm dev` (or `pnpm build` → `site/dist/`).
 - Dev origin: `https://chat.localhost:8443` (Caddy internal CA, so pass `curl -k`). Raw IRC: `127.0.0.1:6667`.
+
+## Navigating the code
+
+- Some files are very large: `chad-desktop/src/app.rs`, `chad-core/src/net.rs`, `chad-core/src/net/tests.rs` and `chad-ffi/src/lib.rs`.
+  Never read them whole. Find the spot with grep or the LSP, then read only that range with offset and limit.
+- Prefer the LSP (go-to-definition, find-references, hover) over reading files to trace types and callers.
 
 ## Conventions
 
