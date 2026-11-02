@@ -436,6 +436,7 @@ impl Net {
             nick: nick.to_owned(),
             account: None,
             away: false,
+            oper: false,
             prefix: String::new(),
         });
         f(m);

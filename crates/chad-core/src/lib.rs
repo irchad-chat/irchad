@@ -587,6 +587,8 @@ pub struct Member {
     pub nick: String,
     pub account: Option<String>,
     pub away: bool,
+    /// IRC operator (`*` in WHO flags); refreshed only by the next WHO.
+    pub oper: bool,
     /// Mode prefixes, highest first (`~@`).
     pub prefix: String,
 }

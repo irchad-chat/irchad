@@ -33,6 +33,7 @@ pub const SQUARES_FOUR: &str = "\u{E464}";
 pub const TRASH: &str = "\u{E4A6}";
 pub const USER_CIRCLE: &str = "\u{E4C4}";
 pub const WARNING: &str = "\u{E4E0}";
+pub const WRENCH: &str = "\u{E5D4}";
 pub const X: &str = "\u{E4F6}";
 
 /// The font family for bold message text: egui's `strong()` only brightens.

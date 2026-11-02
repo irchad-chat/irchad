@@ -483,11 +483,17 @@ impl App {
                             t = t.weak();
                         }
                         let r = ui
-                            .add(egui::Label::new(t).sense(Sense::click()).truncate())
-                            .on_hover_text(match &m.account {
-                                Some(a) => format!("{} · account {a}", m.nick),
-                                None => format!("{} · not logged in", m.nick),
-                            });
+                            .horizontal(|ui| {
+                                if m.oper {
+                                    ui.label(icons::WRENCH).on_hover_text("IRC operator");
+                                }
+                                ui.add(egui::Label::new(t).sense(Sense::click()).truncate())
+                                    .on_hover_text(match &m.account {
+                                        Some(a) => format!("{} · account {a}", m.nick),
+                                        None => format!("{} · not logged in", m.nick),
+                                    })
+                            })
+                            .inner;
                         if r.clicked() && m.nick != own {
                             dm = Some(m.nick.clone());
                         }

@@ -145,6 +145,7 @@ impl Net {
                         nick: nick.to_owned(),
                         account: m.param(5).filter(|a| *a != "0").map(str::to_owned),
                         away: flags.starts_with('G'),
+                        oper: flags.contains('*'),
                         // multi-prefix sends them all; PREFIX order is highest first.
                         prefix: prefixes
                             .chars()

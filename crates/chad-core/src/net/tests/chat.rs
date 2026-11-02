@@ -291,7 +291,7 @@ fn members_and_presence() {
     assert!(who[0].ends_with("WHO #c %tcnfa,1"));
     for l in [
         format!("@label={} :s BATCH +w labeled-response", label_of(&who[0])),
-        "@batch=w :s 354 bob 1 #c alice H+@ alice".into(),
+        "@batch=w :s 354 bob 1 #c alice H*+@ alice".into(),
         "@batch=w :s 354 bob 1 #c carol G 0".into(),
         "@batch=w :s 315 bob #c :End".into(),
         ":s BATCH -w".into(),
@@ -312,6 +312,7 @@ fn members_and_presence() {
     assert_eq!(m[0].prefix, "@");
     assert_eq!(m[1].account, None);
     assert!(m[1].away);
+    assert!(m[0].oper && !m[1].oper);
 
     feed(&mut n, ":dave!u@h JOIN #c dave :Dave");
     assert_eq!(members(&mut n)[2].account.as_deref(), Some("dave"));
