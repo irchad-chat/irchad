@@ -1,0 +1,194 @@
+//! Voice rooms and profiles, both carried in user metadata.
+
+use super::*;
+
+impl Net {
+    pub(super) fn join_voice(&mut self, channel: &str) {
+        let key = self.fold(channel);
+        let Some(b) = self
+            .buffers
+            .get(&key)
+            .filter(|b| b.kind == BufferKind::Channel)
+        else {
+            return;
+        };
+        let refuse = if self.guest {
+            Some("Voice needs an account. Sign up to use it.".to_owned())
+        } else if b.voice_off {
+            Some(format!("Voice is turned off in {}.", b.name))
+        } else {
+            None
+        };
+        if let Some(error) = refuse {
+            return self.error(error);
+        }
+        let channel = b.name.clone();
+        if self
+            .voice
+            .as_ref()
+            .is_some_and(|v| self.cm.eq(&v.channel, &channel))
+        {
+            return;
+        }
+        self.voice = Some(Voice {
+            channel: channel.clone(),
+            connected: false,
+        });
+        self.voice_request = Some(channel);
+        self.emit_voice_state();
+    }
+
+    /// `conn` joined the room: tell everyone.
+    pub fn voice_connected(&mut self) {
+        let Some(v) = &mut self.voice else { return };
+        v.connected = true;
+        let channel = v.channel.clone();
+        self.set_own_voice(Some(&channel));
+        self.emit_voice_state();
+    }
+
+    /// The call is over: we left, or it dropped with `error`.
+    pub fn voice_ended(&mut self, error: Option<String>) {
+        self.voice_request = None;
+        if self.voice_published {
+            self.set_own_voice(None);
+        }
+        if self.voice.take().is_some() {
+            self.emit_voice_state();
+        }
+        if let Some(e) = error {
+            self.error(e);
+        }
+    }
+
+    /// `METADATA * SET key [value]`; an empty value deletes the key.
+    pub(super) fn set_metadata(&mut self, key: &str, value: &str) {
+        if !self.caps.enabled("draft/metadata-2") {
+            return self.error("This server can't store profiles.");
+        }
+        let mut m = Message::new("METADATA", ["*", "SET", key]);
+        if !value.is_empty() {
+            m.params.push(value.to_owned());
+        }
+        self.out.push(m);
+    }
+
+    pub(super) fn emit_profile(&mut self, nick: &str) {
+        let Some(p) = self.profiles.get(&self.fold(nick)) else {
+            return;
+        };
+        let (display_name, avatar) = (p.display_name.clone(), p.avatar.clone());
+        let network = self.id();
+        self.events.push(Event::Profile {
+            network,
+            nick: nick.to_owned(),
+            display_name,
+            avatar,
+        });
+    }
+
+    pub(super) fn set_own_voice(&mut self, channel: Option<&str>) {
+        if !self.connected || !self.caps.enabled("draft/metadata-2") {
+            return;
+        }
+        self.voice_published = channel.is_some();
+        let mut m = Message::new("METADATA", ["*", "SET", VOICE_KEY]);
+        if let Some(c) = channel {
+            m.params.push(c.to_owned());
+        }
+        self.out.push(m);
+    }
+
+    /// A `chad/voice` value: a user's room, or `off` on a channel. Empty is unset.
+    pub(super) fn voice_metadata(&mut self, target: &str, value: &str) {
+        if !valid_name(target) {
+            return;
+        }
+        if self.is_channel(target) {
+            let key = self.fold(target);
+            if let Some(b) = self.buffers.get_mut(&key) {
+                b.voice_off = value == "off";
+                let off = b.voice_off;
+                self.emit_buffer(&key);
+                // shortcut: chadd can't read channel metadata (ergo's API has no
+                // call for it), so turning voice off is enforced here only.
+                if off
+                    && self
+                        .voice
+                        .as_ref()
+                        .is_some_and(|v| self.fold(&v.channel) == key)
+                {
+                    self.voice_ended(Some(format!("Voice was turned off in {target}.")));
+                }
+            }
+            return;
+        }
+        let room = (valid_name(value) && self.is_channel(value)).then_some(value);
+        if self.cm.eq(target, &self.info.nick) {
+            match &self.voice {
+                // ergo keeps an always-on account's metadata after a crash, so a
+                // value seen while reattaching is stale. Another device of ours in
+                // a call puts its value back when it sees this.
+                None if room.is_some() && !self.synced => self.set_own_voice(None),
+                Some(v) if v.connected && room.is_none_or(|r| !self.cm.eq(r, &v.channel)) => {
+                    let channel = v.channel.clone();
+                    self.set_own_voice(Some(&channel));
+                }
+                _ => {}
+            }
+        }
+        self.set_voice_of(target, room);
+    }
+
+    pub(super) fn set_voice_of(&mut self, nick: &str, room: Option<&str>) {
+        let key = self.fold(nick);
+        let new = room.map(|r| self.fold(r));
+        let old = match &new {
+            Some(ch) if self.voice_of.len() < MAX_MEMBERS || self.voice_of.contains_key(&key) => {
+                self.voice_of
+                    .insert(key, (nick.to_owned(), ch.clone()))
+                    .map(|(_, c)| c)
+            }
+            Some(_) => return,
+            None => self.voice_of.remove(&key).map(|(_, c)| c),
+        };
+        if old != new {
+            for ch in [old, new].into_iter().flatten() {
+                self.emit_voice_members(&ch);
+            }
+        }
+    }
+
+    pub(super) fn emit_voice_state(&mut self) {
+        let state = match &self.voice {
+            None => VoiceState::Idle,
+            Some(v) if v.connected => VoiceState::Connected {
+                channel: v.channel.clone(),
+            },
+            Some(v) => VoiceState::Connecting {
+                channel: v.channel.clone(),
+            },
+        };
+        let network = self.id();
+        self.events.push(Event::Voice { network, state });
+    }
+
+    pub(super) fn emit_voice_members(&mut self, key: &str) {
+        let Some(b) = self.buffers.get(key) else {
+            return;
+        };
+        let mut nicks: Vec<String> = self
+            .voice_of
+            .values()
+            .filter(|(_, c)| c == key)
+            .map(|(n, _)| n.clone())
+            .collect();
+        nicks.sort_by_key(|n| n.to_lowercase());
+        let (network, channel) = (self.id(), b.name.clone());
+        self.events.push(Event::VoiceMembers {
+            network,
+            channel,
+            nicks,
+        });
+    }
+}

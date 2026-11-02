@@ -83,8 +83,8 @@ docs/
 
 ## Navigating the code
 
-- Some files are very large: `chad-desktop/src/app.rs`, `chad-core/src/net.rs`, `chad-core/src/net/tests.rs` and `chad-ffi/src/lib.rs`.
-  Never read them whole. Find the spot with grep or the LSP, then read only that range with offset and limit.
+- `App` (`chad-desktop/src/app.rs`) and `Net` (`chad-core/src/net.rs`) keep their `impl` split by concern across `app/*.rs` and `net/*.rs`.
+  Put new methods in the matching file. Still find the spot with grep or the LSP rather than reading whole files.
 - Prefer the LSP (go-to-definition, find-references, hover) over reading files to trace types and callers.
 
 ## Conventions
