@@ -29,7 +29,8 @@ use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, Layout, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
-use crate::{complete, emoji, format, gifs, update};
+use crate::{complete, emoji, gifs, update};
+use chad_core::format;
 
 const TOAST_TTL: Duration = Duration::from_secs(8);
 /// The AWAY reason other clients show.

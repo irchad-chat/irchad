@@ -91,4 +91,5 @@ dependencies {
     }
     implementation("com.google.crypto.tink:tink-android:1.23.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

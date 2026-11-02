@@ -12,9 +12,9 @@ use chad_core::{ChatMessage, Crypt, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
 
-use crate::format;
 use crate::icons::{self, Tip};
 use crate::media::{self, Kind, Media};
+use chad_core::format;
 
 const ROW_GAP: f32 = 2.0;
 /// Room left of each row for the mention bar.
@@ -671,13 +671,13 @@ fn body_ui(ui: &mut egui::Ui, m: &ChatMessage, name: &str, dark: bool) {
             if span.mono {
                 t = t.monospace();
             }
-            if let Some(c) = span.fg {
-                t = t.color(c);
+            if let Some([r, g, b]) = span.fg {
+                t = t.color(Color32::from_rgb(r, g, b));
             } else if weak {
                 t = t.weak();
             }
-            if let Some(c) = span.bg {
-                t = t.background_color(c);
+            if let Some([r, g, b]) = span.bg {
+                t = t.background_color(Color32::from_rgb(r, g, b));
             }
             if span.link {
                 ui.hyperlink_to(t, &span.text);

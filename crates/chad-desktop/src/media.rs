@@ -23,39 +23,7 @@ const MAX_PIXELS: u32 = 800;
 const MAX_FULL: u32 = 2560;
 const MAX_FRAMES: usize = 200;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Image,
-    Video,
-    /// One of this network's uploads that isn't media.
-    File,
-    Page,
-}
-
-/// What a link in a message is, by its path.
-pub fn kind(url: &str, network: &str) -> Option<Kind> {
-    let u = Url::parse(url).ok()?;
-    if !matches!(u.scheme(), "http" | "https") {
-        return None;
-    }
-    let own = Url::parse(network).is_ok_and(|n| n.origin() == u.origin())
-        && u.path().starts_with("/uploads/");
-    Some(match media_kind(u.path()) {
-        Some(k) => k,
-        None if own => Kind::File,
-        None => Kind::Page,
-    })
-}
-
-/// `Image` or `Video` by a file name's extension.
-pub fn media_kind(name: &str) -> Option<Kind> {
-    let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
-    match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => Some(Kind::Image),
-        "mp4" | "webm" | "mov" => Some(Kind::Video),
-        _ => None,
-    }
-}
+pub use chad_core::format::{Kind, kind, media_kind};
 
 struct Frames {
     frames: Vec<(TextureHandle, f32)>,
@@ -518,19 +486,6 @@ pub fn decode(bytes: &[u8], max: u32) -> Option<Vec<(egui::ColorImage, f32)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn kinds() {
-        let net = "https://chat.example.com";
-        assert_eq!(kind("https://x.org/a.PNG?x=1", net), Some(Kind::Image));
-        assert_eq!(kind("https://x.org/v.webm", net), Some(Kind::Video));
-        assert_eq!(kind("https://x.org/page", net), Some(Kind::Page));
-        assert_eq!(
-            kind("https://chat.example.com/uploads/ab/notes.txt", net),
-            Some(Kind::File)
-        );
-        assert_eq!(kind("ftp://x.org/a.png", net), None);
-    }
 
     #[test]
     fn decodes_bounded() {

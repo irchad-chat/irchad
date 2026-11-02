@@ -8,6 +8,7 @@
 mod chadd;
 mod conn;
 mod discovery;
+pub mod format;
 pub mod invite;
 mod manager;
 mod net;
@@ -88,6 +89,12 @@ pub enum Command {
     /// Forget a network: disconnect, delete its cache and password.
     Remove {
         network: String,
+    },
+    /// The app went to the background (`true`) or came back (D39). Every
+    /// network drops its socket meanwhile, unless it's in voice, and catches
+    /// up through chathistory when back. Desktop never sends it.
+    Background {
+        on: bool,
     },
     Net {
         network: String,

@@ -735,3 +735,80 @@ async fn encrypted_dms_across_devices() {
     }
     panic!("a2 is still listed");
 }
+
+fn login(core: &chad_core::Core, origin: &str, account: &str, password: &str) {
+    core.send(Command::Join {
+        invite: origin.into(),
+        auth: Auth::Login {
+            account: account.into(),
+            password: password.into(),
+        },
+    });
+}
+
+/// D39: backgrounded, bob drops the socket; back, he catches up on what
+/// alice said meanwhile.
+#[tokio::test]
+#[ignore]
+async fn background_pauses_and_catches_up() {
+    let origin = std::env::var("IRCHAD_ORIGIN").unwrap_or("localhost:8443".into());
+    let network = format!("https://{origin}");
+    let start = || {
+        let dir = tempfile::tempdir().unwrap();
+        let (core, rx) = chad_core::start(Config {
+            data_dir: dir.path().to_owned(),
+            secrets: Arc::new(MemorySecrets::default()),
+            notify: Arc::new(|| {}),
+            media: None,
+            version: "test".into(),
+        });
+        (dir, core, rx)
+    };
+    let (_bd, bob, mut brx) = start();
+    login(&bob, &origin, "bob", "bobpass");
+    until(&mut brx, connected).await;
+    let (_ad, alice, mut arx) = start();
+    login(&alice, &origin, "alice", "alicepass");
+    until(&mut arx, connected).await;
+
+    bob.send(Command::Background { on: true });
+    until(&mut brx, |e| match e {
+        Event::Network(n) if matches!(n.state, ConnState::Disconnected { .. }) => Some(()),
+        _ => None,
+    })
+    .await;
+    let text = format!("while away {:?}", std::time::UNIX_EPOCH.elapsed().unwrap());
+    alice.send(Command::Net {
+        network: network.clone(),
+        cmd: NetCommand::Send {
+            target: "#dev".into(),
+            text: text.clone(),
+            reply_to: None,
+        },
+    });
+    until(&mut arx, |e| match e {
+        Event::Messages { messages, .. } => messages
+            .iter()
+            .any(|m| m.text == text && m.status == SendStatus::Sent)
+            .then_some(()),
+        _ => None,
+    })
+    .await;
+    // Nothing reaches bob while paused.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    while let Ok(e) = brx.try_recv() {
+        assert!(
+            !matches!(e, Event::Network(ref n) if n.state == ConnState::Connected),
+            "{e:?}"
+        );
+    }
+
+    bob.send(Command::Background { on: false });
+    until(&mut brx, |e| match e {
+        Event::Messages {
+            target, messages, ..
+        } if target == "#dev" => messages.iter().any(|m| m.text == text).then_some(()),
+        _ => None,
+    })
+    .await;
+}

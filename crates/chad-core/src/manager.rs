@@ -63,6 +63,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         media: cfg.media.clone(),
         version: cfg.version.clone(),
         session: Default::default(),
+        background: false,
     };
 
     let mut nets: HashMap<String, mpsc::UnboundedSender<ToNet>> = HashMap::new();
@@ -154,6 +155,11 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                 p.joining = Some(invite);
                 let tx = spawn_with(inv.origin.clone(), store, p, &sink, inv.channel);
                 nets.insert(inv.origin, tx);
+            }
+            Command::Background { on } => {
+                for tx in nets.values() {
+                    let _ = tx.send(ToNet::Background(on));
+                }
             }
             Command::Remove { network } => {
                 if let Some(tx) = nets.remove(&network) {

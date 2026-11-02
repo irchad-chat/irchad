@@ -1,7 +1,11 @@
-//! mIRC formatting codes and links → styled spans. Message text is server
-//! input (D14): unknown control characters are dropped, never rendered.
+//! mIRC formatting codes and links → styled spans, shared by every UI.
+//! Message text is server input (D14): unknown control characters are
+//! dropped, never rendered.
 
-use egui::Color32;
+use url::Url;
+
+/// An sRGB colour.
+pub type Rgb = [u8; 3];
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Span {
@@ -11,31 +15,31 @@ pub struct Span {
     pub underline: bool,
     pub strike: bool,
     pub mono: bool,
-    pub fg: Option<Color32>,
-    pub bg: Option<Color32>,
+    pub fg: Option<Rgb>,
+    pub bg: Option<Rgb>,
     /// `http(s)://` only, so a click can't open anything but a browser.
     pub link: bool,
 }
 
 /// The 16 standard mIRC colours.
 /// shortcut: the extended 16–98 palette renders as the default colour; add it if anyone uses it.
-const PALETTE: [Color32; 16] = [
-    Color32::from_rgb(255, 255, 255),
-    Color32::from_rgb(0, 0, 0),
-    Color32::from_rgb(0, 0, 127),
-    Color32::from_rgb(0, 147, 0),
-    Color32::from_rgb(255, 0, 0),
-    Color32::from_rgb(127, 0, 0),
-    Color32::from_rgb(156, 0, 156),
-    Color32::from_rgb(252, 127, 0),
-    Color32::from_rgb(255, 255, 0),
-    Color32::from_rgb(0, 252, 0),
-    Color32::from_rgb(0, 147, 147),
-    Color32::from_rgb(0, 255, 255),
-    Color32::from_rgb(0, 0, 252),
-    Color32::from_rgb(255, 0, 255),
-    Color32::from_rgb(127, 127, 127),
-    Color32::from_rgb(210, 210, 210),
+const PALETTE: [Rgb; 16] = [
+    [255, 255, 255],
+    [0, 0, 0],
+    [0, 0, 127],
+    [0, 147, 0],
+    [255, 0, 0],
+    [127, 0, 0],
+    [156, 0, 156],
+    [252, 127, 0],
+    [255, 255, 0],
+    [0, 252, 0],
+    [0, 147, 147],
+    [0, 255, 255],
+    [0, 0, 252],
+    [255, 0, 255],
+    [127, 127, 127],
+    [210, 210, 210],
 ];
 
 pub fn parse(text: &str) -> Vec<Span> {
@@ -142,7 +146,7 @@ fn digits(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<usize> {
     n
 }
 
-fn hex(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<Color32> {
+fn hex(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<Rgb> {
     let mut look = chars.clone();
     let s: String = (0..6)
         .map_while(|_| look.next_if(char::is_ascii_hexdigit))
@@ -152,7 +156,7 @@ fn hex(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<Color32> {
     }
     *chars = look;
     let v = u32::from_str_radix(&s, 16).ok()?;
-    Some(Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
 fn split_links(span: Span) -> Vec<Span> {
@@ -214,6 +218,40 @@ fn find_url(s: &str) -> Option<usize> {
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Image,
+    Video,
+    /// One of this network's uploads that isn't media.
+    File,
+    Page,
+}
+
+/// What a link in a message is, by its path.
+pub fn kind(url: &str, network: &str) -> Option<Kind> {
+    let u = Url::parse(url).ok()?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return None;
+    }
+    let own = Url::parse(network).is_ok_and(|n| n.origin() == u.origin())
+        && u.path().starts_with("/uploads/");
+    Some(match media_kind(u.path()) {
+        Some(k) => k,
+        None if own => Kind::File,
+        None => Kind::Page,
+    })
+}
+
+/// `Image` or `Video` by a file name's extension.
+pub fn media_kind(name: &str) -> Option<Kind> {
+    let ext = name.rsplit_once('.')?.1.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => Some(Kind::Image),
+        "mp4" | "webm" | "mov" => Some(Kind::Video),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,7 +276,7 @@ mod tests {
         assert_eq!(s[1].fg, None);
         assert_eq!(s[1].text, " plain ");
         assert_eq!(s[2].fg, None); // 99 = default
-        assert_eq!(s[3].fg, Some(Color32::from_rgb(0xff, 0x88, 0)));
+        assert_eq!(s[3].fg, Some([0xff, 0x88, 0]));
         // A comma not followed by a digit is text.
         assert_eq!(strip("\x034,hi"), ",hi");
         assert_eq!(strip("\x03123"), "3");
@@ -271,6 +309,19 @@ mod tests {
             vec![("xhttps://no https:// http".into(), false)]
         );
         assert!(texts("file:///etc/passwd").iter().all(|(_, l)| !l));
+    }
+
+    #[test]
+    fn kinds() {
+        let net = "https://chat.example.com";
+        assert_eq!(kind("https://x.org/a.PNG?x=1", net), Some(Kind::Image));
+        assert_eq!(kind("https://x.org/v.webm", net), Some(Kind::Video));
+        assert_eq!(kind("https://x.org/page", net), Some(Kind::Page));
+        assert_eq!(
+            kind("https://chat.example.com/uploads/ab/notes.txt", net),
+            Some(Kind::File)
+        );
+        assert_eq!(kind("ftp://x.org/a.png", net), None);
     }
 
     #[test]

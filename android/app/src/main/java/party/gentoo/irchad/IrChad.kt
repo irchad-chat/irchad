@@ -8,6 +8,7 @@ import android.util.Base64
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import party.gentoo.irchad.core.Client
+import party.gentoo.irchad.core.Clip
 import party.gentoo.irchad.core.Credentials
 import party.gentoo.irchad.core.GifPage
 import party.gentoo.irchad.core.LinkPreview
@@ -34,6 +35,9 @@ class IrChad : Application() {
     val calls by lazy { Calls(this) }
     val media by lazy { Media(this) }
     val notifier by lazy { Notifier(this) }
+    val sounds by lazy { Sounds(this) }
+    /** Something shared to IrChad from another app, until it's sent somewhere. */
+    val shared = MutableStateFlow<Shared?>(null)
 
     val client: Client by lazy {
         Client(
@@ -78,8 +82,14 @@ class IrChad : Application() {
                     if (!busy) verify.value = Verify(network, nick, state)
                     else if (state is Sas.Incoming) client.verification(network, nick, SasStep.CANCEL)
                 }
+
+                override fun sounds(network: String, clips: List<Clip>, error: String?) =
+                    sounds.got(network, clips, error)
+
+                override fun sound(network: String, file: String, bytes: ByteArray?) =
+                    sounds.gotBytes(network, file, bytes)
             },
-        )
+        ).also { notifier.started() }
     }
 }
 

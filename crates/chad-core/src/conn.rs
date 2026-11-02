@@ -25,6 +25,10 @@ pub enum ToNet {
     Cmd(NetCommand),
     /// Forget the network: its cache file and its password.
     Remove,
+    /// The app is in the background (`true`) or back (D39): drop the socket
+    /// until it's back, once out of voice. Always-on keeps us in our
+    /// channels, and reconnecting catches up through chathistory.
+    Background(bool),
 }
 
 pub struct Params {
@@ -49,6 +53,8 @@ pub struct Params {
     pub version: String,
     /// chadd session, reused until it expires.
     pub session: Arc<tokio::sync::Mutex<Option<Session>>>,
+    /// [`ToNet::Background`]: what the app asked for last.
+    pub background: bool,
 }
 
 enum End {
@@ -66,6 +72,8 @@ enum End {
     },
     Stop,
     Remove,
+    /// Closed for [`ToNet::Background`].
+    Paused,
 }
 
 pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<ToNet>, sink: Sink) {
@@ -75,6 +83,23 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
     }
     let mut backoff = Backoff::new();
     loop {
+        if p.background {
+            net.set_state(ConnState::Disconnected {
+                error: "Paused while IrChad is in the background.".into(),
+            });
+            sink.send(net.events.drain(..));
+            loop {
+                match rx.recv().await {
+                    Some(ToNet::Background(false)) => break,
+                    Some(ToNet::Background(true)) => {}
+                    Some(ToNet::Cmd(c)) => offline(&mut net, c, &sink),
+                    Some(ToNet::Remove) => return remove(net, &p, &sink).await,
+                    None => return,
+                }
+            }
+            p.background = false;
+            backoff.reset();
+        }
         let password = if p.guest {
             Some(String::new())
         } else {
@@ -113,6 +138,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 p.register = None;
                 continue;
             }
+            End::Paused => continue,
             End::Upgrade {
                 account,
                 password,
@@ -138,6 +164,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                         () = &mut sleep => break,
                         cmd = rx.recv() => match cmd {
                             Some(ToNet::Cmd(c)) => offline(&mut net, c, &sink),
+                            Some(ToNet::Background(on)) => p.background = on,
                             Some(ToNet::Remove) => return remove(net, &p, &sink).await,
                             None => return,
                         },
@@ -163,6 +190,8 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                             break;
                         }
                         Some(ToNet::Cmd(c)) => offline(&mut net, c, &sink),
+                        // Failed: nothing is connected to pause.
+                        Some(ToNet::Background(on)) => p.background = on,
                         Some(ToNet::Remove) => return remove(net, &p, &sink).await,
                         None => return,
                     }
@@ -286,6 +315,8 @@ async fn session(
                         let _ = ws.send(&register::verify(&account, code.trim())).await;
                     }
                     Some(ToNet::Cmd(c)) => offline(net, c, sink),
+                    // Paused once logged in, so a sign-up isn't cut short.
+                    Some(ToNet::Background(on)) => p.background = on,
                     Some(ToNet::Remove) => return End::Remove,
                     None => return End::Stop,
                 }
@@ -402,6 +433,14 @@ async fn session(
     let mut call: Option<mpsc::UnboundedReceiver<MediaEvent>> = None;
     let mut token: Option<JoinHandle<TokenResult>> = None;
     loop {
+        // A call keeps the connection (it needs the voice metadata) until it ends.
+        if p.background && net.voice.is_none() && call.is_none() && token.is_none() {
+            for m in std::mem::take(&mut net.out) {
+                let _ = send(&mut ws, &m).await;
+            }
+            let _ = ws.close().await;
+            return End::Paused;
+        }
         if let Some(channel) = net.voice_request.take() {
             call = None;
             if p.media.is_some() {
@@ -480,6 +519,7 @@ async fn session(
                         net.command(c);
                     }
                 }
+                Some(ToNet::Background(on)) => p.background = on,
                 Some(ToNet::Remove) => {
                     net.unpublish();
                     for m in std::mem::take(&mut net.out) {

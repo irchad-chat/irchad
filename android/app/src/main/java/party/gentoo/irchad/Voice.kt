@@ -21,6 +21,7 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.Participant
+import io.livekit.android.room.track.LocalAudioTrack
 import io.livekit.android.room.track.RemoteTrackPublication
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
@@ -75,9 +76,11 @@ data class CallState(
  * watched. Audio focus and headset/Bluetooth routing are the SDK's
  * AudioSwitch defaults.
  */
-class Calls(private val app: Context) : Voice {
+class Calls(private val app: IrChad) : Voice {
     /** `null` outside a call. */
     val state = MutableStateFlow<CallState?>(null)
+    /** The watched share's frame, width to height, for picture-in-picture. */
+    val frame = MutableStateFlow<Pair<Int, Int>?>(null)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var id = 0UL
@@ -144,6 +147,7 @@ class Calls(private val app: Context) : Voice {
             r.connect(url, token, ConnectOptions(autoSubscribe = false))
             r.setSpeakerMute(deafened)
             if (!(muted || deafened)) r.localParticipant.setMicrophoneEnabled(true)
+            mix(r)
         } catch (e: Exception) {
             if (room === r) {
                 stop()
@@ -165,6 +169,14 @@ class Calls(private val app: Context) : Voice {
         }
         room = null
         state.value = null
+        frame.value = null
+        app.sounds.stop()
+    }
+
+    /** Soundboard clips go out mixed into the mic (D48). */
+    private fun mix(r: Room) {
+        (r.localParticipant.getTrackPublication(Track.Source.MICROPHONE)?.track as? LocalAudioTrack)
+            ?.setAudioBufferCallback(app.sounds.mixer)
     }
 
     fun setMuted(on: Boolean) {
@@ -184,8 +196,11 @@ class Calls(private val app: Context) : Voice {
         val r = room ?: return
         r.setSpeakerMute(deafened)
         state.value = state.value?.copy(muted = muted, deafened = deafened)
+        // Muting drops a clip that's playing, like desktop.
+        if (muted || deafened) app.sounds.mixer.clip = null
         scope.launch {
             runCatching { r.localParticipant.setMicrophoneEnabled(!(muted || deafened)) }
+            mix(r)
             refresh(r, null)
         }
     }
@@ -196,6 +211,7 @@ class Calls(private val app: Context) : Voice {
         val s = state.value ?: return
         if (s.watching == identity) return
         state.value = s.copy(watching = identity, screen = null)
+        frame.value = null
         subscribe(r)
         // Tells the sharer how many watch (D22).
         runCatching { r.localParticipant.updateAttributes(mapOf(WATCHING to (identity ?: ""))) }

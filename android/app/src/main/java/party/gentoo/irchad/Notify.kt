@@ -67,6 +67,8 @@ class Notifier(private val app: IrChad) {
 
     /** An activity is on screen: no notifications then. */
     @Volatile var visible = false
+        private set
+    private val pause = Runnable { if (!visible && mode != Background.SOCKET) app.client.background(true) }
     /** Bumped when an activity resumes: a distributor may have been installed. */
     var resumes by mutableIntStateOf(0)
 
@@ -80,6 +82,32 @@ class Notifier(private val app: IrChad) {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Messages", NotificationManager.IMPORTANCE_HIGH),
         )
+    }
+
+    /** The core just started; maybe for a push, with nothing on screen. */
+    fun started() {
+        if (!visible) main.postDelayed(pause, PAUSE_MS)
+    }
+
+    /**
+     * The app came to the front, or left it. Leaving drops the connections
+     * after a minute (D39), unless the user picked "Stay connected".
+     */
+    fun foreground(on: Boolean) {
+        visible = on
+        main.removeCallbacks(pause)
+        if (!on) {
+            main.postDelayed(pause, PAUSE_MS)
+            return
+        }
+        app.client.background(false)
+        keepConnected()
+        // The distributor was uninstalled: pushes stopped, so ask again.
+        if (mode == Background.PUSH && !hasDistributor()) {
+            mode = null
+            prefs.edit().remove("background").apply()
+            app.notices.tryEmit("Your push app is gone, so notifications stopped.")
+        }
     }
 
     fun hasDistributor() = UnifiedPush.getDistributors(app).any { it != app.packageName }
@@ -100,6 +128,7 @@ class Notifier(private val app: IrChad) {
             }
         }
         if (m == Background.SOCKET) keepConnected() else app.stopService(Intent(app, KeepService::class.java))
+        if (!visible && m != Background.SOCKET) main.postDelayed(pause, PAUSE_MS)
     }
 
     /** Starts [KeepService] if that's the mode; only works while the app is in front. */
@@ -176,6 +205,8 @@ class Notifier(private val app: IrChad) {
         private const val CHANNEL = "messages"
         private const val ID = 3
         private const val TAG = "irchad"
+        /** How long the app may be away before its connections drop. */
+        private const val PAUSE_MS = 60_000L
     }
 }
 
@@ -239,6 +270,18 @@ class KeepService : Service() {
     private companion object {
         const val CHANNEL = "keep"
         const val ID = 2
+    }
+}
+
+/** "Stay connected" survives a reboot (D39); push needs nothing, its app restarts itself. */
+class BootReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        val app = context.applicationContext as IrChad
+        if (app.notifier.mode == Background.SOCKET) {
+            // Allowed from BOOT_COMPLETED for a specialUse service.
+            runCatching { ContextCompat.startForegroundService(app, Intent(app, KeepService::class.java)) }
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use chad_core::format;
 use chad_core::secrets::{Fut, SecretStore};
 use chad_core::view::View;
 use chad_core::{
@@ -46,6 +47,19 @@ pub trait Listener: Send + Sync {
     /// A verification (SAS emoji comparison) with `nick` moved on; answer with
     /// `Client::verification`.
     fn verification(&self, network: String, nick: String, state: Sas);
+    /// The answer to `Client::sounds`: the network's soundboard, or why not.
+    fn sounds(&self, network: String, clips: Vec<Clip>, error: Option<String>);
+    /// The answer to `Client::sound`: the clip's encoded bytes (mp3, ogg, wav
+    /// or flac, unchecked), or `None` if it couldn't be fetched.
+    fn sound(&self, network: String, file: String, bytes: Option<Vec<u8>>);
+}
+
+/// A soundboard button (D37).
+#[derive(uniffi::Record)]
+pub struct Clip {
+    pub name: String,
+    /// For `Client::sound`.
+    pub file: String,
 }
 
 /// Per-network credentials, kept by the app (Android Keystore).
@@ -167,6 +181,8 @@ pub struct Network {
     pub guest: bool,
     /// Who GIF search comes from, if the network has it.
     pub gifs: Option<String>,
+    /// Largest upload in bytes, if the network takes them.
+    pub uploads: Option<u64>,
     pub unread: bool,
     pub mentions: u32,
     pub voice: Option<String>,
@@ -296,6 +312,39 @@ pub struct Link {
     pub kind: LinkKind,
 }
 
+/// A run of message text in one style (`chad_core::format`).
+#[derive(uniffi::Record, Debug, PartialEq, Eq)]
+pub struct Span {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+    pub mono: bool,
+    /// 0xRRGGBB.
+    pub fg: Option<u32>,
+    pub bg: Option<u32>,
+    /// An `http(s)` link; `text` is the URL.
+    pub link: bool,
+}
+
+impl From<chad_core::format::Span> for Span {
+    fn from(s: chad_core::format::Span) -> Self {
+        let rgb = |c: [u8; 3]| u32::from_be_bytes([0, c[0], c[1], c[2]]);
+        Span {
+            text: s.text,
+            bold: s.bold,
+            italic: s.italic,
+            underline: s.underline,
+            strike: s.strike,
+            mono: s.mono,
+            fg: s.fg.map(rgb),
+            bg: s.bg.map(rgb),
+            link: s.link,
+        }
+    }
+}
+
 #[derive(uniffi::Record)]
 pub struct Reaction {
     pub emoji: String,
@@ -312,7 +361,10 @@ pub struct Message {
     /// Display name if they set one.
     pub shown: String,
     pub avatar: Option<String>,
+    /// Without formatting, for copying and quoting.
     pub text: String,
+    /// `text` with its formatting and links.
+    pub spans: Vec<Span>,
     pub action: bool,
     pub notice: bool,
     pub reply_to: Option<String>,
@@ -412,6 +464,7 @@ impl Client {
         });
         let view = Arc::new(Mutex::new(View::default()));
         let v = view.clone();
+        let c = core.clone();
         rt.spawn(async move {
             while let Some(ev) = events.recv().await {
                 let applied = v.lock().unwrap_or_else(|e| e.into_inner()).apply(&ev);
@@ -498,6 +551,38 @@ impl Client {
                     Event::Uploaded { result: Err(e), .. } => {
                         listener.notice(format!("Upload failed: {e}"))
                     }
+                    // Posted as a plain link, like desktop: every client can open it.
+                    Event::Uploaded {
+                        network,
+                        target: Some(target),
+                        result: Ok(url),
+                    } => c.send(Command::Net {
+                        network,
+                        cmd: NetCommand::Send {
+                            target,
+                            text: url.into(),
+                            reply_to: None,
+                        },
+                    }),
+                    Event::Sounds { network, result } => match result {
+                        Ok(clips) => listener.sounds(
+                            network,
+                            clips
+                                .into_iter()
+                                .map(|c| Clip {
+                                    name: c.name,
+                                    file: c.file,
+                                })
+                                .collect(),
+                            None,
+                        ),
+                        Err(e) => listener.sounds(network, Vec::new(), Some(e)),
+                    },
+                    Event::Sound {
+                        network,
+                        file,
+                        result,
+                    } => listener.sound(network, file, result.ok().map(|b| b.0.to_vec())),
                     _ => {}
                 }
                 listener.changed();
@@ -540,6 +625,36 @@ impl Client {
     /// Forget a network: disconnect, delete its cache and password.
     pub fn remove(&self, network: String) {
         self.core.send(Command::Remove { network });
+    }
+
+    /// The app went to the background, or came back (D39): connections
+    /// pause meanwhile (not one in voice) and catch up when back.
+    pub fn background(&self, on: bool) {
+        self.core.send(Command::Background { on });
+    }
+
+    /// Upload a file through chadd, then post its link to `target`.
+    /// Failures come as `Listener::notice`.
+    pub fn upload(&self, network: String, target: String, name: String, bytes: Vec<u8>) {
+        let bytes = chad_core::Blob(bytes.into());
+        self.net(
+            network,
+            NetCommand::Upload {
+                target: Some(target),
+                name,
+                bytes,
+            },
+        );
+    }
+
+    /// The network's soundboard: `Listener::sounds`.
+    pub fn sounds(&self, network: String) {
+        self.net(network, NetCommand::Sounds);
+    }
+
+    /// One clip's bytes: `Listener::sound`.
+    pub fn sound(&self, network: String, file: String) {
+        self.net(network, NetCommand::Sound { file });
     }
 
     pub fn send(&self, network: String, target: String, text: String, reply_to: Option<String>) {
@@ -693,6 +808,7 @@ impl Client {
                     needs_code,
                     guest: n.info.guest,
                     gifs: n.info.gifs.clone(),
+                    uploads: n.info.uploads,
                     unread: n.unread(),
                     mentions: n.mentions(),
                     voice,
@@ -741,7 +857,7 @@ impl Client {
             .iter()
             .map(|m| {
                 let profile = n.profiles.get(&chad_core::view::key(&m.nick));
-                let text = strip_formatting(&m.text);
+                let spans: Vec<Span> = format::parse(&m.text).into_iter().map(Span::from).collect();
                 Message {
                     key: m
                         .msgid
@@ -754,8 +870,9 @@ impl Client {
                     avatar: profile
                         .and_then(|p| p.avatar.as_ref())
                         .map(|u| u.to_string()),
-                    links: links(&text, &network),
-                    text,
+                    links: links(&spans, &network),
+                    text: spans.iter().map(|s| s.text.as_str()).collect(),
+                    spans,
                     action: m.kind == MessageKind::Action,
                     notice: m.kind == MessageKind::Notice,
                     reply_to: m.reply_to.clone(),
@@ -845,8 +962,8 @@ pub fn read_push(line: String) -> Option<Push> {
             }
             let channel = to.starts_with('#');
             let text = match action {
-                Some(a) => format!("* {nick} {}", strip_formatting(a)),
-                None => strip_formatting(text),
+                Some(a) => format!("* {nick} {}", format::strip(a)),
+                None => format::strip(text),
             };
             Some(Push::Message {
                 target: if channel {
@@ -884,7 +1001,7 @@ fn notes(
         .filter(|m| m.mention && chad_core::view::notifiable(m))
         .map(|m| {
             let from = snippet(v.nets[ni].shown(&m.nick), 64);
-            (from, snippet(&strip_formatting(&m.text), 200), channel)
+            (from, snippet(&format::strip(&m.text), 200), channel)
         })
         .collect()
 }
@@ -908,83 +1025,25 @@ pub fn emojis(query: String) -> Vec<String> {
         .collect()
 }
 
-/// The http(s) links in `text`, the same way desktop finds them.
-// shortcut: a copy of desktop's `format::split_links` and `media::kind`;
-// move both into chad-core when Android renders formatting spans.
-fn links(text: &str, network: &str) -> Vec<Link> {
-    let own = url::Url::parse(network).ok().map(|n| n.origin());
-    text.split_whitespace()
-        .filter_map(|w| {
-            let w = &w[w.find("http")?..];
-            let mut u = w.trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '"', '>']);
-            if u.ends_with(')') && !u.contains('(') {
-                u = &u[..u.len() - 1];
-            }
-            let p = url::Url::parse(u).ok()?;
-            if !matches!(p.scheme(), "http" | "https") || p.host().is_none() {
-                return None;
-            }
-            let ext = p
-                .path()
-                .rsplit_once('.')
-                .map(|(_, e)| e.to_ascii_lowercase());
-            let kind = match ext.as_deref() {
-                Some("png" | "jpg" | "jpeg" | "gif" | "webp") => LinkKind::Image,
-                Some("mp4" | "webm" | "mov") => LinkKind::Video,
-                _ if own.as_ref() == Some(&p.origin()) && p.path().starts_with("/uploads/") => {
-                    LinkKind::File
-                }
-                _ => LinkKind::Page,
+/// The links among `spans`, in order, the same way desktop sorts them.
+fn links(spans: &[Span], network: &str) -> Vec<Link> {
+    use chad_core::format::Kind;
+    spans
+        .iter()
+        .filter(|s| s.link)
+        .filter_map(|s| {
+            let kind = match format::kind(&s.text, network)? {
+                Kind::Image => LinkKind::Image,
+                Kind::Video => LinkKind::Video,
+                Kind::File => LinkKind::File,
+                Kind::Page => LinkKind::Page,
             };
             Some(Link {
-                url: u.to_owned(),
+                url: s.text.clone(),
                 kind,
             })
         })
         .collect()
-}
-
-/// IRC formatting codes removed.
-// shortcut: Android shows no bold or colours yet; share desktop's
-// `format::parse` from chad-core when Android renders spans.
-fn strip_formatting(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    // Up to `n` chars matching `f`.
-    fn skip(
-        chars: &mut std::iter::Peekable<std::str::Chars>,
-        n: usize,
-        f: fn(&char) -> bool,
-    ) -> usize {
-        (0..n).take_while(|_| chars.next_if(f).is_some()).count()
-    }
-    while let Some(c) = chars.next() {
-        match c {
-            '\x03' => {
-                if skip(&mut chars, 2, char::is_ascii_digit) > 0 {
-                    let mut look = chars.clone();
-                    if look.next() == Some(',') && look.peek().is_some_and(char::is_ascii_digit) {
-                        chars.next();
-                        skip(&mut chars, 2, char::is_ascii_digit);
-                    }
-                }
-            }
-            '\x04' => {
-                let mut look = chars.clone();
-                if skip(&mut look, 6, char::is_ascii_hexdigit) == 6 {
-                    chars = look;
-                    let mut look = chars.clone();
-                    if look.next() == Some(',') && skip(&mut look, 6, char::is_ascii_hexdigit) == 6
-                    {
-                        chars = look;
-                    }
-                }
-            }
-            '\x02' | '\x0f' | '\x11' | '\x16' | '\x1d' | '\x1e' | '\x1f' => {}
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -992,22 +1051,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strips_formatting() {
-        let s = "a\x02b\x0304red\x03 \x0308,02yb\x03,x \x04ff0000hex\x0f\x1dc\x03";
-        assert_eq!(strip_formatting(s), "abred yb,x hexc");
-        assert_eq!(strip_formatting("\x03123"), "3");
-        assert_eq!(strip_formatting("\x04abc"), "abc");
-        assert_eq!(strip_formatting("日本\x02語"), "日本語");
-    }
-
-    #[test]
     fn finds_links() {
         let net = "https://chat.example";
-        let got = links(
+        let spans: Vec<Span> = format::parse(
             "see (https://a.example/x.PNG), https://chat.example/uploads/1/a.zip and \
-             <https://b.example/page>. not:https://c.example/v.mp4 http:// ftp://x",
-            net,
+             <https://b.example/page>. \x02https://c.example/v.mp4\x02 http:// ftp://x",
+        )
+        .into_iter()
+        .map(Span::from)
+        .collect();
+        assert_eq!(
+            Span::from(format::parse("\x0304,12x\x04ff8800y").remove(1)).fg,
+            Some(0xff8800)
         );
+        assert_eq!(
+            Span::from(format::parse("\x0304,12x").remove(0)).bg,
+            Some(0x0000fc)
+        );
+        let got = links(&spans, net);
         let k: Vec<_> = got.iter().map(|l| (l.url.as_str(), l.kind)).collect();
         assert_eq!(
             k,
@@ -1083,6 +1144,8 @@ mod tests {
         fn push_available(&self, _: String, _: String) {}
         fn notify(&self, _: String, _: String, _: String, _: String, _: bool) {}
         fn verification(&self, _: String, _: String, _: Sas) {}
+        fn sounds(&self, _: String, _: Vec<Clip>, _: Option<String>) {}
+        fn sound(&self, _: String, _: String, _: Option<Vec<u8>>) {}
     }
     impl Voice for Nop {
         fn join(&self, _: u64, _: String, _: String, _: Arc<Call>) {}

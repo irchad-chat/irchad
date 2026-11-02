@@ -15,6 +15,22 @@ import android.graphics.drawable.Drawable
 import android.util.LruCache
 import android.widget.ImageView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -259,6 +275,7 @@ internal fun isImage(b: ByteArray): Boolean {
 fun RemoteImage(
     app: IrChad, network: String, url: String, maxW: Dp, maxH: Dp,
     modifier: Modifier = Modifier, fill: Boolean = false, ask: Boolean = app.media.auto,
+    onOpen: ((Drawable) -> Unit)? = null,
 ) {
     val tick by app.media.tick.collectAsState()
     var tapped by remember(network, url) { mutableStateOf(false) }
@@ -289,6 +306,9 @@ fun RemoteImage(
                         it.setImageDrawable(d)
                         (d as? Animatable)?.start()
                     }
+                    // The view takes the touches, so the click goes on it.
+                    it.setOnClickListener(onOpen?.let { open -> { open(d) } })
+                    it.isClickable = onOpen != null
                 },
                 modifier = (if (fill) modifier else modifier.size((w * scale).dp, (h * scale).dp)).clip(shape),
             )
@@ -302,10 +322,55 @@ fun MessageLinks(app: IrChad, network: String, m: Message) {
     if (m.notice || m.redacted || m.undecryptable || m.links.isEmpty()) return
     val pages = m.links.filter { it.kind == LinkKind.PAGE }.take(1)
     val images = m.links.filter { it.kind == LinkKind.IMAGE }.take(MAX_IMAGES)
+    var open by remember { mutableStateOf<Drawable?>(null) }
+    open?.let { ImageViewer(it) { open = null } }
     Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (l in images) RemoteImage(app, network, l.url, 280.dp, 220.dp)
+        for (l in images) RemoteImage(app, network, l.url, 280.dp, 220.dp, onOpen = { open = it })
         for (l in m.links.filter { it.kind == LinkKind.VIDEO || it.kind == LinkKind.FILE }) FileCard(l)
         for (l in pages) LinkPreviewCard(app, network, l.url)
+    }
+}
+
+/**
+ * An image over everything: pinch to zoom, drag to pan, double-tap to reset.
+ */
+// shortcut: shows the inline decode (800 px a side); decode the bytes again
+// larger, like desktop's viewer, if that looks soft on big screens.
+@Composable
+fun ImageViewer(d: Drawable, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        var scale by remember { mutableStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+        val zoom = rememberTransformableState { z, pan, _ ->
+            scale = (scale * z).coerceIn(1f, 8f)
+            offset = if (scale == 1f) Offset.Zero else offset + pan
+        }
+        Box(
+            Modifier.fillMaxSize().background(Color.Black)
+                .pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero }, onTap = { if (scale == 1f) onDismiss() })
+                }
+                .transformable(zoom),
+        ) {
+            AndroidView(
+                factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+                update = {
+                    if (it.drawable !== d) {
+                        it.setImageDrawable(d)
+                        (d as? Animatable)?.start()
+                    }
+                },
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+            )
+            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp)) {
+                Icon(Icons.Default.Close, "Close", tint = Color.White)
+            }
+        }
     }
 }
 

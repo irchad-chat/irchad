@@ -16,6 +16,17 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.runtime.key
+import android.content.pm.ActivityInfo
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
+import party.gentoo.irchad.core.Span
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -157,6 +168,11 @@ fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: 
         else -> Box(Modifier.fillMaxSize()) {
             ChatScreen(app, tick, nets, focus, call) { adding = true }
             BackgroundOnboarding(app)
+            SoundboardSheet(app)
+            val shared by app.shared.collectAsState()
+            shared?.let { sh ->
+                ShareSheet(app, sh, nets, onSent = { focus = it; app.shared.value = null }) { app.shared.value = null }
+            }
             call?.takeIf { it.watching != null }?.let { ScreenViewer(app, it, pip = false) }
         }
     }
@@ -192,6 +208,8 @@ private fun ChatScreen(
     var members by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<String?>(null) }
     val joinVoice = rememberVoiceJoin(app)
+    // The message being answered, in the buffer on screen.
+    var replyTo by remember(net.network, buf?.target) { mutableStateOf<Message?>(null) }
 
     BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
 
@@ -280,10 +298,10 @@ private fun ChatScreen(
                         Text("No channels yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    Log(app, tick, net, buf, Modifier.weight(1f))
+                    Log(app, tick, net, buf, Modifier.weight(1f), onReply = { replyTo = it })
                 }
                 call?.let { VoicePanel(app, nets, it) }
-                if (buf != null) Composer(app, net, buf)
+                if (buf != null) Composer(app, net, buf, replyTo) { replyTo = null }
             }
         }
     }
@@ -531,7 +549,7 @@ private fun StatusBanner(app: IrChad, net: Network) {
 }
 
 @Composable
-private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Modifier) {
+private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Modifier, onReply: (Message) -> Unit) {
     val c = app.client
     val msgs = remember(tick, net.network, buf.target) { c.messages(net.network, buf.target) }
     val connected = net.status == null
@@ -539,6 +557,8 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf<Message?>(null) }
     var reactTo by remember { mutableStateOf<String?>(null) }
+    @Suppress("DEPRECATION")
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     LaunchedEffect(net.network, buf.target) { app.notifier.dismiss(net.network, buf.target) }
     LaunchedEffect(net.network, buf.target, msgs.size, buf.unread) {
@@ -555,17 +575,30 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
         if (list.firstVisibleItemIndex <= 1) list.animateScrollToItem(0)
     }
 
+    val rev = msgs.asReversed()
+    // Where each msgid is in `rev`, for reply quotes.
+    val at = remember(msgs) { rev.withIndex().filter { it.value.msgid != null }.associate { it.value.msgid!! to it.index } }
+    val scope = rememberCoroutineScope()
     Box(modifier.fillMaxWidth()) {
         LazyColumn(state = list, reverseLayout = true, modifier = Modifier.fillMaxSize()) {
-            val rev = msgs.asReversed()
             items(rev.size, key = { rev[it].key }) { i ->
                 val m = rev[i]
                 val prev = rev.getOrNull(i + 1)
+                val parent = m.replyTo?.let { id -> at[id]?.let { rev[it] } }
                 val head = prev == null || prev.nick != m.nick || m.time - prev.time > GROUP_GAP_MS ||
-                    prev.action || m.action
+                    prev.action || m.action || m.replyTo != null
                 Box {
-                    MessageRow(app, net.network, m, head, buf.dm, onLong = { menu = m })
+                    MessageRow(
+                        app, net.network, m, head, buf.dm, parent, onLong = { menu = m },
+                        onParent = { at[m.replyTo]?.let { scope.launch { list.animateScrollToItem(it) } } },
+                    )
                     DropdownMenu(expanded = menu?.key == m.key, onDismissRequest = { menu = null }) {
+                        if (m.msgid != null && !m.redacted) {
+                            DropdownMenuItem(text = { Text("Reply") }, onClick = {
+                                onReply(m)
+                                menu = null
+                            })
+                        }
                         for (e in listOf("👍", "❤", "😂", "😮")) {
                             DropdownMenuItem(text = { Text("React $e") }, onClick = {
                                 m.msgid?.let { c.react(net.network, buf.target, it, e) }
@@ -575,6 +608,12 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
                         if (m.msgid != null) {
                             DropdownMenuItem(text = { Text("React…") }, onClick = {
                                 reactTo = m.msgid
+                                menu = null
+                            })
+                        }
+                        if (!m.redacted && m.text.isNotEmpty()) {
+                            DropdownMenuItem(text = { Text("Copy text") }, onClick = {
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(m.text))
                                 menu = null
                             })
                         }
@@ -615,7 +654,10 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageRow(app: IrChad, network: String, m: Message, head: Boolean, dm: Boolean, onLong: () -> Unit) {
+private fun MessageRow(
+    app: IrChad, network: String, m: Message, head: Boolean, dm: Boolean, parent: Message?,
+    onLong: () -> Unit, onParent: () -> Unit,
+) {
     val time = remember(m.time) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(m.time)) }
     val bar = if (m.mention && !dm) MaterialTheme.colorScheme.primary else Color.Transparent
     Row(
@@ -630,6 +672,17 @@ private fun MessageRow(app: IrChad, network: String, m: Message, head: Boolean, 
         if (head) Avatar(m.nick) else Spacer(Modifier.width(36.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
+            if (m.replyTo != null) {
+                Text(
+                    "↪ " + (parent?.let { p -> "${p.shown}: " + (if (p.redacted) "Message deleted" else p.text) }
+                        ?: "Replying to an earlier message"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    // shortcut: only jumps to a parent that's loaded; desktop's LoadAround isn't in chad-ffi.
+                    modifier = Modifier.clickable(enabled = parent != null, onClick = onParent),
+                )
+            }
             if (head) {
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(m.shown, fontWeight = FontWeight.SemiBold, color = nickColor(m.nick))
@@ -645,9 +698,12 @@ private fun MessageRow(app: IrChad, network: String, m: Message, head: Boolean, 
             when {
                 m.redacted -> Text("Message deleted", fontStyle = FontStyle.Italic, color = faint)
                 m.undecryptable -> Text("Couldn't decrypt this message.", fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.error)
-                m.action -> Text("* ${m.shown} ${m.text}", fontStyle = FontStyle.Italic)
+                m.action -> Text(
+                    styled(m.spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} "),
+                    fontStyle = FontStyle.Italic,
+                )
                 else -> Text(
-                    linked(m.text, m.links, MaterialTheme.colorScheme.primary),
+                    styled(m.spans, MaterialTheme.colorScheme.primary),
                     color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
                 )
             }
@@ -694,25 +750,54 @@ private fun nickColor(nick: String): Color {
     return Color.hsv(hue, 0.55f, if (dark) 0.9f else 0.55f)
 }
 
-/** `text` with its links tappable. */
-private fun linked(text: String, links: List<Link>, color: Color) = buildAnnotatedString {
-    var i = 0
-    for (l in links) {
-        val at = text.indexOf(l.url, i)
-        if (at < 0) continue
-        append(text.substring(i, at))
-        withLink(LinkAnnotation.Url(l.url, TextLinkStyles(SpanStyle(color = color)))) { append(l.url) }
-        i = at + l.url.length
+/** Message text with its IRC formatting, and its links tappable. */
+private fun styled(spans: List<Span>, link: Color, prefix: String = "") = buildAnnotatedString {
+    append(prefix)
+    for (sp in spans) {
+        val deco = listOfNotNull(
+            TextDecoration.Underline.takeIf { sp.underline || sp.link },
+            TextDecoration.LineThrough.takeIf { sp.strike },
+        )
+        val style = SpanStyle(
+            fontWeight = if (sp.bold) FontWeight.Bold else null,
+            fontStyle = if (sp.italic) FontStyle.Italic else null,
+            fontFamily = if (sp.mono) FontFamily.Monospace else null,
+            textDecoration = if (deco.isEmpty()) null else TextDecoration.combine(deco),
+            color = sp.fg?.let { rgb(it) } ?: if (sp.link) link else Color.Unspecified,
+            background = sp.bg?.let { rgb(it) } ?: Color.Unspecified,
+        )
+        if (sp.link) {
+            withLink(LinkAnnotation.Url(sp.text, TextLinkStyles(style))) { append(sp.text) }
+        } else {
+            withStyle(style) { append(sp.text) }
+        }
     }
-    append(text.substring(i))
 }
+
+private fun rgb(c: UInt) = Color(0xFF000000.toInt() or c.toInt())
 
 private fun Color.luminance(): Float = 0.2126f * red + 0.7152f * green + 0.0722f * blue
 
 @Composable
-private fun Composer(app: IrChad, net: Network, buf: Buffer) {
+private fun Composer(app: IrChad, net: Network, buf: Buffer, replyTo: Message?, onReplied: () -> Unit) {
     var draft by rememberSaveable(net.network, buf.target, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
+    }
+    val ctx = LocalContext.current
+    val attach = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) upload(app, ctx, net, buf.target, uris)
+    }
+    if (replyTo != null) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Replying to ${replyTo.shown}: ${replyTo.text}",
+                    style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = onReplied) { Icon(Icons.Default.Close, "Don't reply") }
+            }
+        }
     }
     var picker by remember { mutableStateOf(false) }
     if (picker) {
@@ -738,6 +823,9 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer) {
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (net.uploads != null) {
+            IconButton(onClick = { attach.launch("*/*") }) { Icon(Icons.Default.Add, "Attach files") }
+        }
         IconButton(onClick = { picker = true }) { Icon(Icons.Default.Face, "Emoji and GIFs") }
         TextField(
             draft, { draft = it },
@@ -753,8 +841,9 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer) {
         IconButton(
             enabled = draft.text.isNotBlank(),
             onClick = {
-                app.client.send(net.network, buf.target, draft.text.trimEnd(), null)
+                app.client.send(net.network, buf.target, draft.text.trimEnd(), replyTo?.msgid)
                 draft = TextFieldValue()
+                onReplied()
             },
         ) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
     }
@@ -825,6 +914,9 @@ private fun VoicePanel(app: IrChad, nets: List<Network>, call: CallState) {
                 FilledIconToggleButton(checked = call.deafened, onCheckedChange = { calls.setDeafened(it) }) {
                     Icon(painterResource(R.drawable.ic_headset), if (call.deafened) "Undeafen" else "Deafen")
                 }
+                IconButton(enabled = call.connected, onClick = { app.sounds.open(net.network) }) {
+                    Icon(painterResource(R.drawable.ic_soundboard), "Soundboard")
+                }
                 FilledIconButton(
                     onClick = { app.client.leaveVoice(net.network) },
                     colors = IconButtonDefaults.filledIconButtonColors(
@@ -856,16 +948,72 @@ private fun VoicePanel(app: IrChad, nets: List<Network>, call: CallState) {
     }
 }
 
+/** The soundboard's buttons (D37): a clip goes out to everyone in the call. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SoundboardSheet(app: IrChad) {
+    val board by app.sounds.board.collectAsState()
+    val b = board ?: return
+    ModalBottomSheet(onDismissRequest = { app.sounds.board.value = null }) {
+        Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text("Soundboard", style = MaterialTheme.typography.titleMedium)
+            when {
+                b.error != null -> Text(b.error, color = MaterialTheme.colorScheme.error)
+                b.clips == null -> CircularProgressIndicator(Modifier.padding(16.dp))
+                b.clips.isEmpty() -> Text("This network has no sounds.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else -> androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(vertical = 8.dp),
+                ) {
+                    for (c in b.clips) AssistChip(onClick = { app.sounds.play(b.network, c.file) }, label = { Text(c.name) })
+                }
+            }
+        }
+    }
+}
+
 /** Someone's screen share, over everything (or alone, in picture-in-picture). */
 @Composable
 private fun ScreenViewer(app: IrChad, call: CallState, pip: Boolean) {
     BackHandler(!pip) { app.calls.watch(null) }
-    Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+    val activity = LocalContext.current as? android.app.Activity
+    var landscape by rememberSaveable { mutableStateOf(false) }
+    DisposableEffect(landscape) {
+        activity?.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        onDispose { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+    }
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val zoom = rememberTransformableState { z, pan, _ ->
+        scale = (scale * z).coerceIn(1f, 6f)
+        offset = if (scale == 1f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+    }
+    if (pip) {
+        scale = 1f
+        offset = androidx.compose.ui.geometry.Offset.Zero
+    }
+    Box(
+        Modifier.fillMaxSize().background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { scale = 1f; offset = androidx.compose.ui.geometry.Offset.Zero })
+            }
+            .transformable(zoom, enabled = !pip),
+        contentAlignment = Alignment.Center,
+    ) {
         val track = call.screen
         if (track == null) {
             CircularProgressIndicator()
         } else {
             key(track) {
+                // The frame's shape, for picture-in-picture.
+                val sink = remember(track) {
+                    livekit.org.webrtc.VideoSink { f -> app.calls.frame.value = f.rotatedWidth to f.rotatedHeight }
+                }
+                DisposableEffect(track) {
+                    track.addRenderer(sink)
+                    onDispose { track.removeRenderer(sink) }
+                }
                 AndroidView(
                     factory = { ctx ->
                         TextureViewRenderer(ctx).apply {
@@ -879,6 +1027,13 @@ private fun ScreenViewer(app: IrChad, call: CallState, pip: Boolean) {
                         it.release()
                     },
                     // Not fillMaxSize: the renderer crops to its view, so let it measure to the frame's shape.
+                    // A TextureView follows the layer's transform, which is what makes zoom work.
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    },
                 )
             }
         }
@@ -891,6 +1046,12 @@ private fun ScreenViewer(app: IrChad, call: CallState, pip: Boolean) {
                     "${call.watching}'s screen", color = Color.White,
                     modifier = Modifier.weight(1f).padding(start = 8.dp),
                 )
+                IconButton(onClick = { landscape = !landscape }) {
+                    Icon(
+                        painterResource(R.drawable.ic_rotate),
+                        if (landscape) "Back to portrait" else "Turn to landscape", tint = Color.White,
+                    )
+                }
                 IconButton(onClick = { app.calls.watch(null) }) {
                     Icon(Icons.Default.Close, "Stop watching", tint = Color.White)
                 }
