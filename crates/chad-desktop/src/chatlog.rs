@@ -192,11 +192,16 @@ impl ChatLog {
         if synced && (width - self.width).abs() < 0.5 && (line - self.line).abs() < 0.01 {
             return;
         }
+        let same_line = (line - self.line).abs() < 0.01;
         self.width = width;
         self.line = line;
-        self.heights = msgs.iter().map(|m| self.estimate(m)).collect();
         self.measured = vec![false; msgs.len()];
-        self.prefix_dirty = true;
+        // A resize keeps the old heights as guesses: close enough that a
+        // panel drag doesn't throw the scroll position around every frame.
+        if !(synced && same_line) {
+            self.heights = msgs.iter().map(|m| self.estimate(m)).collect();
+            self.prefix_dirty = true;
+        }
     }
 
     /// A real offset, not f32::MAX: egui uses an out-of-range offset as-is for
@@ -249,6 +254,8 @@ impl ChatLog {
         }
 
         let mut compensate = 0.0;
+        let mut changed = false;
+        let was_bottom = self.at_bottom;
         let dark = ui.visuals().dark_mode;
         let res = area.show_viewport(ui, |ui, viewport| {
             let total = *self.prefix.last().unwrap_or(&0.0);
@@ -261,7 +268,6 @@ impl ChatLog {
                 .min(msgs.len() - 1);
             let mut y = self.prefix[first];
             let mut i = first;
-            let mut changed = false;
             let mut rows = Vec::new();
             while i < msgs.len() && y < viewport.max.y {
                 let rect = Rect::from_min_size(
@@ -360,6 +366,12 @@ impl ChatLog {
             self.pending_offset = Some(viewport.min.y + compensate);
             ui.ctx()
                 .request_discard("chat log row heights changed above viewport");
+        }
+        // Heights at the bottom changed (resize, new message): stick_to_bottom
+        // would lag a frame behind the new total, so redo the pass pinned.
+        if changed && was_bottom {
+            self.to_bottom = true;
+            ui.ctx().request_discard("chat log height changed at bottom");
         }
         if self.shift != 0.0 {
             ui.ctx().request_repaint();
