@@ -366,7 +366,7 @@ private fun ChatScreen(
         }
     }
 
-    if (dialog == "settings") AutoLoadDialog(app) { dialog = null } else dialog?.let { kind ->
+    if (dialog == "settings") SettingsDialog(app) { dialog = null } else dialog?.let { kind ->
         var name by remember { mutableStateOf(if (kind == "channel") "#" else "") }
         AlertDialog(
             onDismissRequest = { dialog = null },

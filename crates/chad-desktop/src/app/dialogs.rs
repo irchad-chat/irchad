@@ -269,26 +269,35 @@ impl App {
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
-                if self.settings.ui(ui) {
-                    self.settings.apply(ctx);
-                }
-                let ptt = (self.settings.audio.mode, self.settings.ptt);
-                if voice::settings(
-                    ui,
-                    &mut self.settings,
-                    &self.voice,
-                    self.ptt.as_ref(),
-                    &mut self.binding_ptt,
-                ) {
-                    self.voice.set_settings(self.settings.audio.clone());
-                    if (self.settings.audio.mode, self.settings.ptt) != ptt {
-                        self.restart_ptt(ctx);
-                    }
-                }
-                ui.separator();
-                ui.weak(format!("IrChad {}", crate::update::version()));
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(110.0);
+                        for s in settings::Section::ALL {
+                            let r = ui.add_sized(
+                                [110.0, 24.0],
+                                egui::Button::selectable(self.settings_section == s, s.name()),
+                            );
+                            if r.clicked() {
+                                self.settings_section = s;
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.vertical(|ui| {
+                        // Fixed, so switching pages doesn't resize the window.
+                        ui.set_min_size(egui::vec2(560.0, 420.0));
+                        ui.set_max_width(560.0);
+                        let section = self.settings_section;
+                        ui.heading(section.name());
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical()
+                            .max_height(420.0)
+                            .show(ui, |ui| self.settings_page(ctx, ui, section));
+                    });
+                });
             });
-        if !open {
+        // "Hear yourself" and a key bind only last while their page is up.
+        if !open || self.settings_section != settings::Section::Voice {
             self.binding_ptt = false;
             if self.voice.testing() {
                 self.voice.set_testing(false);
@@ -349,6 +358,33 @@ impl App {
 }
 
 impl App {
+    fn settings_page(
+        &mut self,
+        ctx: &egui::Context,
+        ui: &mut egui::Ui,
+        section: settings::Section,
+    ) {
+        if section != settings::Section::Voice {
+            if self.settings.ui(ui, section) {
+                self.settings.apply(ctx);
+            }
+            return;
+        }
+        let ptt = (self.settings.audio.mode, self.settings.ptt);
+        if voice::settings(
+            ui,
+            &mut self.settings,
+            &self.voice,
+            self.ptt.as_ref(),
+            &mut self.binding_ptt,
+        ) {
+            self.voice.set_settings(self.settings.audio.clone());
+            if (self.settings.audio.mode, self.settings.ptt) != ptt {
+                self.restart_ptt(ctx);
+            }
+        }
+    }
+
     pub(super) fn picker_ui(&mut self, ctx: &egui::Context) {
         let here = self.on_screen();
         // GIFs only from the composer, on a network that searches them.

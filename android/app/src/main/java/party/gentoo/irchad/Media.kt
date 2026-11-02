@@ -5,13 +5,7 @@ import android.graphics.ImageDecoder
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.Switch
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.TextButton
-import androidx.compose.ui.semantics.Role
 import android.graphics.drawable.Animatable
 import android.graphics.drawable.Drawable
 import android.util.LruCache
@@ -235,50 +229,6 @@ class Media(private val app: IrChad) {
     } catch (e: OutOfMemoryError) {
         null
     }
-}
-
-@Composable
-fun AutoLoadDialog(app: IrChad, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Settings") },
-        text = {
-            Column {
-                Text("Notifications while IrChad is closed", style = MaterialTheme.typography.titleSmall)
-                BackgroundChoices(app)
-                Text(
-                    "Load images and link previews",
-                    Modifier.padding(top = 16.dp),
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                for ((a, label) in listOf(
-                    Media.AutoLoad.ALWAYS to "Always",
-                    Media.AutoLoad.UNMETERED to "On Wi‑Fi only",
-                    Media.AutoLoad.OFF to "Only when I tap",
-                )) {
-                    Row(
-                        Modifier.fillMaxWidth().selectable(app.media.autoLoad == a, role = Role.RadioButton) {
-                            app.media.autoLoad = a
-                        }.padding(vertical = 8.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = app.media.autoLoad == a, onClick = null)
-                        Text(label, Modifier.padding(start = 12.dp))
-                    }
-                }
-                Row(
-                    Modifier.fillMaxWidth().toggleable(app.media.guests, role = Role.Switch) {
-                        app.media.guests = it
-                    }.padding(vertical = 8.dp),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                ) {
-                    Text("Also from guests (no account)", Modifier.weight(1f))
-                    Switch(checked = app.media.guests, onCheckedChange = null)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
-    )
 }
 
 /** PNG, JPEG, GIF or WebP by magic bytes. */

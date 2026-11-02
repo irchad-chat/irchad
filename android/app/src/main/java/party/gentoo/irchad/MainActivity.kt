@@ -129,8 +129,12 @@ private fun Intent.inviteOrNull(): String? =
 /** Material You: the wallpaper's palette (D41). */
 @Composable
 fun IrChadTheme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
     val ctx = LocalContext.current
+    val dark = when ((ctx.applicationContext as IrChad).settings.theme) {
+        Theme.SYSTEM -> isSystemInDarkTheme()
+        Theme.LIGHT -> false
+        Theme.DARK -> true
+    }
     val colors = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
             if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)

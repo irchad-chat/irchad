@@ -139,90 +139,128 @@ impl Settings {
         });
     }
 
+    /// One section's rows, all but [`Section::Voice`] (see `voice::settings`).
     /// Returns true when something changed.
-    pub fn ui(&mut self, ui: &mut egui::Ui) -> bool {
+    pub fn ui(&mut self, ui: &mut egui::Ui, section: Section) -> bool {
         let before = self.clone();
         let (mut dragging, mut released) = (false, false);
         egui::Grid::new("settings")
             .num_columns(2)
             .min_col_width(LABEL_W)
-            .show(ui, |ui| {
-                ui.label("Theme");
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.theme, Theme::Dark, "Dark");
-                        ui.selectable_value(&mut self.theme, Theme::Light, "Light");
-                        ui.selectable_value(&mut self.theme, Theme::System, "Match system");
+            .show(ui, |ui| match section {
+                Section::Appearance => {
+                    ui.label("Theme");
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut self.theme, Theme::Dark, "Dark");
+                            ui.selectable_value(&mut self.theme, Theme::Light, "Light");
+                            ui.selectable_value(&mut self.theme, Theme::System, "Match system");
+                        });
+                        ui.horizontal(|ui| {
+                            ui.weak("Catppuccin");
+                            ui.selectable_value(&mut self.theme, Theme::Latte, "Latte");
+                            ui.selectable_value(&mut self.theme, Theme::Frappe, "Frappé");
+                            ui.selectable_value(&mut self.theme, Theme::Macchiato, "Macchiato");
+                            ui.selectable_value(&mut self.theme, Theme::Mocha, "Mocha");
+                        });
                     });
-                    ui.horizontal(|ui| {
-                        ui.weak("Catppuccin");
-                        ui.selectable_value(&mut self.theme, Theme::Latte, "Latte");
-                        ui.selectable_value(&mut self.theme, Theme::Frappe, "Frappé");
-                        ui.selectable_value(&mut self.theme, Theme::Macchiato, "Macchiato");
-                        ui.selectable_value(&mut self.theme, Theme::Mocha, "Mocha");
-                    });
-                });
-                ui.end_row();
+                    ui.end_row();
 
-                let l = ui.label("Text size");
-                let r = ui
-                    .add(
-                        egui::Slider::new(&mut self.font_size, 10.0..=24.0)
-                            .step_by(1.0)
-                            .fixed_decimals(0),
-                    )
-                    .labelled_by(l.id);
-                // Resizing mid-drag moves the slider under the pointer and feeds back into it.
-                dragging = r.dragged();
-                released = r.drag_stopped();
-                ui.end_row();
-
-                ui.label("Notify me about");
-                ui.vertical(|ui| {
-                    ui.radio_value(&mut self.notify, Notify::All, "Every message");
-                    ui.radio_value(
-                        &mut self.notify,
-                        Notify::MentionsAndDms,
-                        "Mentions and direct messages",
-                    );
-                    ui.radio_value(&mut self.notify, Notify::Never, "Nothing");
-                });
-                ui.end_row();
-
-                ui.label("Images");
-                ui.checkbox(
-                    &mut self.load_media,
-                    "Show images, link previews and avatars without a click",
-                );
-                ui.end_row();
-
-                ui.label("");
-                ui.checkbox(
-                    &mut self.guest_media,
-                    "Show images and link previews from guests (no account)",
-                );
-                ui.end_row();
-
-                let l = ui.label("Away");
-                ui.horizontal(|ui| {
-                    ui.label("after");
-                    ui.add(egui::DragValue::new(&mut self.away_after).range(0..=240))
+                    let l = ui.label("Text size");
+                    let r = ui
+                        .add(
+                            egui::Slider::new(&mut self.font_size, 10.0..=24.0)
+                                .step_by(1.0)
+                                .fixed_decimals(0),
+                        )
                         .labelled_by(l.id);
-                    ui.label("idle minutes (0: never)");
-                });
-                ui.end_row();
+                    // Resizing mid-drag moves the slider under the pointer and feeds back into it.
+                    dragging = r.dragged();
+                    released = r.drag_stopped();
+                    ui.end_row();
 
-                ui.label("Layout");
-                ui.checkbox(
-                    &mut self.panes,
-                    "Open channels side by side (Ctrl+arrows move between them)",
-                );
-                ui.end_row();
+                    ui.label("Layout");
+                    ui.checkbox(
+                        &mut self.panes,
+                        "Open channels side by side (Ctrl+arrows move between them)",
+                    );
+                    ui.end_row();
+                }
+                Section::Chat => {
+                    ui.label("Notify me about");
+                    ui.vertical(|ui| {
+                        ui.radio_value(&mut self.notify, Notify::All, "Every message");
+                        ui.radio_value(
+                            &mut self.notify,
+                            Notify::MentionsAndDms,
+                            "Mentions and direct messages",
+                        );
+                        ui.radio_value(&mut self.notify, Notify::Never, "Nothing");
+                    });
+                    ui.end_row();
 
-                ui.label("Updates");
-                ui.checkbox(&mut self.check_updates, "Tell me when a new version is out");
-                ui.end_row();
+                    ui.label("Images");
+                    ui.checkbox(
+                        &mut self.load_media,
+                        "Show images, link previews and avatars without a click",
+                    );
+                    ui.end_row();
+
+                    ui.label("");
+                    ui.checkbox(
+                        &mut self.guest_media,
+                        "Show images and link previews from guests (no account)",
+                    );
+                    ui.end_row();
+                }
+                Section::General => {
+                    let l = ui.label("Away");
+                    ui.horizontal(|ui| {
+                        ui.label("after");
+                        ui.add(egui::DragValue::new(&mut self.away_after).range(0..=240))
+                            .labelled_by(l.id);
+                        ui.label("idle minutes (0: never)");
+                    });
+                    ui.end_row();
+
+                    ui.label("Updates");
+                    ui.checkbox(&mut self.check_updates, "Tell me when a new version is out");
+                    ui.end_row();
+
+                    ui.label("Version");
+                    ui.label(format!("IrChad {}", crate::update::version()));
+                    ui.end_row();
+                }
+                Section::Voice => {}
             });
         (*self != before && !dragging) || released
+    }
+}
+
+/// The settings window's pages, in its side nav.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Section {
+    #[default]
+    Appearance,
+    Chat,
+    Voice,
+    General,
+}
+
+impl Section {
+    pub const ALL: [Section; 4] = [
+        Section::Appearance,
+        Section::Chat,
+        Section::Voice,
+        Section::General,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Section::Appearance => "Appearance",
+            Section::Chat => "Chat",
+            Section::Voice => "Voice",
+            Section::General => "General",
+        }
     }
 }

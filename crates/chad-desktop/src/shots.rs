@@ -97,6 +97,10 @@ fn settings() {
     s.shot("settings_mocha");
     s.click("Latte");
     s.shot("settings_latte");
+    for page in ["Chat", "Voice", "General"] {
+        s.click(page);
+        s.shot(&format!("settings_{}", page.to_lowercase()));
+    }
 }
 
 impl Shots {

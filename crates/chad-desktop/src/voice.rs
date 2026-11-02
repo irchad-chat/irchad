@@ -357,8 +357,6 @@ pub fn settings(
 ) -> bool {
     let before = (s.audio.clone(), s.ptt);
     let devices = voice.devices();
-    ui.add_space(8.0);
-    ui.heading("Voice");
     egui::Grid::new("audio")
         .num_columns(2)
         .min_col_width(settings::LABEL_W)

@@ -20,8 +20,10 @@ import io.livekit.android.events.DisconnectReason
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.track.LocalAudioTrack
+import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.RemoteTrackPublication
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
@@ -119,7 +121,17 @@ class Calls(private val app: IrChad) : Voice {
     private suspend fun start(id: ULong, url: String, token: String, call: Call) {
         stop()
         this.id = id
-        val r = LiveKit.create(app, RoomOptions(adaptiveStream = true), LiveKitOverrides(okHttpClient = http))
+        val s = app.settings
+        val options = RoomOptions(
+            adaptiveStream = true,
+            audioTrackCaptureDefaults = LocalAudioTrackOptions(
+                noiseSuppression = s.noiseSuppression,
+                echoCancellation = s.echoCancellation,
+                autoGainControl = s.autoGain,
+            ),
+            audioTrackPublishDefaults = AudioTrackPublishDefaults(audioBitrate = s.bitrateKbps * 1000),
+        )
+        val r = LiveKit.create(app, options, LiveKitOverrides(okHttpClient = http))
         room = r
         state.value = CallState(muted = muted, deafened = deafened)
         // Throws if the core rejoins while we're in the background; the call still works until Android stops us.

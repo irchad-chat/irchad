@@ -36,6 +36,7 @@ class IrChad : Application() {
     val media by lazy { Media(this) }
     val notifier by lazy { Notifier(this) }
     val sounds by lazy { Sounds(this) }
+    val settings by lazy { Settings(this) }
     /** Something shared to IrChad from another app, until it's sent somewhere. */
     val shared = MutableStateFlow<Shared?>(null)
 
