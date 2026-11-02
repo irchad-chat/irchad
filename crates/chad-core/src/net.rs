@@ -571,7 +571,10 @@ impl Net {
         let order = self.isupport.prefix();
         let rank = |m: &Member| {
             let p = m.prefix.chars().next();
-            order.iter().position(|(_, s)| Some(*s) == p).unwrap_or(order.len())
+            order
+                .iter()
+                .position(|(_, s)| Some(*s) == p)
+                .unwrap_or(order.len())
         };
         members.sort_by_cached_key(|m| (rank(m), m.nick.to_lowercase()));
         let (network, channel) = (self.id(), b.name.clone());

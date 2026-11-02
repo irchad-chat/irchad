@@ -438,7 +438,12 @@ impl App {
             .iter()
             .map(|m| {
                 let name = chatlog::shown(profiles, &m.nick);
-                width(format!("{}{name}", m.prefix), &body)
+                let icon = if m.oper {
+                    format!("{} ", icons::WRENCH)
+                } else {
+                    String::new()
+                };
+                width(format!("{icon}{}{name}", m.prefix), &body)
             })
             .chain([
                 width(format!("ONLINE — {}", members.len() - away), &small),
