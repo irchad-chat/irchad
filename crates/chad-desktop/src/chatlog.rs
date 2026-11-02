@@ -36,6 +36,8 @@ pub struct Extras<'a> {
     pub network: &'a str,
     /// Load images, previews and avatars without asking.
     pub auto_media: bool,
+    /// Show images and previews in guests' messages at all.
+    pub guest_media: bool,
     /// A DM, where unencrypted messages are marked.
     pub dm: bool,
 }
@@ -650,7 +652,7 @@ fn toolbar(
 
 /// Images inline, videos and files as cards, and a preview of the first page.
 fn links_ui(ui: &mut egui::Ui, m: &ChatMessage, extras: &mut Extras) {
-    if m.kind == MessageKind::Notice {
+    if m.kind == MessageKind::Notice || (!extras.guest_media && m.account.is_none() && !m.own) {
         return;
     }
     let (mut images, mut previewed) = (0, false);

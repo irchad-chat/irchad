@@ -194,6 +194,8 @@ pub struct Message {
     pub nick: String,
     /// Display name if they set one.
     pub shown: String,
+    /// None for guests (no account).
+    pub account: Option<String>,
     pub avatar: Option<String>,
     /// Without formatting, for copying and quoting.
     pub text: String,

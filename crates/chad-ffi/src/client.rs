@@ -445,6 +445,7 @@ impl Client {
                     time: m.time,
                     nick: m.nick.clone(),
                     shown: n.shown(&m.nick).to_owned(),
+                    account: m.account.clone(),
                     avatar: profile
                         .and_then(|p| p.avatar.as_ref())
                         .map(|u| u.to_string()),

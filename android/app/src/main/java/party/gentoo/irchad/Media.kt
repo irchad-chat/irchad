@@ -6,6 +6,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.TextButton
@@ -122,6 +124,16 @@ class Media(private val app: IrChad) {
         set(a) {
             saved = a
             prefs.edit().putString("auto_load", a.name).apply()
+        }
+
+    private var savedGuests by mutableStateOf(prefs.getBoolean("guest_media", true))
+
+    /** Images and previews in guests' messages; off, their links stay plain links. */
+    var guests: Boolean
+        get() = savedGuests
+        set(g) {
+            savedGuests = g
+            prefs.edit().putBoolean("guest_media", g).apply()
         }
 
     // Wi-Fi or Ethernet, as Android counts it; false until the first callback.
@@ -254,6 +266,15 @@ fun AutoLoadDialog(app: IrChad, onDismiss: () -> Unit) {
                         Text(label, Modifier.padding(start = 12.dp))
                     }
                 }
+                Row(
+                    Modifier.fillMaxWidth().toggleable(app.media.guests, role = Role.Switch) {
+                        app.media.guests = it
+                    }.padding(vertical = 8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text("Also from guests (no account)", Modifier.weight(1f))
+                    Switch(checked = app.media.guests, onCheckedChange = null)
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
@@ -320,6 +341,7 @@ fun RemoteImage(
 @Composable
 fun MessageLinks(app: IrChad, network: String, m: Message) {
     if (m.notice || m.redacted || m.undecryptable || m.links.isEmpty()) return
+    if (!app.media.guests && m.account == null && !m.own) return
     val pages = m.links.filter { it.kind == LinkKind.PAGE }.take(1)
     val images = m.links.filter { it.kind == LinkKind.IMAGE }.take(MAX_IMAGES)
     var open by remember { mutableStateOf<Drawable?>(null) }

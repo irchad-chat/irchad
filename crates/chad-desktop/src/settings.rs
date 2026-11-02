@@ -30,6 +30,9 @@ pub struct Settings {
     pub restore_token: Option<String>,
     /// Images, previews and avatars load by themselves; off, each waits for a click.
     pub load_media: bool,
+    /// Images and previews in messages from people without an account; off,
+    /// their links stay plain links.
+    pub guest_media: bool,
     /// Away after this many idle minutes; 0 never.
     pub away_after: u32,
     /// Away by choice, on every network.
@@ -54,6 +57,7 @@ impl Default for Settings {
             screen: ScreenSettings::default(),
             restore_token: None,
             load_media: true,
+            guest_media: true,
             away_after: 10,
             away: false,
             check_updates: true,
@@ -189,6 +193,13 @@ impl Settings {
                 ui.checkbox(
                     &mut self.load_media,
                     "Show images, link previews and avatars without a click",
+                );
+                ui.end_row();
+
+                ui.label("");
+                ui.checkbox(
+                    &mut self.guest_media,
+                    "Show images and link previews from guests (no account)",
                 );
                 ui.end_row();
 

@@ -31,6 +31,7 @@ impl App {
         let uploads = self.view.nets[ni].info.uploads.is_some();
         let gifs = self.view.nets[ni].info.gifs.is_some();
         let auto_media = self.settings.load_media;
+        let guest_media = self.settings.guest_media;
         // Keys that aren't typing: the one being bound, and push-to-talk's.
         let ptt_key = self.ptt.as_ref().map(|p| p.bind);
         let binding_ptt = self.binding_ptt;
@@ -449,6 +450,7 @@ impl App {
                 media,
                 network: &network,
                 auto_media,
+                guest_media,
                 dm: b.info.kind == BufferKind::Dm,
             };
             let channel = b.info.kind == BufferKind::Channel;
