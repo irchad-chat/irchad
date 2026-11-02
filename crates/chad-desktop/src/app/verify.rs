@@ -55,12 +55,25 @@ impl App {
                          them in person or on a call, not by message."
                     ));
                     ui.add_space(8.0);
+                    // Equal-width cells wide enough that no name wraps mid-word.
+                    let font = egui::TextStyle::Small.resolve(ui.style());
+                    let width = emoji
+                        .iter()
+                        .map(|(_, n)| {
+                            let g = ui.painter().layout_no_wrap(
+                                n.to_string(),
+                                font.clone(),
+                                Color32::WHITE,
+                            );
+                            g.size().x
+                        })
+                        .fold(48.0, f32::max);
                     ui.horizontal(|ui| {
                         for (e, name) in emoji {
-                            ui.allocate_ui(vec2(48.0, 64.0), |ui| {
+                            ui.allocate_ui(vec2(width, 64.0), |ui| {
                                 ui.vertical_centered(|ui| {
                                     ui.label(RichText::new(*e).size(28.0));
-                                    ui.label(RichText::new(*name).small());
+                                    ui.add(egui::Label::new(RichText::new(*name).small()).extend());
                                 });
                             });
                         }
