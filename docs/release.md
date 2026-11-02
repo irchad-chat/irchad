@@ -12,8 +12,8 @@
    Look over `target/shots/*.png`.
 3. **By hand**, on GNOME Wayland, KDE Wayland and an X11 session, plus a Windows smoke test:
    join from an invite link in a browser, chat, upload by paste and by the paperclip, a call, a screen share with audio, notifications and the tray.
-4. **Bump** `version` in the root `Cargo.toml` and the `<releases>` entry in `packaging/linux/party.gentoo.IrChad.metainfo.xml`, then commit.
-5. **Tag:** `git tag v0.2.0 && git push origin v0.2.0`. `.gitea/workflows/release.yml` builds everything into a draft release and publishes it once every job passes:
+4. **Bump and tag:** `./scripts/release.sh v0.2.0` bumps `version` in the root `Cargo.toml` and the `<releases>` entry in `packaging/linux/party.gentoo.IrChad.metainfo.xml`, commits, tags and pushes.
+5. **Build:** `.gitea/workflows/release.yml` builds everything into a draft release and publishes it once every job passes:
    - `irchad-<v>-linux-x86_64.tar.gz` (binary plus `install.sh`) and the bare `irchad-linux-x86_64`
    - `irchad-windows-x86_64-setup.exe` (per-user, no admin) and the bare `irchad-windows-x86_64.exe`
    - the image `git.gentoo.party/sam/chadd:<v>` and `:latest`
