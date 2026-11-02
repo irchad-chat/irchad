@@ -12,6 +12,7 @@ pub const DOTS_THREE: &str = "\u{E1FE}";
 pub const EYE: &str = "\u{E220}";
 pub const FILE: &str = "\u{E230}";
 pub const GEAR: &str = "\u{E270}";
+pub const GHOST: &str = "\u{E62A}";
 pub const HEADPHONES: &str = "\u{E2A6}";
 pub const LOCK: &str = "\u{E2FA}";
 pub const LOCK_OPEN: &str = "\u{E306}";

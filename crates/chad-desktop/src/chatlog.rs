@@ -454,6 +454,11 @@ fn row_ui(
                     {
                         actions.push(Action::OpenDm(m.nick.clone()));
                     }
+                    // Own pending lines have no account until the echo; skip them.
+                    if m.account.is_none() && !m.own {
+                        ui.label(RichText::new(icons::GHOST).weak())
+                            .on_hover_text("Guest (not logged in)");
+                    }
                     ui.label(RichText::new(clock(m.time)).weak().small());
                     if extras.dm && m.crypt == Crypt::Plain {
                         ui.label(

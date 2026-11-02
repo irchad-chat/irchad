@@ -487,6 +487,10 @@ impl App {
                                 if m.oper {
                                     ui.label(icons::WRENCH).on_hover_text("IRC operator");
                                 }
+                                if m.account.is_none() {
+                                    ui.label(RichText::new(icons::GHOST).weak())
+                                        .on_hover_text("Guest (not logged in)");
+                                }
                                 ui.add(egui::Label::new(t).sense(Sense::click()).truncate())
                                     .on_hover_text(match &m.account {
                                         Some(a) => format!("{} · account {a}", m.nick),
