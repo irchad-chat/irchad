@@ -1953,19 +1953,9 @@ impl App {
                                     .min_size(side),
                             )
                             .tip("Emoji");
+                        // GIFs are a tab inside the picker.
                         if e.clicked() {
                             emoji_at = Some((e.rect.left_top(), false));
-                        }
-                        if gifs {
-                            let g = ui
-                                .add(
-                                    egui::Button::new(RichText::new("GIF").strong().size(13.0))
-                                        .min_size(side),
-                                )
-                                .tip("GIFs");
-                            if g.clicked() {
-                                emoji_at = Some((g.rect.left_top(), true));
-                            }
                         }
                         let edit = egui::TextEdit::multiline(&mut b.ui.draft)
                             .hint_text(format!("Message {target}"))
