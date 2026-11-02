@@ -14,8 +14,8 @@
    join from an invite link in a browser, chat, upload by paste and by the paperclip, a call, a screen share with audio, notifications and the tray.
 4. **Bump and tag:** `./scripts/release.sh v0.2.0` bumps `version` in the root `Cargo.toml` and the `<releases>` entry in `packaging/linux/party.gentoo.IrChad.metainfo.xml`, commits, tags and pushes.
 5. **Build:** `.gitea/workflows/release.yml` builds everything into a draft release and publishes it once every job passes:
-   - `irchad-<v>-linux-x86_64.tar.gz` (binary plus `install.sh`) and the bare `irchad-linux-x86_64`
-   - `irchad-windows-x86_64-setup.exe` (per-user, no admin) and the bare `irchad-windows-x86_64.exe`
+   - `irchad-linux-x86_64.tar.gz` (binary plus `install.sh`; the name is unversioned so `latest/` links work)
+   - `irchad-windows-x86_64-setup.exe` (per-user, no admin)
    - the image `git.gentoo.party/sam/chadd:<v>` and `:latest`
 
 The Flatpak job is disabled for now (`if: false`); re-enabling it needs the Linux act_runner to allow privileged job containers (flatpak-builder).

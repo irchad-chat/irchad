@@ -32,7 +32,7 @@ pub fn version() -> String {
 /// The nightly asset for this platform. The workflow recreates the release
 /// before building, so its commit is new before the downloads are there.
 const ASSET: Option<&str> = if cfg!(target_os = "linux") {
-    Some("irchad-linux-x86_64")
+    Some("irchad-linux-x86_64.tar.gz")
 } else if cfg!(target_os = "windows") {
     // Uploaded last by the Windows job.
     Some("irchad-windows-x86_64-setup.exe")

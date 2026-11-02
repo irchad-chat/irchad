@@ -158,7 +158,7 @@ const PLATFORMS: [(&str, &str, bool, &str, &str); 3] = [
         WINDOWS,
         "Windows",
     ),
-    ("Linux", "irchad-linux-x86_64", true, LINUX, "Linux"),
+    ("Linux", "irchad-linux-x86_64.tar.gz", true, LINUX, "Linux"),
 ];
 
 fn invite_page(
@@ -211,7 +211,7 @@ fn invite_page(
         String::new()
     };
     let hint = if os == "Linux" {
-        r#"<p class="hint">Then <code>chmod +x irchad-linux-x86_64</code> and run it.</p>"#
+        r#"<p class="hint">Unpack it and run <code>irchad/install.sh</code>, or just <code>irchad/irchad</code>.</p>"#
     } else {
         ""
     };
@@ -364,9 +364,9 @@ mod tests {
         assert_eq!(status, 200);
         assert!(body.contains("Click to Join Chad &lt;Network&gt;"));
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{latest}/irchad-linux-x86_64""#
+            r#"class="btn secondary" href="{latest}/irchad-linux-x86_64.tar.gz""#
         )));
-        assert!(body.contains(&format!(r#"href="{nightly}/irchad-linux-x86_64""#)));
+        assert!(body.contains(&format!(r#"href="{nightly}/irchad-linux-x86_64.tar.gz""#)));
 
         let (_, body) = get_as("/", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
         assert!(body.contains(&format!(

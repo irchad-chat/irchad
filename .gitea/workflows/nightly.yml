@@ -64,11 +64,14 @@ jobs:
           # Read by the update check (crates/chad-desktop/src/update.rs).
           IRCHAD_NIGHTLY: ${{ github.sha }}
 
+      - name: Tarball
+        run: packaging/linux/tarball.sh
+
       - name: Upload asset
         run: |
           curl -fsS -X POST -H "Authorization: token ${{ github.token }}" \
-            -F "attachment=@target/release/irchad" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-linux-x86_64"
+            -F "attachment=@irchad-linux-x86_64.tar.gz" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-linux-x86_64.tar.gz"
 
   windows:
     needs: release
@@ -96,13 +99,6 @@ jobs:
         env:
           # Read by the update check (crates/chad-desktop/src/update.rs).
           IRCHAD_NIGHTLY: ${{ github.sha }}
-
-      - name: Upload asset
-        shell: pwsh
-        run: |
-          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
-            -F "attachment=@${env:CARGO_TARGET_DIR}\release\irchad.exe" `
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-windows-x86_64.exe"
 
       # NSIS on the runner: `choco install nsis` once, or this installs it.
       - name: Installer

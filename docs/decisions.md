@@ -275,3 +275,7 @@ An edit of a message this device hasn't stored is dropped. The desktop composer 
 
 ## D52: Your own stale E2EE devices can be removed from the profile dialog (2026-11-02)
 Partly supersedes D29's "stays listed until someone deletes it by hand". Each of your other devices in the profile dialog has a Remove button (`NetCommand::RemoveDevice`). It clears `chad/e2e/d/<id>`, rewrites `chad/e2e/devices` and fetches our devices again. There's no confirmation or revocation. If the device is still running, it sees the change and publishes itself again, so a mistaken removal heals itself and removal only sticks for dead installs.
+
+## D53: One download per desktop platform (2026-11-02)
+
+Releases and nightlies ship `irchad-linux-x86_64.tar.gz` (binary, `install.sh`, desktop files) and `irchad-windows-x86_64-setup.exe` only. The bare binaries were the same bytes uncompressed (Linux 59 MiB vs 25 MiB gzipped). The tarball name carries no version so `latest/` and `nightly/` links keep working. Nightlies from before this look for the old asset name and won't see newer nightlies; their users update by hand once.

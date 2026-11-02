@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag `vX.Y.Z` (matching the workspace version) to publish a release:
-# Linux binary and tarball, the Windows installer, the signed Android APK
+# the Linux tarball, the Windows installer, the signed Android APK
 # (arm64), and the chadd container image at git.gentoo.party/sam/chadd:<version>.
 # Before tagging, run docs/release.md's checklist (fuzzing stays out of CI).
 on:
@@ -52,20 +52,12 @@ jobs:
       - run: cargo build --release --locked -p chad-desktop
 
       - name: Tarball
-        run: |
-          d=irchad-${{ needs.release.outputs.version }}-linux-x86_64
-          mkdir "$d"
-          cp target/release/irchad packaging/linux/install.sh packaging/linux/party.gentoo.IrChad.* "$d/"
-          tar czf "$d.tar.gz" "$d"
+        run: packaging/linux/tarball.sh
 
-      - name: Upload assets
-        env:
-          URL: ${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets
-          AUTH: "Authorization: token ${{ github.token }}"
+      - name: Upload asset
         run: |
-          curl -fsS -X POST -H "$AUTH" -F "attachment=@target/release/irchad" "$URL?name=irchad-linux-x86_64"
-          curl -fsS -X POST -H "$AUTH" -F "attachment=@irchad-${{ needs.release.outputs.version }}-linux-x86_64.tar.gz" \
-            "$URL?name=irchad-${{ needs.release.outputs.version }}-linux-x86_64.tar.gz"
+          curl -fsS -X POST -H "Authorization: token ${{ github.token }}" -F "attachment=@irchad-linux-x86_64.tar.gz" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-linux-x86_64.tar.gz"
 
   # Disabled for now; flip `if` to bring the Flatpak bundle back (and add it
   # to `publish`'s needs).
@@ -127,8 +119,6 @@ jobs:
           $url = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets"
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
             -F "attachment=@packaging/windows/irchad-setup.exe" "${url}?name=irchad-windows-x86_64-setup.exe"
-          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
-            -F "attachment=@${env:CARGO_TARGET_DIR}\release\irchad.exe" "${url}?name=irchad-windows-x86_64.exe"
 
   # Asset names stay the same across releases so Obtainium can track them (D40).
   android:
