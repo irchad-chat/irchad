@@ -4,7 +4,8 @@ Debian 13, no containers (D24). Live at `irchad.chat` (64.177.55.62); the old `c
 
 | Service | Install | Config | Listens |
 |---|---|---|---|
-| Caddy | Caddy's apt repo | `/etc/caddy/Caddyfile` (from `Caddyfile`), hosts via `IRCHAD_HOST` in `caddy.service.d/irchad.conf` (space-separated) | :80, :443 tcp+udp |
+| Caddy | Caddy's apt repo | `/etc/caddy/Caddyfile` (from `Caddyfile`), hosts via `IRCHAD_HOST` in `caddy.service.d/irchad.conf` (space-separated: `irchad.chat www.irchad.chat chat.gentoo.party`) | :80, :443 tcp+udp |
+| Website | `site/dist` | `/var/www/irchad`, served by Caddy for any path chadd/ergo/LiveKit don't own | — |
 | ergo | release tarball in `/opt/ergo` | `/etc/ergo/ircd.yaml`, state in `/var/lib/ergo` | 127.0.0.1: 6667, 8097 (ws), 8089 (API) |
 | LiveKit | `/usr/local/bin/livekit-server` | `/etc/livekit/livekit.yaml` + `/etc/livekit/env` | 127.0.0.1:7880, public 7881/tcp + 50000-50100/udp |
 | chadd | `/usr/local/bin/chadd` | `/etc/chadd/chadd.toml` | 127.0.0.1:8080 |
@@ -22,6 +23,7 @@ The firewall is `/etc/nftables.conf`: 22, 80, 443 tcp, 443 udp, 7881 tcp, 50000-
   scp chadd chad-prod:/usr/local/bin/chadd.new && ssh chad-prod 'mv /usr/local/bin/chadd.new /usr/local/bin/chadd && systemctl restart chadd'
   git rev-parse HEAD | ssh chad-prod 'cat > /usr/local/bin/chadd.rev'
   ```
+- **Website:** `cd site && pnpm build && rsync -a --delete dist/ chad-prod:/var/www/irchad/`.
 - **ergo.yaml changes:** regenerate the config on the server, then `systemctl reload ergo`.
   ```sh
   . /root/irchad-secrets

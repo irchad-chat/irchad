@@ -1,11 +1,15 @@
 ---
+import logo from "../../../packaging/linux/party.gentoo.IrChad.svg?raw";
+// Phosphor Icons (regular), inlined at build time.
+const icons = import.meta.glob("/node_modules/@phosphor-icons/core/assets/regular/*.svg", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+const icon = (name: string) => icons[`/node_modules/@phosphor-icons/core/assets/regular/${name}.svg`];
 // Same release roots and asset names as chadd's landing page (crates/chadd/src/routes.rs, D44).
 const repo = "https://git.gentoo.party/sam/irchad-ng";
 const releases = "https://downloads.gentoo.party/irchad";
 const builds = [
-  { os: "Linux", asset: "irchad-linux-x86_64.tar.gz", note: "x86_64. Unpack, then run irchad/install.sh (or irchad/irchad directly).", nightly: true },
-  { os: "Windows", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer.", nightly: true },
-  { os: "Android", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
+  { os: "Linux", icon: "linux-logo", asset: "irchad-linux-x86_64.tar.gz", note: "x86_64. Unpack, then run irchad/install.sh (or irchad/irchad directly).", nightly: true },
+  { os: "Windows", icon: "windows-logo", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer.", nightly: true },
+  { os: "Android", icon: "android-logo", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
 ];
 // Obtainium can't detect a self-hosted Gitea, so preset its Forgejo source ("Codeberg" class) or it scrapes HTML and makes up versions.
 const obtainium = "obtainium://app/" + encodeURIComponent(JSON.stringify({
@@ -24,6 +28,7 @@ const features = [
 const table = [
   ["Invite links", "Paste an https:// or irchad:// link. Join as a guest, log in, or sign up without leaving the app.", "✓", "✓"],
   ["Several networks", "Be on more than one network at once, each in the server rail.", "✓", "✓"],
+  ["Always online", "Your account stays in its channels after you close the app, the way it does on Discord. Your PC and phone are the same user, not separate nicks, and the network keeps what's said while you're away. No bouncer needed. (Guests are the exception: they leave when they close the app.)", "✓", "✓"],
   ["History", "Scrollback comes from the server (IRCv3 chathistory) and is cached locally, so it shows up instantly. Read markers sync across your devices.", "✓", "✓"],
   ["Replies, reactions, typing", "Reply to a message, react with emoji, see who's typing, and delete your own messages.", "✓", "✓"],
   ["Emoji and GIFs", "An emoji picker, :shortcodes:, and GIF search from the composer or with /gif.", "✓", "✓"],
@@ -31,8 +36,8 @@ const table = [
   ["Profiles and presence", "Display names, avatars, and away status that follows your idle time.", "✓", "✓"],
   ["Voice channels", "Echo cancellation, noise suppression (with optional RNNoise), and voice activity or push-to-talk. Audio is PipeWire-native on Linux.", "✓", "✓"],
   ["Soundboard", "The network's own clips, played into the call with a separate volume.", "✓", "✓"],
-  ["Screen share", "A screen or a window at 720p30, 1080p60 or source resolution, with hardware encoding where available.", "✓", "Untested"],
-  ["App audio in shares", "Share one app's sound without your notifications or music coming along.", "✓", "Untested"],
+  ["Screen share", "A screen or a window at 720p30, 1080p60 or source resolution, with hardware encoding where available.", "✓", "✓"],
+  ["App audio in shares", "Share one app's sound without your notifications or music coming along.", "✓", "✓"],
   ["Watching shares", "Stage view, fullscreen, pop-out, a floating window, or a tile next to your chat.", "✓", "✓"],
   ["Encrypted DMs", "End-to-end encrypted with Olm. Verify devices by comparing emoji, and get a warning when a contact's keys change.", "✓", "✓"],
   ["Desktop integration", "Notifications, tray icon, Ctrl+K quick switcher, input methods for CJK, and screen-reader support.", "✓", "✓"],
@@ -51,13 +56,18 @@ const table = [
 <body>
   <main>
     <header>
-      <div class="logo" aria-hidden="true">#</div>
-      <h1>IrChad</h1>
-      <p class="lede">A Discord-style client for IRC, with voice, screen share and encrypted DMs.<br />Paste an invite link and you're in.</p>
-      <p class="cta">
-        <a class="btn primary" href="#download">Download</a>
-        <a class="btn secondary" href="#host">Host a network</a>
-      </p>
+      <div class="hero">
+        <div class="logo" aria-hidden="true" set:html={logo} />
+        <h1>IrChad</h1>
+        <p class="lede">A Discord-style client for IRC, with voice, screen share and encrypted DMs.<br /></p>
+        <p class="cta">
+          <a class="btn primary" href="/invite"><Fragment set:html={icon("sign-in")} />Join the official IrChad server</a>
+          <a class="btn secondary" href="#download"><Fragment set:html={icon("download-simple")} />Download</a>
+          <a class="btn secondary" href="#host"><Fragment set:html={icon("hard-drives")} />Host a network</a>
+          <a class="btn secondary" href={repo}><Fragment set:html={icon("code")} />Source code</a>
+        </p>
+      </div>
+      <a href="/screenshot.webp"><img class="shot" src="/screenshot.webp" width="1400" height="1394" alt="IrChad's main window: the channel list, a conversation in #chad with an inline GIF, and the member list." /></a>
     </header>
 
     <section aria-labelledby="features">
@@ -79,7 +89,7 @@ const table = [
           </tbody>
         </table>
       </div>
-      <p class="muted small">Windows screen capture builds in CI but hasn't been tested on a real machine yet. On Android, voice and watching screen shares work. The rest of the Android app is still in progress.</p>
+      <p class="muted small">On Android, voice and watching screen shares work. The rest of the Android app is still in progress.</p>
     </section>
 
     <section aria-labelledby="download">
@@ -90,8 +100,8 @@ const table = [
           <li class="card">
             <h3>{b.os}</h3>
             <p>{b.note} {b.nightly && <a href={`${releases}/nightly/${b.asset}`} download>Nightly build</a>}</p>
-            <a class="btn primary" href={`${releases}/latest/${b.asset}`} download>Download for {b.os}</a>
-            {b.os === "Android" && <a class="btn secondary" href={obtainium}>Add to Obtainium</a>}
+            <a class="btn primary" href={`${releases}/latest/${b.asset}`} download><Fragment set:html={icon(b.icon)} />Download for {b.os}</a>
+            {b.os === "Android" && <a class="btn secondary" href={obtainium}><Fragment set:html={icon("package")} />Add to Obtainium</a>}
           </li>
         ))}
       </ul>
@@ -118,19 +128,21 @@ const table = [
 </html>
 
 <style is:global>
-  /* Palette matches chadd's landing page so both feel like one product. */
-  :root { color-scheme: light dark; --bg: #f2f3f5; --glow: #5865f233; --card: #ffffffcc; --line: #0000001a; --fg: #1e1f22; --muted: #5c5e66; --accent: #5865f2; --accent-2: #8b5cf6; --link: #4752c4; }
+  /* Catppuccin Latte/Mocha, the same defaults as chadd's invite page (crates/chadd/src/routes.rs LIGHT/DARK). */
+  :root { color-scheme: light dark; --bg: #e6e9ef; --card: #eff1f5; --fg: #4c4f69; --muted: #6c6f85; --accent: #40a02b; --accent-2: #179299; --on-accent: #1e1e2e; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #111214; --glow: #5865f240; --card: #1e1f22cc; --line: #ffffff14; --fg: #f2f3f5; --muted: #949ba4; --link: #8c95ff; }
+    :root { --bg: #11111b; --card: #1e1e2e; --fg: #cdd6f4; --muted: #a6adc8; --accent: #a6e3a1; --accent-2: #94e2d5; }
   }
+  :root { --line: color-mix(in srgb, var(--fg) 12%, transparent); }
   * { box-sizing: border-box; }
-  body { margin: 0; background: radial-gradient(60rem 30rem at 50% -10rem, var(--glow), transparent), var(--bg);
+  body { margin: 0; background: radial-gradient(60rem 30rem at 50% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent), var(--bg);
     color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
   main, footer { max-width: 64rem; margin: 0 auto; padding: 0 16px; }
-  a { color: var(--link); }
-  header { text-align: center; padding: 5rem 0 3rem; }
-  .logo { width: 4rem; height: 4rem; margin: 0 auto; display: grid; place-items: center; border-radius: 1.25rem;
-    color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); font-size: 2rem; font-weight: 700; }
+  a { color: inherit; text-decoration-color: var(--accent); }
+  header { text-align: center; padding: 3rem 0; display: grid; gap: 2.5rem; align-items: center; }
+  @media (min-width: 60rem) { header { grid-template-columns: 1fr 1.4fr; text-align: left; } header .cta { justify-content: flex-start; } header .logo { margin: 0; } }
+  .shot { width: 100%; height: auto; border-radius: 1rem; border: 1px solid var(--line); box-shadow: 0 20px 60px #0000004d; }
+  .logo { width: 5rem; height: 5rem; margin: 0 auto; } .logo svg { width: 100%; height: 100%; }
   h1 { font-size: clamp(2.5rem, 8vw, 4rem); margin: 1rem 0 0; letter-spacing: -.02em; }
   .lede { font-size: 1.2rem; color: var(--muted); margin: .5rem auto 0; max-width: 36rem; }
   .cta { display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; margin-top: 2rem; }
@@ -138,18 +150,21 @@ const table = [
   h2 { font-size: 1.75rem; margin: 0 0 1rem; }
   h3 { font-size: 1.05rem; margin: 0 0 .25rem; }
   .grid { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
-  .card { padding: 1.25rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--card); backdrop-filter: blur(12px);
+  .card { padding: 1.25rem; border: 1px solid var(--line); border-radius: 1rem; background: color-mix(in srgb, var(--card) 80%, transparent); backdrop-filter: blur(12px);
     display: flex; flex-direction: column; gap: .5rem; }
   .card p { margin: 0; color: var(--muted); flex: 1; }
-  .btn { display: inline-block; padding: .65rem 1.25rem; border-radius: .75rem; font-weight: 600; text-decoration: none; text-align: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; padding: .75rem 1.25rem; border-radius: 12px;
+    font-weight: 600; text-decoration: none; text-align: center; transition: transform .1s, filter .15s; }
+  .btn:hover { filter: brightness(1.1); } .btn:active { transform: scale(.98); }
+  .btn svg { width: 1.25em; height: 1.25em; flex: none; }
   .btn:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .primary { color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .primary { color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
   .secondary { color: var(--fg); border: 1px solid var(--line); }
   .muted { color: var(--muted); }
   .small { font-size: .85rem; }
   .plain { padding-left: 1.25rem; }
   code { font-size: .9em; }
-  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 1rem; background: var(--card); }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 1rem; background: color-mix(in srgb, var(--card) 80%, transparent); }
   table { width: 100%; border-collapse: collapse; min-width: 36rem; }
   th, td { padding: .75rem 1rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
   thead th { border-top: 0; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }

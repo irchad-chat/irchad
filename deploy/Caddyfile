@@ -10,9 +10,6 @@
 	handle /.well-known/irchad.json {
 		reverse_proxy {args[1]}:8080
 	}
-	handle / {
-		reverse_proxy {args[1]}:8080
-	}
 	handle /invite* {
 		reverse_proxy {args[1]}:8080
 	}

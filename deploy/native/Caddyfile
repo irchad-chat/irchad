@@ -5,9 +5,6 @@
 	handle /.well-known/irchad.json {
 		reverse_proxy 127.0.0.1:8080
 	}
-	handle / {
-		reverse_proxy 127.0.0.1:8080
-	}
 	handle /invite* {
 		reverse_proxy 127.0.0.1:8080
 	}
@@ -25,7 +22,9 @@
 	handle_path /livekit/* {
 		reverse_proxy 127.0.0.1:7880
 	}
+	# Everything else is the project website (site/dist). Without it, 404.
 	handle {
-		respond 404
+		root * /var/www/irchad
+		file_server
 	}
 }

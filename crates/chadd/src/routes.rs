@@ -69,7 +69,6 @@ pub fn router(state: Arc<AppState>) -> Router {
     let max_upload = state.config.uploads.as_ref().map_or(0, |u| u.max_bytes);
     Router::new()
         .route(discovery::WELL_KNOWN_PATH, get(well_known))
-        .route("/", get(invite))
         .route("/invite", get(invite))
         .route("/invite/", get(invite))
         .route("/invite/{code}", get(invite_code))
@@ -378,7 +377,7 @@ mod tests {
     async fn landing_offers_the_visitors_build() {
         let latest = "https://downloads.gentoo.party/irchad/latest";
         let nightly = "https://downloads.gentoo.party/irchad/nightly";
-        let (status, body) = get_as("/", "Mozilla/5.0 (X11; Linux x86_64)").await;
+        let (status, body) = get_as("/invite", "Mozilla/5.0 (X11; Linux x86_64)").await;
         assert_eq!(status, 200);
         assert!(body.contains("Click to Join Chad &lt;Network&gt;"));
         assert!(body.contains(&format!(
@@ -386,12 +385,12 @@ mod tests {
         )));
         assert!(body.contains(&format!(r#"href="{nightly}/irchad-linux-x86_64.tar.gz""#)));
 
-        let (_, body) = get_as("/", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
+        let (_, body) = get_as("/invite", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
         assert!(body.contains(&format!(
             r#"class="btn secondary" href="{latest}/irchad-windows-x86_64-setup.exe""#
         )));
 
-        let (_, body) = get_as("/", "Mozilla/5.0 (Linux; Android 14)").await;
+        let (_, body) = get_as("/invite", "Mozilla/5.0 (Linux; Android 14)").await;
         assert!(body.contains(&format!(
             r#"class="btn secondary" href="{latest}/irchad-android-arm64.apk""#
         )));
