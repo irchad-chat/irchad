@@ -16,6 +16,9 @@ pub struct Config {
     pub origin: Url,
     pub name: String,
     pub icon: Option<Url>,
+    /// Invite page colors; anything left out keeps the logo's palette.
+    #[serde(default)]
+    pub colors: Colors,
     #[serde(default = "default_registration")]
     pub registration: Registration,
     /// Where the landing page links client builds: `<downloads>/{latest,nightly}/<asset>`,
@@ -34,6 +37,70 @@ pub struct Config {
     pub sounds: Option<Sounds>,
     /// Leave out to keep nothing on disk; concurrent fetches are still shared.
     pub cache: Option<Cache>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Colors {
+    #[serde(default)]
+    pub light: Palette,
+    #[serde(default)]
+    pub dark: Palette,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Palette {
+    pub background: Option<Color>,
+    /// The card behind the invite.
+    pub surface: Option<Color>,
+    pub text: Option<Color>,
+    pub muted: Option<Color>,
+    /// The join button is a gradient from `accent` to `accent_2`.
+    pub accent: Option<Color>,
+    pub accent_2: Option<Color>,
+    /// Text on the join button.
+    pub on_accent: Option<Color>,
+}
+
+impl Palette {
+    /// `--name: value;` pairs, each unset field taking `defaults` (field order).
+    pub fn css(&self, defaults: [&str; 7]) -> String {
+        let fields = [
+            ("bg", &self.background),
+            ("card", &self.surface),
+            ("fg", &self.text),
+            ("muted", &self.muted),
+            ("accent", &self.accent),
+            ("accent-2", &self.accent_2),
+            ("on-accent", &self.on_accent),
+        ];
+        fields
+            .iter()
+            .zip(defaults)
+            .map(|((name, c), d)| format!("--{name}: {};", c.as_ref().map_or(d, |c| &c.0)))
+            .collect()
+    }
+}
+
+/// A `#rgb`, `#rgba`, `#rrggbb` or `#rrggbbaa` color; nothing else reaches the page's CSS.
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Color(String);
+
+impl TryFrom<String> for Color {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, String> {
+        match s.strip_prefix('#') {
+            Some(hex)
+                if [3, 4, 6, 8].contains(&hex.len())
+                    && hex.bytes().all(|b| b.is_ascii_hexdigit()) =>
+            {
+                Ok(Self(s))
+            }
+            _ => Err(format!("{s:?} is not a #hex color")),
+        }
+    }
 }
 
 /// Link previews and `/api/media` images, kept on disk for a day. Must not be
@@ -268,5 +335,19 @@ pub mod tests {
         let d = c.discovery().unwrap();
         assert_eq!(d.livekit.url.as_str(), "wss://lk.example.com/");
         assert_eq!(d.registration, Registration::Closed);
+    }
+
+    #[test]
+    fn colors_are_hex_only() {
+        let parse = |c: &str| {
+            Config::parse(&format!(
+                "origin = \"https://x.example\"\nname = \"x\"\n[colors.dark]\naccent = \"{c}\"\n{KEYS}"
+            ))
+        };
+        let c = parse("#a6e3a1").unwrap();
+        let css = c.colors.dark.css(["d"; 7]);
+        assert!(css.contains("--accent: #a6e3a1;") && css.contains("--bg: d;"));
+        assert!(parse("red").is_err());
+        assert!(parse("#fff;}body{").is_err());
     }
 }

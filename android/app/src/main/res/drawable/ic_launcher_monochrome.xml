@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon version of the logo: one colour, the "#" (upright, like the small cut) is a hole via even-odd fill. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="20" android:translateY="18.64" android:scaleX="0.34" android:scaleY="0.34">
+        <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+            android:pathData="M60,30H140A34,34 0,0 1,174 64V114A34,34 0,0 1,140 148H60A34,34 0,0 1,26 114V64A34,34 0,0 1,60 30Z
+                M80.5,56H93.5V69.5H106.5V56H119.5V69.5H134V82.5H119.5V95.5H134V108.5H119.5V122H106.5V108.5H93.5V122H80.5V108.5H66V95.5H80.5V82.5H66V69.5H80.5Z
+                M93.5,82.5H106.5V95.5H93.5Z" />
+        <path android:fillColor="#FFFFFF" android:pathData="M60,140L46,178L100,146Z" />
+    </group>
+</vector>

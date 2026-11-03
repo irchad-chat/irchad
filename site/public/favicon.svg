@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="26 26 152 152">
+  <!-- IrChad logo, "#" cut out so any background shows through. Latte green on light, Mocha green on dark. -->
+  <style>
+    .mark { fill: #40a02b; }
+    @media (prefers-color-scheme: dark) { .mark { fill: #a6e3a1; } }
+  </style>
+  <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+    <rect x="26" y="30" width="148" height="118" rx="34" fill="#fff"/>
+    <path d="M60 140 L46 178 L100 146 Z" fill="#fff"/>
+    <path d="M90 56 L80 124 M124 56 L114 124 M62 78 L142 78 M58 104 L138 104" stroke="#000" stroke-width="13" stroke-linecap="round"/>
+  </mask>
+  <rect class="mark" width="200" height="200" mask="url(#cut)"/>
+</svg>

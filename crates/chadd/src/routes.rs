@@ -219,6 +219,10 @@ fn invite_page(
     } else {
         ""
     };
+    // shortcut: the logo inlined as a data URI on every page; serve it from a route if pages multiply.
+    let light = state.config.colors.light.css(LIGHT);
+    let dark = state.config.colors.dark.css(DARK);
+    let favicon = LOGO.replace('"', "'").replace('#', "%23").replace('\n', "");
     format!(
         r#"<!doctype html>
 <html lang="en">
@@ -226,19 +230,20 @@ fn invite_page(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Join {name}</title>
+<link rel="icon" href="data:image/svg+xml,{favicon}">
 <style>
-  :root {{ color-scheme: light dark; --bg: #f2f3f5; --glow: #5865f233; --card: #ffffffcc; --line: #0000001a; --fg: #1e1f22; --muted: #5c5e66; --accent: #5865f2; --accent-2: #8b5cf6; }}
-  @media (prefers-color-scheme: dark) {{ :root {{ --bg: #111214; --glow: #5865f240; --card: #1e1f22cc; --line: #ffffff14; --fg: #f2f3f5; --muted: #949ba4; }} }}
+  :root {{ color-scheme: light dark; {light} }}
+  @media (prefers-color-scheme: dark) {{ :root {{ {dark} }} }}
+  :root {{ --line: color-mix(in srgb, var(--fg) 12%, transparent); }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 1rem;
-    background: radial-gradient(60rem 30rem at 50% -10%, var(--glow), transparent), var(--bg);
+    background: radial-gradient(60rem 30rem at 50% -10%, color-mix(in srgb, var(--accent) 22%, transparent), transparent), var(--bg);
     color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }}
   main {{ width: 100%; max-width: 26rem; padding: 2.5rem 2rem 1.5rem; text-align: center;
-    background: var(--card); border: 1px solid var(--line); border-radius: 20px;
+    background: color-mix(in srgb, var(--card) 80%, transparent); border: 1px solid var(--line); border-radius: 20px;
     backdrop-filter: blur(12px); box-shadow: 0 20px 60px #0000002e; }}
   svg {{ width: 1.25em; height: 1.25em; fill: currentColor; flex: none; }}
-  .logo {{ display: inline-grid; place-items: center; width: 4rem; height: 4rem; border-radius: 18px;
-    color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); font-size: 1.6rem; }}
+  .logo {{ display: inline-block; width: 4rem; height: 4rem; }} .logo svg {{ width: 100%; height: 100%; }}
   .kicker {{ margin: 1.25rem 0 0; color: var(--muted); font-size: .875rem; text-transform: uppercase; letter-spacing: .08em; }}
   h1 {{ margin: .25rem 0 0; font-size: 1.75rem; line-height: 1.2; overflow-wrap: anywhere; }}
   .muted {{ color: var(--muted); margin: .25rem 0 0; }}
@@ -246,7 +251,7 @@ fn invite_page(
   .btn {{ display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .875rem 1rem;
     border-radius: 12px; font-weight: 600; text-decoration: none; transition: transform .1s, filter .15s; }}
   .btn:hover {{ filter: brightness(1.1); }} .btn:active {{ transform: scale(.98); }}
-  .primary {{ color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }}
+  .primary {{ color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }}
   .secondary {{ color: var(--fg); border: 1px solid var(--line); background: transparent; }}
   .hint {{ margin: .5rem 0 0; color: var(--muted); font-size: .8rem; }}
   code {{ font-size: .95em; }}
@@ -260,7 +265,7 @@ fn invite_page(
 </head>
 <body>
 <main>
-  <span class="logo">{CHATS}</span>
+  <span class="logo">{LOGO}</span>
   <p class="kicker">You're invited to</p>
   <h1>{name}</h1>
   <p class="muted">{host}</p>
@@ -301,7 +306,16 @@ const ANDROID: &str = r#"<svg viewBox="0 0 256 256"><path d="M176,148a12,12,0,1,
 const WINDOWS: &str = r#"<svg viewBox="0 0 256 256"><path d="M208,136H128a8,8,0,0,0-8,8v57.45a8,8,0,0,0,6.57,7.88l80,14.54A7.61,7.61,0,0,0,208,224a8,8,0,0,0,8-8V144A8,8,0,0,0,208,136Zm-8,70.41-64-11.63V152h64ZM96,136H32a8,8,0,0,0-8,8v40a8,8,0,0,0,6.57,7.87l64,11.64a8.54,8.54,0,0,0,1.43.13,8,8,0,0,0,8-8V144A8,8,0,0,0,96,136Zm-8,50.05-48-8.73V152H88ZM213.13,33.86a8,8,0,0,0-6.56-1.73l-80,14.55A8,8,0,0,0,120,54.55V112a8,8,0,0,0,8,8h80a8,8,0,0,0,8-8V40A8,8,0,0,0,213.13,33.86ZM200,104H136V61.22l64-11.63ZM101.13,54.22a8,8,0,0,0-6.56-1.73l-64,11.64A8,8,0,0,0,24,72v40a8,8,0,0,0,8,8H96a8,8,0,0,0,8-8V60.36A8,8,0,0,0,101.13,54.22ZM88,104H40V78.68L88,70Z"/></svg>"#;
 const DOWNLOAD: &str = r#"<svg viewBox="0 0 256 256"><path d="M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z"/></svg>"#;
 const SIGN_IN: &str = r#"<svg viewBox="0 0 256 256"><path d="M141.66,133.66l-40,40a8,8,0,0,1-11.32-11.32L116.69,136H24a8,8,0,0,1,0-16h92.69L90.34,93.66a8,8,0,0,1,11.32-11.32l40,40A8,8,0,0,1,141.66,133.66ZM200,32H136a8,8,0,0,0,0,16h56V208H136a8,8,0,0,0,0,16h64a8,8,0,0,0,8-8V40A8,8,0,0,0,200,32Z"/></svg>"#;
-const CHATS: &str = r#"<svg viewBox="0 0 256 256"><path d="M232.07,186.76a80,80,0,0,0-62.5-114.17A80,80,0,1,0,23.93,138.76l-7.27,24.71a16,16,0,0,0,19.87,19.87l24.71-7.27a80.39,80.39,0,0,0,25.18,7.35,80,80,0,0,0,108.34,40.65l24.71,7.27a16,16,0,0,0,19.87-19.86ZM62,159.5a8.28,8.28,0,0,0-2.26.32L32,168l8.17-27.76a8,8,0,0,0-.63-6,64,64,0,1,1,26.26,26.26A8,8,0,0,0,62,159.5Zm153.79,28.73L224,216l-27.76-8.17a8,8,0,0,0-6,.63,64.05,64.05,0,0,1-85.87-24.88A79.93,79.93,0,0,0,174.7,89.71a64,64,0,0,1,41.75,92.48A8,8,0,0,0,215.82,188.23Z"/></svg>"#;
+/// Catppuccin Latte and Mocha, the logo's palette: background, surface, text,
+/// muted, accent, accent 2, on accent.
+const LIGHT: [&str; 7] = [
+    "#e6e9ef", "#eff1f5", "#4c4f69", "#6c6f85", "#40a02b", "#179299", "#1e1e2e",
+];
+const DARK: [&str; 7] = [
+    "#11111b", "#1e1e2e", "#cdd6f4", "#a6adc8", "#a6e3a1", "#94e2d5", "#1e1e2e",
+];
+/// The app icon, also installed by packaging/linux.
+const LOGO: &str = include_str!("../../../packaging/linux/party.gentoo.IrChad.svg");
 
 #[cfg(test)]
 mod tests {

@@ -121,8 +121,8 @@ pub fn register_scheme() {
     };
     let entry = desktop_entry(&exe.to_string_lossy());
     let icon = dir.join(format!("../icons/hicolor/scalable/apps/{APP_ID}.svg"));
-    if !icon.exists() {
-        let svg = include_str!("../../../../packaging/linux/party.gentoo.IrChad.svg");
+    let svg = include_str!("../../../../packaging/linux/party.gentoo.IrChad.svg");
+    if std::fs::read_to_string(&icon).ok().as_deref() != Some(svg) {
         let r = icon.parent().map_or(Ok(()), std::fs::create_dir_all);
         if let Err(e) = r.and_then(|()| std::fs::write(&icon, svg)) {
             tracing::warn!("installing {}: {e}", icon.display());

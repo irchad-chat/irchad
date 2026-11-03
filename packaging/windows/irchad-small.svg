@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- The logo's small cut on a 16 px grid, for 16–32 px icons. Same shape as tray_icon() in chad-desktop. -->
+  <path fill="#40a02b" fill-rule="evenodd" d="M4,2H12A3,3 0 0 1 15,5V9A3,3 0 0 1 12,12H4A3,3 0 0 1 1,9V5A3,3 0 0 1 4,2Z
+    M5,3H7V4H9V3H11V4H12V6H11V8H12V10H11V11H9V10H7V11H5V10H4V8H5V6H4V4H5Z M7,6H9V8H7Z"/>
+  <path fill="#40a02b" d="M3,11L2,15L7,12Z"/>
+</svg>

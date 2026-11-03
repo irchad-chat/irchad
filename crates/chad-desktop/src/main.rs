@@ -64,6 +64,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("IrChad")
             .with_app_id(platform::APP_ID)
+            .with_icon(platform::window_icon())
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([640.0, 400.0]),
         persistence_path: profile.is_some().then(|| data_dir.join("app.ron")),

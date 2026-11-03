@@ -27,8 +27,9 @@ RequestExecutionLevel user
 Section "IrChad"
   SetOutPath "$INSTDIR"
   File "/oname=irchad.exe" "${EXE}"
+  File "irchad.ico"
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  CreateShortCut "$SMPROGRAMS\IrChad.lnk" "$INSTDIR\irchad.exe"
+  CreateShortCut "$SMPROGRAMS\IrChad.lnk" "$INSTDIR\irchad.exe" "" "$INSTDIR\irchad.ico"
 
   ; The app writes the same keys at startup; this makes links work before the first run.
   WriteRegStr HKCU "Software\Classes\irchad" "" "URL:IrChad"
@@ -38,7 +39,7 @@ Section "IrChad"
   WriteRegStr HKCU "${UNINST}" "DisplayName" "IrChad"
   WriteRegStr HKCU "${UNINST}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST}" "Publisher" "IrChad"
-  WriteRegStr HKCU "${UNINST}" "DisplayIcon" "$INSTDIR\irchad.exe"
+  WriteRegStr HKCU "${UNINST}" "DisplayIcon" "$INSTDIR\irchad.ico"
   WriteRegStr HKCU "${UNINST}" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegDWORD HKCU "${UNINST}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST}" "NoRepair" 1
@@ -46,6 +47,7 @@ SectionEnd
 
 Section "Uninstall"
   Delete "$INSTDIR\irchad.exe"
+  Delete "$INSTDIR\irchad.ico"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\IrChad.lnk"

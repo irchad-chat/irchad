@@ -10,7 +10,15 @@ const APP: (&str, &str) = ("application", "irchad");
 /// reads and writes; unlocking shows the desktop's own password prompt.
 async fn open() -> Result<oo7::Keyring, String> {
     let keyring = oo7::Keyring::new().await.map_err(plain)?;
-    keyring.unlock().await.map_err(plain)?;
+    tracing::debug!("secret store: unlocking");
+    // The prompt can get lost or never show; don't hang the connect on it forever.
+    tokio::time::timeout(std::time::Duration::from_secs(60), keyring.unlock())
+        .await
+        .map_err(|_| {
+            tracing::warn!("secret store: unlock prompt not answered in 60s");
+            "The system keyring is locked and didn't unlock.".to_owned()
+        })?
+        .map_err(plain)?;
     Ok(keyring)
 }
 

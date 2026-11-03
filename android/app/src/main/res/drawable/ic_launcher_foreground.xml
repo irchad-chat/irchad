@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A speech bubble. -->
+<!-- IrChad logo: a speech bubble with an IRC "#", inside the 66dp safe zone. Same shapes as packaging/linux/party.gentoo.IrChad.svg. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#FFFFFF"
-        android:pathData="M34,36h40a6,6 0,0 1,6 6v22a6,6 0,0 1,-6 6H50l-10,9v-9h-6a6,6 0,0 1,-6 -6V42a6,6 0,0 1,6 -6z" />
+    <group android:translateX="20" android:translateY="18.64" android:scaleX="0.34" android:scaleY="0.34">
+        <path android:fillColor="#A6E3A1"
+            android:pathData="M60,30H140A34,34 0,0 1,174 64V114A34,34 0,0 1,140 148H60A34,34 0,0 1,26 114V64A34,34 0,0 1,60 30Z" />
+        <path android:fillColor="#A6E3A1" android:pathData="M60,140L46,178L100,146Z" />
+        <path android:strokeColor="#1E1E2E" android:strokeWidth="13" android:strokeLineCap="round"
+            android:pathData="M90,56L80,124M124,56L114,124M62,78L142,78M58,104L138,104" />
+    </group>
 </vector>

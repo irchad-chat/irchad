@@ -1,10 +1,10 @@
 # Production deploy (native, systemd)
 
-Debian 13, no containers (D24). Live at `chat.gentoo.party` (64.177.55.62). SSH alias `chad-prod`.
+Debian 13, no containers (D24). Live at `irchad.chat` (64.177.55.62); the old `chat.gentoo.party` is still served so saved clients and old upload links keep working (D55). SSH alias `chad-prod`.
 
 | Service | Install | Config | Listens |
 |---|---|---|---|
-| Caddy | Caddy's apt repo | `/etc/caddy/Caddyfile` (from `Caddyfile`), host via `caddy.service.d/irchad.conf` | :80, :443 tcp+udp |
+| Caddy | Caddy's apt repo | `/etc/caddy/Caddyfile` (from `Caddyfile`), hosts via `IRCHAD_HOST` in `caddy.service.d/irchad.conf` (space-separated) | :80, :443 tcp+udp |
 | ergo | release tarball in `/opt/ergo` | `/etc/ergo/ircd.yaml`, state in `/var/lib/ergo` | 127.0.0.1: 6667, 8097 (ws), 8089 (API) |
 | LiveKit | `/usr/local/bin/livekit-server` | `/etc/livekit/livekit.yaml` + `/etc/livekit/env` | 127.0.0.1:7880, public 7881/tcp + 50000-50100/udp |
 | chadd | `/usr/local/bin/chadd` | `/etc/chadd/chadd.toml` | 127.0.0.1:8080 |
@@ -25,7 +25,7 @@ The firewall is `/etc/nftables.conf`: 22, 80, 443 tcp, 443 udp, 7881 tcp, 50000-
 - **ergo.yaml changes:** regenerate the config on the server, then `systemctl reload ergo`.
   ```sh
   . /root/irchad-secrets
-  python3 ergo-prod.py chat.gentoo.party GentooParty "$(caddy hash-password --plaintext "$OPER_PASS")" "$ERGO_API_TOKEN" < ergo.yaml > /etc/ergo/ircd.yaml
+  python3 ergo-prod.py irchad.chat GentooParty "$(caddy hash-password --plaintext "$OPER_PASS")" "$ERGO_API_TOKEN" < ergo.yaml > /etc/ergo/ircd.yaml
   ```
 - **ergo / LiveKit versions:** download the release, check it against the published sha256, swap the binary, then restart.
 - **Debian:** `unattended-upgrades` handles security updates.

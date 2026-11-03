@@ -607,6 +607,7 @@ impl App {
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
             .with_app_id(platform::APP_ID)
+            .with_icon(platform::window_icon())
             .with_inner_size([1280.0, 760.0]);
         ctx.show_viewport_immediate(id, builder, |ui, _| {
             let vctx = ui.ctx().clone();

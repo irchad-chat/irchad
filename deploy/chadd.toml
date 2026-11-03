@@ -24,3 +24,10 @@ dir = "/var/lib/chadd/sounds"
 # Link previews and proxied images. Not under uploads (that dir is public).
 [cache]
 dir = "/var/lib/chadd/cache"
+
+# Invite page colors, #hex only. Unset keys keep the logo's Catppuccin palette.
+# Keys: background, surface, text, muted, accent, accent_2, on_accent.
+# [colors.light]
+# accent = "#40a02b"
+# [colors.dark]
+# accent = "#a6e3a1"
