@@ -82,10 +82,12 @@ impl Message {
             let (raw, r) = split_token(r);
             for item in raw.split(';').filter(|s| !s.is_empty()) {
                 let (k, v) = item.split_once('=').unwrap_or((item, ""));
-                if !valid_tag_key(k) {
-                    return Err(Error::BadTagKey(k.into()));
+                // Skip, don't reject: ergo relays client tags its looser check
+                // accepts (`+a.b`, `+a/b/c`), and dropping the whole line would
+                // let any plain client hide its messages from IrChad users.
+                if valid_tag_key(k) {
+                    msg.tags.push((k.into(), unescape_tag(v)));
                 }
-                msg.tags.push((k.into(), unescape_tag(v)));
             }
             rest = r;
         }
@@ -324,7 +326,9 @@ mod tests {
         assert_eq!(Message::parse(""), Err(Error::NoCommand));
         assert_eq!(Message::parse(":src"), Err(Error::NoCommand));
         assert_eq!(Message::parse("@a=b"), Err(Error::NoCommand));
-        assert!(Message::parse("@bad=key=x;b@d CMD").is_err());
+        let m = Message::parse("@bad=key=x;b@d;+a.b=1;+a/b/c;=v PRIVMSG #c :hi").unwrap();
+        assert_eq!(m.tags, [("bad".into(), "key=x".into())]);
+        assert_eq!(m.params, ["#c", "hi"]);
         assert!(Message::parse(": CMD").is_err());
     }
 }
