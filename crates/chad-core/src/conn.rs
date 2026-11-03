@@ -17,7 +17,9 @@ use url::Url;
 
 use crate::chadd::{self, Session};
 use crate::manager::Sink;
-use crate::net::{AVATAR_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure};
+use crate::net::{
+    AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure,
+};
 use crate::secrets::SecretStore;
 use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
 
@@ -245,6 +247,7 @@ async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
     };
     net.info.name = d.name.clone();
     net.info.icon = d.icon.clone();
+    net.home = d.home.clone().filter(|h| net.is_home_name(h));
     net.info.uploads = d
         .chadd
         .uploads
@@ -339,6 +342,7 @@ async fn session(
                         DISPLAY_NAME_KEY,
                         AVATAR_KEY,
                         DEVICES_KEY,
+                        CHANNELS_KEY,
                     ],
                 ));
             }

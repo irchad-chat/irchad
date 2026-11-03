@@ -15,7 +15,7 @@ curl -k https://chat.localhost:8443/.well-known/irchad.json
 | Raw IRC (debugging) | `127.0.0.1:6667`, plaintext |
 | Second network | `https://chat2.localhost:8443` (`IRCHAD_HOST2`): its own ergo (`ChadDev2`, raw IRC `127.0.0.1:6668`) and chadd, sharing Caddy (same CA root) and LiveKit (so `#dev` on both networks is the same voice room). Seed with `python3 deploy/seed.py --port 6668` |
 | Accounts | `alice` / `alicepass`, `bob` / `bobpass` |
-| Channels | `#general`, `#random`, `#dev` (registered to alice) |
+| Channels | `#general`, `#random`, `#dev` (registered to alice). `#general` is chadd's `home` and lists all three in `chad/channels` |
 | ergo oper | `admin` / `chadadmin` |
 | ergo HTTP API | `http://ergo:8089` on the compose network only, bearer `chad-dev-api-token` |
 | LiveKit | key `devkey`, secret in `livekit.yaml`. Media on UDP 50000-50100 + TCP 7881, advertised as `LIVEKIT_NODE_IP` (default 127.0.0.1) |

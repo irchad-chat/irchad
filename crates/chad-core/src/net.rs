@@ -45,6 +45,10 @@ const CTCP_EVERY: Duration = Duration::from_secs(2);
 const PUSH_TRIES: u32 = 4;
 /// Metadata key for voice: a user's room (`#chan`), or `off` on a channel.
 pub const VOICE_KEY: &str = "chad/voice";
+/// Metadata key on the home channel: the official channels, space-separated.
+pub const CHANNELS_KEY: &str = "chad/channels";
+/// Store meta: the last `chad/channels` we acted on, folded.
+const OFFICIAL_META: &str = "official";
 /// ergo's away reason when an always-on user has no connected devices.
 const ERGO_AUTO_AWAY: &str = "User is currently disconnected";
 /// De-facto metadata keys other clients read too.
@@ -113,6 +117,8 @@ pub struct Net {
     pub isupport: Isupport,
     /// `?channel=` from the invite, joined once synced.
     pub invite_channel: Option<String>,
+    /// Discovery's `home`: the only channel whose `chad/channels` we trust.
+    pub home: Option<String>,
     /// No account, so never always-on: rejoin our channels ourselves.
     pub guest: bool,
     pub out: Vec<Message>,
@@ -169,6 +175,7 @@ impl Net {
             caps: Negotiator::new(),
             isupport: Isupport::new(),
             invite_channel: None,
+            home: None,
             guest: false,
             out: Vec::new(),
             events: Vec::new(),

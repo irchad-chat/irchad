@@ -289,3 +289,7 @@ Flooding unique URLs can only push others out of the cache, within the existing 
 
 ## D55: Production moves to irchad.chat (2026-11-03)
 The production origin is `https://irchad.chat` (chadd `origin`, ergo server name, FILEHOST, VAPID subscriber). Caddy keeps serving `chat.gentoo.party` with the same routes. Clients re-fetch discovery from their saved origin on every connect, so they pick up the new endpoints without being re-added, and upload links in old history keep resolving. The app IDs (`party.gentoo.IrChad`, the Android package) and `downloads.gentoo.party` don't change.
+
+## D56: Official channels are a `chad/channels` list on the home channel (2026-11-03)
+chadd's config names a `home` channel, published in discovery. On first login the client joins it, not everything in `LIST`. Its chanops keep the network's official channels in channel metadata `chad/channels` (ergo only lets chanops set it, and pushes changes live to members). The client trusts that key from the home channel only, so ops of other channels can't move chads around.
+Each value is diffed against the last one acted on (store meta `official`), not against what we're in. So a chad who parts an official channel isn't pulled back, and a removed channel is parted only by chads still in it. An unset key changes nothing, so one slip can't empty everyone's sidebar. Plain IRC users never see it. Known gap: a channel added while one device is offline is joined again when that device reconnects, even if the chad already left it on another device.

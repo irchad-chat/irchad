@@ -2,7 +2,12 @@
 listen = "0.0.0.0:8080"
 origin = "https://chat.localhost:8443"
 name = "Chad Dev Network"
+# Sidebar icon (HTTPS, ≤1 MiB, PNG/JPEG/WebP); Caddy serves this one.
+icon = "https://chat.localhost:8443/icon.png"
 registration = "open"
+# Every chad is put here; its chanops list the official channels in its
+# `chad/channels` metadata (deploy/seed.py sets it).
+home = "#general"
 
 # DEV ONLY: public secrets, matching ergo.yaml and livekit.yaml.
 [ergo]

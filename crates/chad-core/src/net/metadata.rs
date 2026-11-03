@@ -1,4 +1,5 @@
-//! Voice rooms and profiles, both carried in user metadata.
+//! Voice rooms and profiles in user metadata, and the official channel list in the
+//! home channel's.
 
 use super::*;
 
@@ -190,5 +191,48 @@ impl Net {
             channel,
             nicks,
         });
+    }
+
+    /// Discovery's `home` is server input too: it gets JOINed as is.
+    pub(crate) fn is_home_name(&self, h: &str) -> bool {
+        valid_name(h) && self.is_channel(h)
+    }
+
+    /// `chad/channels` on `target`: join what was added since the last list, part
+    /// what was dropped. Channels a chad left themselves stay left.
+    pub(super) fn official_channels(&mut self, target: &str, value: &str) {
+        // Before sync `joined` is half-built; the GET in `synced` brings it again.
+        let Some(home) = self
+            .home
+            .clone()
+            .filter(|h| self.synced && self.cm.eq(h, target))
+        else {
+            return;
+        };
+        let mut new: Vec<String> = Vec::new();
+        for c in value
+            .split(' ')
+            .filter(|c| valid_name(c) && self.is_channel(c))
+        {
+            let key = self.fold(c);
+            if !new.contains(&key) && new.len() < MAX_BUFFERS {
+                new.push(key);
+            }
+        }
+        let old = self.store.meta(OFFICIAL_META).unwrap_or_default();
+        let old: Vec<&str> = old.split(' ').filter(|c| !c.is_empty()).collect();
+        let join: Vec<String> = new
+            .iter()
+            .filter(|k| !old.contains(&k.as_str()) && !self.joined.contains(*k))
+            .cloned()
+            .collect();
+        self.join_all(&join);
+        let home = self.fold(&home);
+        for k in old {
+            if !new.iter().any(|n| n == k) && k != home && self.joined.contains(k) {
+                self.out.push(Message::new("PART", [k]));
+            }
+        }
+        self.store.set_meta(OFFICIAL_META, &new.join(" "));
     }
 }

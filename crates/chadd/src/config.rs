@@ -16,6 +16,8 @@ pub struct Config {
     pub origin: Url,
     pub name: String,
     pub icon: Option<Url>,
+    /// The channel every chad is put in, e.g. `#lobby`.
+    pub home: Option<String>,
     /// Invite page colors; anything left out keeps the logo's palette.
     #[serde(default)]
     pub colors: Colors,
@@ -237,6 +239,12 @@ impl Config {
         // Validate derived URLs up front rather than on first request.
         config.discovery()?;
         anyhow::ensure!(
+            config.home.as_ref().is_none_or(|h| h.starts_with('#')
+                && h.len() <= 64
+                && !h.contains(|c: char| c == ',' || c.is_whitespace() || c.is_control())),
+            "home must be a channel name like \"#lobby\""
+        );
+        anyhow::ensure!(
             config.livekit.secret.len() >= 32,
             "livekit.secret must be at least 32 characters"
         );
@@ -269,6 +277,7 @@ impl Config {
             version: discovery::VERSION,
             name: self.name.clone(),
             icon: self.icon.clone(),
+            home: self.home.clone(),
             irc: discovery::Irc {
                 websocket: or(&self.endpoints.irc_websocket, &ws_origin, "/irc")?,
             },

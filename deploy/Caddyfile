@@ -22,6 +22,11 @@
 	handle /uploads/* {
 		reverse_proxy {args[1]}:8080
 	}
+	# Network icon for the sidebar (chadd.toml `icon`).
+	handle /icon.png {
+		root * /srv
+		file_server
+	}
 	handle /irc {
 		reverse_proxy {args[0]}:8097
 	}

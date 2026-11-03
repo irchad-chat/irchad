@@ -3,6 +3,9 @@ listen = "0.0.0.0:8080"
 origin = "https://chat2.localhost:8443"
 name = "Chad Dev Network 2"
 registration = "open"
+# Every chad is put here; its chanops list the official channels in its
+# `chad/channels` metadata (deploy/seed.py sets it).
+home = "#general"
 
 # DEV ONLY: public secrets, matching ergo.yaml and livekit.yaml.
 [ergo]

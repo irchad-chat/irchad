@@ -310,3 +310,47 @@ fn web_push_registers_once_per_connection() {
     n.command(NetCommand::Push { subscription: None });
     assert!(out(&mut n).is_empty());
 }
+
+#[test]
+fn the_home_channels_list_joins_and_parts_official_channels() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * NEW :draft/metadata-2"));
+    n.caps.handle(&line("CAP * ACK :draft/metadata-2"));
+    n.home = Some("#lobby".into());
+    // First login: the home channel instead of everything in LIST.
+    assert!(attach(&mut n, &[]).contains(&"JOIN #lobby".to_owned()));
+    feed(&mut n, ":bob!u@h JOIN #lobby bob :bob");
+    assert!(out(&mut n).contains(&"METADATA #lobby SYNC".to_owned()));
+
+    let list = |n: &mut Net, target: &str, v: &str| {
+        feed(n, &format!(":s 761 * {target} chad/channels * :{v}"));
+        out(n)
+    };
+    assert_eq!(list(&mut n, "#lobby", "#a #b #lobby #A"), ["JOIN #a,#b"]);
+    for c in ["#a", "#b"] {
+        feed(&mut n, &format!(":bob!u@h JOIN {c} bob :bob"));
+    }
+    out(&mut n);
+    // Left by hand: stays left when the list changes.
+    feed(&mut n, ":bob!u@h PART #b");
+    assert_eq!(list(&mut n, "#lobby", "#a #b #c"), ["JOIN #c"]);
+    feed(&mut n, ":bob!u@h JOIN #c bob :bob");
+    out(&mut n);
+    assert_eq!(list(&mut n, "#lobby", "#c"), ["PART #a"]);
+    // Unset, another channel's list, or junk: nothing.
+    feed(&mut n, ":s 766 * #lobby chad/channels :Key deleted");
+    assert!(out(&mut n).is_empty());
+    assert!(list(&mut n, "#other", "#evil").is_empty());
+    assert_eq!(
+        list(&mut n, "#lobby", "#c 0 #x,0 :y nick"),
+        Vec::<String>::new()
+    );
+
+    // Reconnect: fetch whatever changed meanwhile.
+    n.detach();
+    let sent = attach(&mut n, &["#lobby", "#c"]);
+    assert!(
+        sent.contains(&"METADATA #lobby GET chad/channels".to_owned()),
+        "{sent:?}"
+    );
+}

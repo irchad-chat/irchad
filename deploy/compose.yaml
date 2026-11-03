@@ -82,6 +82,7 @@ services:
       IRCHAD_HOST2: "${IRCHAD_HOST2:-chat2.localhost}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../crates/chad-desktop/assets/icon.png:/srv/icon.png:ro
       - caddy-data:/data
     ports:
       - "${IRCHAD_HTTPS_PORT:-8443}:443"

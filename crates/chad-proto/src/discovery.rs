@@ -12,6 +12,10 @@ pub struct Discovery {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<Url>,
+    /// The channel every chad is put in; its chanops list the official channels
+    /// in its `chad/channels` metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
     pub irc: Irc,
     pub chadd: Chadd,
     pub livekit: Livekit,

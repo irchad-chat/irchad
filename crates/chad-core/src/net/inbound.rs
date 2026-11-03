@@ -190,7 +190,21 @@ impl Net {
         }
         let first = self.store.meta("autojoined").is_none();
         if first && self.joined.is_empty() {
-            self.send_labeled(Message::new("LIST", [""; 0]), Pending::List);
+            match self.home.clone() {
+                // Its `chad/channels` brings the rest once we're in.
+                Some(home) => self.out.push(Message::new("JOIN", [home])),
+                None => self.send_labeled(Message::new("LIST", [""; 0]), Pending::List),
+            }
+        }
+        // Catch up on list changes made while we were away.
+        if let Some(home) = self.home.clone()
+            && self.joined.contains(&self.fold(&home))
+            && self.caps.enabled("draft/metadata-2")
+        {
+            self.out.push(Message::new(
+                "METADATA",
+                [home.as_str(), "GET", CHANNELS_KEY],
+            ));
         }
         self.store.set_meta("autojoined", "1");
         if let Some(c) = self.invite_channel.take()
@@ -501,6 +515,14 @@ impl Net {
                 }
             }
             // 761 <me|*> <target> <key> <visibility> :<value>; 766 is "not set".
+            "761" | "766" if m.param(2) == Some(CHANNELS_KEY) => {
+                // Unset is no change: one slip by an op mustn't part everyone from everything.
+                if let (Some(target), Some(value)) = (m.param(1), m.param(4))
+                    && m.command == "761"
+                {
+                    self.official_channels(target, value);
+                }
+            }
             "761" | "766" if m.param(2) == Some(VOICE_KEY) => {
                 let value = if m.command == "761" { m.param(4) } else { None };
                 if let Some(target) = m.param(1) {

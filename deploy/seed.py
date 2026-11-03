@@ -64,6 +64,8 @@ def main():
         for nick, c in conns.items():
             if nick != "alice":
                 c.send(f"JOIN {chan}")
+    # The official list, on chadd's `home` channel: IrChad joins and parts to match.
+    alice.send(f"METADATA #general SET chad/channels :{' '.join(CHANNELS)}")
     for c in conns.values():
         c.drain()
     for c in conns.values():
