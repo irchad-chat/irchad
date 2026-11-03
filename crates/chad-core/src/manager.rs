@@ -55,6 +55,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         password,
         device: device.clone(),
         register: None,
+        verifying: None,
         upgrading: None,
         joining: None,
         save_password: false,

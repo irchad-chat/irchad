@@ -185,7 +185,7 @@ server:
     idle-timeouts:
         # give the client this long to complete connection registration (i.e. the initial
         # IRC handshake, including capability negotiation and SASL)
-        registration: 60s
+        registration: 5m # irchad: room to fetch the sign-up email code (the client reconnects past it anyway)
         # if the client hasn't sent anything for this long, send them a PING
         ping: 1m30s
         # if the client hasn't sent anything for this long (including the PONG to the

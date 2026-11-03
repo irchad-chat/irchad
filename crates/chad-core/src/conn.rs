@@ -41,6 +41,9 @@ pub struct Params {
     pub device: String,
     /// `Some(email)` while signing up.
     pub register: Option<Option<String>>,
+    /// Signed up and waiting on the emailed code: the server's message, to
+    /// show again after a reconnect without signing up a second time.
+    pub verifying: Option<String>,
     /// A guest signing up: their nick, to go back to if it fails.
     pub upgrading: Option<String>,
     /// Set until the first login on a new network succeeds; a failure before
@@ -114,13 +117,17 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
             None => End::Fatal("Sign in to this network again.".into()),
         };
         net.detach();
+        // ergo drops a connection still unregistered after its registration
+        // timeout (a minute by default), but the code stays good for hours.
+        let retry_verify = matches!(end, End::Lost(_)) && p.verifying.is_some();
         // A guest's sign-up that didn't work: back to being a guest.
         let end = match end {
-            End::Lost(error) | End::Fatal(error) if p.upgrading.is_some() => {
+            End::Lost(error) | End::Fatal(error) if p.upgrading.is_some() && !retry_verify => {
                 p.account = p.upgrading.take().expect("guarded");
                 p.guest = true;
                 p.password = None;
                 p.register = None;
+                p.verifying = None;
                 p.session = Default::default();
                 sink.send([Event::SignUpFailed {
                     network: net.info.network.clone(),
@@ -138,6 +145,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
         match end {
             End::Registered => {
                 p.register = None;
+                p.verifying = None;
                 continue;
             }
             End::Paused => continue,
@@ -154,9 +162,12 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 backoff.reset();
                 continue;
             }
-            End::Lost(error) if p.joining.is_none() => {
-                net.set_state(ConnState::Disconnected { error });
-                sink.send(net.events.drain(..));
+            End::Lost(error) if p.joining.is_none() || retry_verify => {
+                // Keep the code prompt up across the reconnect.
+                if !retry_verify {
+                    net.set_state(ConnState::Disconnected { error });
+                    sink.send(net.events.drain(..));
+                }
                 let delay = backoff.next_delay();
                 tracing::info!("{}: reconnecting in {delay:?}", net.info.network);
                 let sleep = tokio::time::sleep(delay);
@@ -174,6 +185,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 }
             }
             End::Lost(error) | End::Fatal(error) => {
+                p.verifying = None;
                 if let Some(invite) = p.joining.take() {
                     sink.send([Event::JoinFailed { invite, error }]);
                     return remove(net, &p, &sink).await;
@@ -271,8 +283,10 @@ async fn session(
     sink: &Sink,
     backoff: &mut Backoff,
 ) -> End {
-    net.set_state(ConnState::Connecting);
-    sink.send(net.events.drain(..));
+    if p.verifying.is_none() {
+        net.set_state(ConnState::Connecting);
+        sink.send(net.events.drain(..));
+    }
     let d = match discover(net, p.guest).await {
         Ok(d) => d,
         Err(e) if p.joining.is_some() => return End::Fatal(e),
@@ -352,7 +366,10 @@ async fn session(
                 if !net.caps.enabled("draft/account-registration") {
                     return End::Fatal(format!("{} isn't taking sign-ups.", d.name));
                 }
-                out.push(register::register("*", email.as_deref(), password));
+                // Already signed up: VERIFY works from a fresh connection.
+                if p.verifying.is_none() {
+                    out.push(register::register("*", email.as_deref(), password));
+                }
             } else {
                 if !net.caps.enabled("sasl") {
                     return End::Fatal(format!("{} doesn't support logging in.", d.name));
@@ -385,6 +402,9 @@ async fn session(
                 return End::Registered;
             }
             Some(Reply::NeedsVerification { message, .. }) => {
+                p.verifying = Some(message.clone());
+                // The server's fine; only its registration timeout drops us.
+                backoff.reset();
                 net.set_state(ConnState::NeedsVerification { message });
                 sink.send(net.events.drain(..));
             }

@@ -63,6 +63,8 @@ From a checkout of this repo, copy the files over and fill them in:
     "$(caddy hash-password --plaintext "$OPER_PASS")" "$ERGO_API_TOKEN" \
     < deploy/ergo.yaml > /etc/ergo/ircd.yaml
   ```
+  If you keep your own `ircd.yaml` instead, set `server.idle-timeouts.registration: 5m`.
+  At ergo's default of 60s, sign-ups drop while people wait for their email code, and IrChad has to reconnect to keep waiting.
 - **LiveKit:** `deploy/native/livekit.yaml` to `/etc/livekit/livekit.yaml`, and `/etc/livekit/env` containing
   `LIVEKIT_KEYS="irchad: <LIVEKIT_SECRET>"` and `NODE_IP=<the server's public IP>`.
 - **chadd:** `/etc/chadd/chadd.toml`:
