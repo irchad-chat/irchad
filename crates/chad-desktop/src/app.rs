@@ -56,6 +56,8 @@ pub struct App {
     events: UnboundedReceiver<Event>,
     os: mpsc::Receiver<Os>,
     tray: Tray,
+    /// Quit from the tray: the close goes through instead of hiding.
+    quitting: bool,
     icons: (mpsc::Sender<IconMsg>, mpsc::Receiver<IconMsg>),
     view: View,
     /// Origin of the network on screen.
@@ -354,6 +356,7 @@ impl App {
             events,
             os,
             tray,
+            quitting: false,
             icons: mpsc::channel(),
             view: View::default(),
             current: None,
@@ -406,6 +409,10 @@ impl App {
             },
         };
         app.restart_ptt(&cc.egui_ctx);
+        #[cfg(windows)]
+        if app.settings.autostart {
+            platform::autostart(true);
+        }
         if let Some(url) = open {
             app.open_invite(&url);
         }
@@ -734,9 +741,26 @@ fn read_file(path: &std::path::Path, max: u64) -> Result<Vec<u8>, String> {
 }
 
 impl eframe::App for App {
+    /// Also runs while the window is hidden in the tray, so messages,
+    /// notifications and "Show" still get through.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll(ctx);
+        #[cfg(windows)]
+        if ctx.input(|i| i.viewport().close_requested())
+            && self.settings.tray_on_close
+            && self.tray.present()
+            && !self.quitting
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.poll(&ctx);
+        for n in &mut self.view.nets {
+            n.ui.media.viewer(&ctx);
+        }
 
         let watching = self.voice.watching().is_some();
         let layout = self.settings.stage;

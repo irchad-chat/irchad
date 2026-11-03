@@ -313,7 +313,10 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
-                Os::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                Os::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         }
         // No global shortcut: push-to-talk follows the key while we're focused.
@@ -324,7 +327,6 @@ impl App {
         }
         for n in &mut self.view.nets {
             n.ui.media.poll(ctx);
-            n.ui.media.viewer(ctx);
             for cmd in n.ui.media.wanted.drain(..) {
                 self.core.send(Command::Net {
                     network: n.info.network.clone(),

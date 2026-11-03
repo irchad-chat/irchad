@@ -113,7 +113,7 @@ Bumped workspace `rust-version` to 1.92, because oo7 0.6 and rusqlite 0.41 requi
 
 - [x] Scheme handler registration, named-pipe single instance, toast notifications, Credential Manager.
       Builds and runs in a Windows VM against the Linux dev stack (2026-10-28): connect, chat, DMs, typing. `irchad://` links and single-instance forwarding are deferred to Phase 5 (user's call).
-      Dev setup: `IRCHAD_HOST=irchad.test` in `deploy/.env`, hosts entries on both sides, Caddy's root in the Windows user Root store (`certutil -user -addstore Root`), and the host firewall opened for 8443 from `virbr0`. `HKCU\Software\Classes\irchad`, pipe `\\.\pipe\party.gentoo.IrChad-<user>`, `notify-rust` toasts, and `CredWriteW`/`CredReadW` (`irchad:<origin>`). Tray on Windows is a stub (Phase 5).
+      Dev setup: `IRCHAD_HOST=irchad.test` in `deploy/.env`, hosts entries on both sides, Caddy's root in the Windows user Root store (`certutil -user -addstore Root`), and the host firewall opened for 8443 from `virbr0`. `HKCU\Software\Classes\irchad`, pipe `\\.\pipe\party.gentoo.IrChad-<user>`, `notify-rust` toasts, and `CredWriteW`/`CredReadW` (`irchad:<origin>`). Tray on Windows: `Shell_NotifyIconW` on a hidden window of its own thread, with close-to-tray and an HKCU `Run` autostart, both in Settings → Windows.
 
 ## Done when
 

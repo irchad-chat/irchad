@@ -177,11 +177,7 @@ impl ksni::Tray for Sni {
         APP_ID.into()
     }
     fn title(&self) -> String {
-        match self.mentions {
-            0 => "IrChad".into(),
-            1 => "IrChad: 1 mention".into(),
-            n => format!("IrChad: {n} mentions"),
-        }
+        super::tray_title(self.mentions)
     }
     fn status(&self) -> ksni::Status {
         if self.mentions > 0 {

@@ -22,7 +22,7 @@ pub use linux::{Tray, register_scheme, single_instance};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{Tray, register_scheme, single_instance};
+pub use windows::{Tray, autostart, register_scheme, single_instance};
 
 #[cfg(not(any(target_os = "linux", windows)))]
 mod unsupported;
@@ -37,8 +37,8 @@ pub enum Os {
     /// An `irchad://` link or invite URL, from a second launch.
     Open(String),
     Show,
-    /// From the tray menu; Windows has no tray yet.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    /// From the tray menu.
+    #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
     Quit,
 }
 
@@ -78,9 +78,19 @@ pub fn notify(summary: String, body: String) {
     });
 }
 
+/// Tray tooltip.
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
+pub fn tray_title(mentions: u32) -> String {
+    match mentions {
+        0 => "IrChad".into(),
+        1 => "IrChad: 1 mention".into(),
+        n => format!("IrChad: {n} mentions"),
+    }
+}
+
 /// Tray icon: a disc, with a red dot for mentions or a white one for unread.
 /// ARGB32, network byte order (what SNI wants).
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 pub fn tray_icon(size: usize, unread: bool, mentions: bool) -> Vec<u8> {
     let mut px = vec![0u8; size * size * 4];
     let r = size as f32 / 2.0;

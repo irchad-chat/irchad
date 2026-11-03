@@ -42,6 +42,10 @@ pub struct Settings {
     pub panes: bool,
     /// Where a watched screen share goes.
     pub stage: Layout,
+    /// Closing the window leaves IrChad in the tray (Windows).
+    pub tray_on_close: bool,
+    /// Start at sign-in (Windows).
+    pub autostart: bool,
 }
 
 impl Default for Settings {
@@ -63,6 +67,8 @@ impl Default for Settings {
             check_updates: true,
             panes: true,
             stage: Layout::default(),
+            tray_on_close: true,
+            autostart: false,
         }
     }
 }
@@ -231,6 +237,19 @@ impl Settings {
                     ui.label(format!("IrChad {}", crate::update::version()));
                     ui.end_row();
                 }
+                #[cfg(windows)]
+                Section::Windows => {
+                    ui.label("Closing");
+                    ui.checkbox(
+                        &mut self.tray_on_close,
+                        "Keep running in the system tray after close",
+                    );
+                    ui.end_row();
+
+                    ui.label("Startup");
+                    ui.checkbox(&mut self.autostart, "Auto-start with Windows");
+                    ui.end_row();
+                }
                 Section::Voice => {}
             });
         (*self != before && !dragging) || released
@@ -245,14 +264,18 @@ pub enum Section {
     Chat,
     Voice,
     General,
+    #[cfg(windows)]
+    Windows,
 }
 
 impl Section {
-    pub const ALL: [Section; 4] = [
+    pub const ALL: &[Section] = &[
         Section::Appearance,
         Section::Chat,
         Section::Voice,
         Section::General,
+        #[cfg(windows)]
+        Section::Windows,
     ];
 
     pub fn name(self) -> &'static str {
@@ -261,6 +284,8 @@ impl Section {
             Section::Chat => "Chat",
             Section::Voice => "Voice",
             Section::General => "General",
+            #[cfg(windows)]
+            Section::Windows => "Windows",
         }
     }
 }

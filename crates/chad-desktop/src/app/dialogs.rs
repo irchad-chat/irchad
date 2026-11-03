@@ -272,7 +272,7 @@ impl App {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(110.0);
-                        for s in settings::Section::ALL {
+                        for &s in settings::Section::ALL {
                             let r = ui.add_sized(
                                 [110.0, 24.0],
                                 egui::Button::selectable(self.settings_section == s, s.name()),
@@ -365,8 +365,14 @@ impl App {
         section: settings::Section,
     ) {
         if section != settings::Section::Voice {
+            #[cfg(windows)]
+            let autostart = self.settings.autostart;
             if self.settings.ui(ui, section) {
                 self.settings.apply(ctx);
+                #[cfg(windows)]
+                if self.settings.autostart != autostart {
+                    platform::autostart(self.settings.autostart);
+                }
             }
             return;
         }
