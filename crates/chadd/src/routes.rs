@@ -197,7 +197,7 @@ fn invite_page(
         "latest",
         asset,
         &format!("{DOWNLOAD}{icon}"),
-        "btn secondary",
+        "btn primary",
     );
     let others: String = PLATFORMS
         .iter()
@@ -270,8 +270,8 @@ fn invite_page(
   <p class="muted">{host}</p>
   {channel}
   <div class="actions">
-    <a class="btn primary" href="{join}">{SIGN_IN}Click to Join {name}</a>
     {download}
+    <a class="btn secondary" href="{join}">{SIGN_IN}Already installed? Open in IrChad</a>
   </div>
   {hint}
   <div class="others">{others}</div>
@@ -379,20 +379,20 @@ mod tests {
         let nightly = "https://downloads.gentoo.party/irchad/nightly";
         let (status, body) = get_as("/invite", "Mozilla/5.0 (X11; Linux x86_64)").await;
         assert_eq!(status, 200);
-        assert!(body.contains("Click to Join Chad &lt;Network&gt;"));
+        assert!(body.contains("Open in IrChad"));
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{latest}/irchad-linux-x86_64.tar.gz""#
+            r#"class="btn primary" href="{latest}/irchad-linux-x86_64.tar.gz""#
         )));
         assert!(body.contains(&format!(r#"href="{nightly}/irchad-linux-x86_64.tar.gz""#)));
 
         let (_, body) = get_as("/invite", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").await;
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{latest}/irchad-windows-x86_64-setup.exe""#
+            r#"class="btn primary" href="{latest}/irchad-windows-x86_64-setup.exe""#
         )));
 
         let (_, body) = get_as("/invite", "Mozilla/5.0 (Linux; Android 14)").await;
         assert!(body.contains(&format!(
-            r#"class="btn secondary" href="{latest}/irchad-android-arm64.apk""#
+            r#"class="btn primary" href="{latest}/irchad-android-arm64.apk""#
         )));
         assert!(!body.contains(nightly));
     }
