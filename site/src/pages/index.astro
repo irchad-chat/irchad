@@ -24,6 +24,23 @@ const features = [
   ["It's still IRC", "Text goes over IRCv3 to ergo, and everyone on plain IRC clients still sees a normal channel. IrChad's extras fall back to readable text for them."],
   ["You host it", "One compose file runs ergo, LiveKit and chadd behind Caddy, on your own server with no third party involved."],
 ];
+const site = "https://irchad.chat/";
+const title = "IrChad: a free, open-source, self-hosted Discord alternative";
+const description = "IrChad is a free, open-source Discord alternative you host yourself. Text chat, voice channels, screen share and encrypted DMs, built on IRC. For Linux, Windows and Android.";
+const jsonld = {
+  "@context": "https://schema.org", "@type": "SoftwareApplication", name: "IrChad", url: site,
+  description, applicationCategory: "CommunicationApplication", operatingSystem: "Linux, Windows, Android",
+  license: "https://www.gnu.org/licenses/gpl-3.0.html", image: `${site}screenshot.webp`,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+};
+// Answers to what people search for when leaving Discord. Keep these true to the current feature table.
+const faq = [
+  ["Is IrChad a Discord alternative?", "Yes. It has the parts people use Discord for: servers with channels, voice channels, screen share with audio, replies, reactions, GIFs, uploads and DMs. The difference is that the network runs on servers you control."],
+  ["Is it free and open source?", "Yes. IrChad, its server chadd and the whole deploy stack are free software under the GPL-3.0. There are no paid tiers, no ads and no tracking."],
+  ["Can I self-host it?", "Yes, that's the point. One compose file runs ergo (IRC), LiveKit (voice and video), chadd and Caddy on your own box. Your messages and uploads stay there."],
+  ["Does it work on Linux?", "Linux is the main platform, with Wayland and X11 both supported. Voice is PipeWire-native, push-to-talk works on Wayland, and screen share goes through the desktop portal."],
+  ["Do my friends need to know IRC?", "No. They open your invite link, pick a name and start chatting, with no server lists or NickServ. People who do like IRC can still join from any IRC client."],
+];
 // [feature, details, Linux, Windows]. Keep in step with docs/phases/; claim only what's ticked there.
 const table = [
   ["Invite links", "Paste an https:// or irchad:// link. Join as a guest, log in, or sign up without leaving the app.", "✓", "✓"],
@@ -49,9 +66,19 @@ const table = [
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IrChad</title>
+  <title>{title}</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <meta name="description" content="A Discord-style client for IRC, with voice, screen share and encrypted DMs." />
+  <meta name="description" content={description} />
+  <link rel="canonical" href={site} />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="IrChad" />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:url" content={site} />
+  <meta property="og:image" content={`${site}screenshot.webp`} />
+  <meta property="og:image:alt" content="IrChad's main window with channels, chat and members." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <script type="application/ld+json" set:html={JSON.stringify(jsonld)} />
 </head>
 <body>
   <main>
@@ -59,7 +86,7 @@ const table = [
       <div class="hero">
         <div class="logo" aria-hidden="true" set:html={logo} />
         <h1>IrChad</h1>
-        <p class="lede">A Discord-style client for IRC, with voice, screen share and encrypted DMs.<br /></p>
+        <p class="lede">A free, open-source Discord alternative you host yourself. Voice, screen share and encrypted DMs, built on IRC.</p>
         <p class="cta">
           <a class="btn primary" href="/invite"><Fragment set:html={icon("sign-in")} />Join the official IrChad server</a>
           <a class="btn secondary" href="#download"><Fragment set:html={icon("download-simple")} />Download</a>
@@ -90,6 +117,11 @@ const table = [
         </table>
       </div>
       <p class="muted small">On Android, voice and watching screen shares work. The rest of the Android app is still in progress.</p>
+    </section>
+
+    <section aria-labelledby="discord-alternative">
+      <h2 id="discord-alternative">A Discord alternative you own</h2>
+      {faq.map(([q, a]) => <><h3>{q}</h3><p class="muted">{a}</p></>)}
     </section>
 
     <section aria-labelledby="download">
