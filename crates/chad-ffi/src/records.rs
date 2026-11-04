@@ -230,3 +230,20 @@ pub struct Member {
     /// Services account; `None` for guests (not logged in).
     pub account: Option<String>,
 }
+
+#[derive(uniffi::Record)]
+pub struct Profile {
+    pub display_name: Option<String>,
+    pub avatar: Option<String>,
+}
+
+/// One of someone's devices with encrypted DMs on.
+#[derive(uniffi::Record)]
+pub struct Device {
+    pub id: String,
+    /// Its signing key, for comparing by eye.
+    pub fingerprint: String,
+    pub verified: bool,
+    /// This install.
+    pub this: bool,
+}

@@ -8,3 +8,8 @@ DerivedData/
 .netrc
 
 /xtool
+
+# build-rust.sh output
+/rust
+/Sources/IrChad/Generated
+/Sources/chad_ffiFFI/include/chad_ffiFFI.h

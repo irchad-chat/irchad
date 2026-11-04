@@ -126,6 +126,14 @@ impl Client {
                             },
                         ),
                     ),
+                    Event::Uploaded {
+                        network,
+                        target: None,
+                        result: Ok(url),
+                    } => c.send(Command::Net {
+                        network,
+                        cmd: NetCommand::SetAvatar { url: url.into() },
+                    }),
                     Event::Uploaded { result: Err(e), .. } => {
                         listener.notice(format!("Upload failed: {e}"))
                     }
@@ -244,6 +252,74 @@ impl Client {
                 reply_to,
             },
         );
+    }
+
+    /// Replace the text of one of your own messages (D51).
+    pub fn edit(&self, network: String, target: String, msgid: String, text: String) {
+        let text = format::markdown(&text);
+        self.net(
+            network,
+            NetCommand::Edit {
+                target,
+                msgid,
+                text,
+            },
+        );
+    }
+
+    /// The composer changed: `active` while it holds text, false once it's
+    /// empty (or sent). The core throttles what goes out.
+    pub fn typing(&self, network: String, target: String, active: bool) {
+        let state = if active {
+            chad_core::Typing::Active
+        } else {
+            chad_core::Typing::Done
+        };
+        self.net(network, NetCommand::Typing { target, state });
+    }
+
+    /// Load the history around `msgid` (a reply's parent that isn't loaded).
+    pub fn load_around(&self, network: String, target: String, msgid: String) {
+        self.net(network, NetCommand::LoadAround { target, msgid });
+    }
+
+    /// Empty clears it.
+    pub fn set_display_name(&self, network: String, name: String) {
+        self.net(network, NetCommand::SetDisplayName { name });
+    }
+
+    /// Upload a picture through chadd and make it the avatar.
+    pub fn upload_avatar(&self, network: String, name: String, bytes: Vec<u8>) {
+        let bytes = chad_core::Blob(bytes.into());
+        let target = None;
+        self.net(
+            network,
+            NetCommand::Upload {
+                target,
+                name,
+                bytes,
+            },
+        );
+    }
+
+    pub fn clear_avatar(&self, network: String) {
+        self.net(network, NetCommand::SetAvatar { url: String::new() });
+    }
+
+    /// `Some(reason)` to go away, `None` to come back.
+    pub fn set_away(&self, network: String, message: Option<String>) {
+        self.net(network, NetCommand::SetAway { message });
+    }
+
+    /// Fetch `nick`'s encrypted-DM devices again (ours for our own nick);
+    /// read them with `devices`.
+    pub fn fetch_devices(&self, network: String, nick: String) {
+        self.net(network, NetCommand::Devices { nick });
+    }
+
+    /// Take one of our stale devices off the server (D52).
+    pub fn remove_device(&self, network: String, id: String) {
+        self.net(network, NetCommand::RemoveDevice { id });
     }
 
     pub fn react(&self, network: String, target: String, msgid: String, emoji: String) {
@@ -477,6 +553,36 @@ impl Client {
                 }
             })
             .collect()
+    }
+
+    /// Someone's display name and avatar, as far as we know them.
+    pub fn profile(&self, network: String, nick: String) -> Profile {
+        let v = self.view();
+        let p = v
+            .net(&network)
+            .and_then(|i| v.nets[i].profiles.get(&chad_core::view::key(&nick)));
+        Profile {
+            display_name: p.and_then(|p| p.display_name.clone()),
+            avatar: p.and_then(|p| p.avatar.as_ref()).map(|u| u.to_string()),
+        }
+    }
+
+    /// `nick`'s devices as last fetched (`fetch_devices`).
+    pub fn devices(&self, network: String, nick: String) -> Vec<Device> {
+        let v = self.view();
+        v.net(&network)
+            .and_then(|i| v.nets[i].devices.get(&chad_core::view::key(&nick)))
+            .map(|ds| {
+                ds.iter()
+                    .map(|d| Device {
+                        id: d.id.clone(),
+                        fingerprint: d.fingerprint.clone(),
+                        verified: d.verified,
+                        this: d.this,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// `None` until fetched with `members`.

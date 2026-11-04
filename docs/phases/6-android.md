@@ -46,7 +46,7 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
 - [ ] CI: add the Android SDK, NDK and cargo-ndk to the CI image (D32). Tags build a signed APK and attach it to the Gitea release with Obtainium-friendly asset names (D40).
   The CI image has JDK 21, the SDK and the NDK (no cargo-ndk, see `build-rust.sh`). `ci.yaml`'s `android` job builds a debug APK. `release.yml` builds `irchad-android-arm64.apk`, signed with the `ANDROID_KEYSTORE` secrets.
   The APK's version comes from `Cargo.toml` (`versionCode` = major·10⁶ + minor·10³ + patch). Open until the secrets are in and a tag has produced an APK that installs.
-- [ ] Edit your own messages from the composer, as on desktop (D51). Android already shows "(edited)"; chad-ffi needs an `edit` call.
+- [ ] Edit your own messages from the composer, as on desktop (D51). Android already shows "(edited)"; chad-ffi has `edit` now (Phase 8), so only the Compose UI is left.
 
 ## Done when
 - The phone joins via an invite link, receives push while backgrounded, talks in voice with desktop users, and watches a desktop screen share.

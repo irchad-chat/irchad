@@ -1,0 +1,4 @@
+module chad_ffiFFI {
+    header "chad_ffiFFI.h"
+    export *
+}

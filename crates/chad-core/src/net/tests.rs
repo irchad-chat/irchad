@@ -16,6 +16,7 @@ fn net() -> Net {
         guest: false,
         uploads: None,
         gifs: None,
+        oper: false,
     };
     let mut n = Net::new(Store::memory(), info);
     let caps = "batch echo-message labeled-response draft/chathistory draft/read-marker \

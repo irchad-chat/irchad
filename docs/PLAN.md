@@ -14,6 +14,7 @@ Update the line above when a phase's "Done when" holds.
 | 5 | Polish & distribution | [phases/5-polish.md](phases/5-polish.md) | implemented; Done-when checks need hardware and a release run |
 | 6 | Android | [phases/6-android.md](phases/6-android.md) | in progress |
 | 7 | Later / parking lot | [phases/7-later.md](phases/7-later.md) | — |
+| 8 | iOS and iPadOS | [phases/8-ios.md](phases/8-ios.md) | in progress (alongside 6) |
 
 ## Ordering rules
 

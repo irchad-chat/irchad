@@ -49,7 +49,8 @@ For phase or roadmap work:
 | Secrets | `oo7` (Secret Service, portal-aware) / Windows Credential Manager |
 | E2EE DMs | `vodozemac` (Olm double ratchet + SAS verification) |
 | Server glue | `chadd` in Rust (axum) |
-| Android (later) | Kotlin + Compose + LiveKit Android SDK, sharing `chad-core` over UniFFI |
+| Android | Kotlin + Compose + LiveKit Android SDK, sharing `chad-core` over UniFFI |
+| iOS | SwiftUI + LiveKit Swift SDK over the same UniFFI bindings, built on Linux with xtool (`iOS/README.md`) |
 
 ## Layout (target — created in Phase 0)
 
@@ -64,6 +65,7 @@ crates/chad-ffi       UniFFI bindings (Phase 6)
 crates/chadd          server (binary: chadd)
 deploy/               docker compose: ergo + livekit + chadd + caddy
 android/              (Phase 6)
+iOS/                  (Phase 8)
 site/                 project website (Astro, static)
 docs/
 ```

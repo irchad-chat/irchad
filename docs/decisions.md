@@ -296,3 +296,17 @@ Each value is diffed against the last one acted on (store meta `official`), not 
 
 ## D57: The bare origin serves the project website, not the invite page (2026-11-03)
 `https://irchad.chat/` (and `www.`) is the Astro site from `site/`, a static `site/dist` that Caddy serves from `/var/www/irchad` as the fallback for every path not routed to chadd, ergo or LiveKit. chadd no longer answers `/`; the invite page lives only at `/invite[/<code>]`. Self-hosted networks without the site get a 404 at the bare origin, so their invite link must include `/invite`. Pasting a bare origin into the client is unaffected, since that goes through discovery.
+
+## D58: On iOS the core checks certificates with the system verifier (2026-11-04)
+rustls-native-certs reads macOS's keychain but has nothing for iOS, whose trust store apps can't read, so every TLS connection would fail. On iOS, chad-irc's `tls_config` uses rustls-platform-verifier (SecTrust, with ring as the provider), and reqwest is handed the same config (`use_preconfigured_tls`). That covers user-installed profiles too, which is how a dev CA gets in, and LiveKit's URLSession sees the same trust. Other platforms keep rustls-native-certs. Android stays on D42; the platform verifier is still its upgrade path.
+
+## D59: iOS is a SwiftUI app over chad-ffi, built on Linux with xtool (2026-11-04)
+The same shape as Android (D38, D43): `chad-ffi` is compiled to a static library and linked into a SwiftPM app that xtool builds, signs and installs from Linux, with no Mac in the loop. The UI is native SwiftUI, a `NavigationSplitView` that is a sidebar on iPad and a stack on iPhone, and it follows the system's look, as Android does with Material You (D41). Minimum iOS 18.
+Calls are played by the LiveKit Swift SDK behind chad-ffi's `Voice`. The soundboard uses the SDK's `SoundPlayer`, which mixes a clip into the mic for the others and plays it locally, so like Android (D48) listeners hear it at this person's voice volume; clips are cut to 10 s with AVAudioFile first.
+Credentials and E2EE store keys go in the keychain with `AfterFirstUnlockThisDeviceOnly`, and the data directory is excluded from backups, because a restored copy of the Olm account on a second device would break its sessions.
+Backgrounding follows D49 with iOS's limits: connections pause 20 s after the app leaves the screen, inside a background task, and a call keeps the app running through the `audio` background mode.
+
+## D60: iOS has no notifications while suspended, until there's an APNs relay (2026-11-04)
+iOS suspends a backgrounded app, so the live connection can't notify (Android's "Stay connected" has no iOS equivalent), and ergo's `draft/webpush` can't reach an iOS app directly: Apple delivers only through APNs, signed with the app publisher's key.
+The way forward is a relay that receives ergo's Web Push at `https://<relay>/<device token>` and forwards the still-encrypted payload to APNs. A Notification Service Extension then decrypts it (RFC 8291 with CryptoKit, keys in a shared keychain group) and shows `read_push`'s text. The relay holds the APNs key, so it's run by whoever publishes the App Store build, not by each network's chadd, and it only ever sees ciphertext and device tokens.
+Until then, iOS notifies only while the core runs: in a call, or in the moments after leaving the app.

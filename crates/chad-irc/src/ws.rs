@@ -122,22 +122,33 @@ impl Connection {
     }
 }
 
-fn tls_config() -> Arc<rustls::ClientConfig> {
-    let mut roots = rustls::RootCertStore::empty();
-    let found = rustls_native_certs::load_native_certs();
-    for e in &found.errors {
-        tracing::warn!("loading system certificates: {e}");
-    }
-    roots.add_parsable_certificates(found.certs);
+/// rustls over the OS roots: the system's own verifier on iOS, whose trust
+/// store isn't readable (D58); `rustls-native-certs` everywhere else.
+pub fn tls_config() -> Arc<rustls::ClientConfig> {
     // Explicit provider: the dependency graph may enable both ring and aws-lc-rs.
-    let config = rustls::ClientConfig::builder_with_provider(
+    let builder = rustls::ClientConfig::builder_with_provider(
         rustls::crypto::ring::default_provider().into(),
     )
     .with_safe_default_protocol_versions()
-    .expect("ring supports the default TLS versions")
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    Arc::new(config)
+    .expect("ring supports the default TLS versions");
+    #[cfg(target_os = "ios")]
+    let builder = {
+        use rustls_platform_verifier::BuilderVerifierExt;
+        builder
+            .with_platform_verifier()
+            .expect("the iOS verifier takes ring")
+    };
+    #[cfg(not(target_os = "ios"))]
+    let builder = {
+        let mut roots = rustls::RootCertStore::empty();
+        let found = rustls_native_certs::load_native_certs();
+        for e in &found.errors {
+            tracing::warn!("loading system certificates: {e}");
+        }
+        roots.add_parsable_certificates(found.certs);
+        builder.with_root_certificates(roots)
+    };
+    Arc::new(builder.with_no_client_auth())
 }
 
 /// Exponential reconnect delay, 1 s doubling to 60 s, with jitter so a server

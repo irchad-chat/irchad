@@ -44,6 +44,11 @@ pub fn client(url: &str) -> Result<reqwest::Client, reqwest::Error> {
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(3))
         .https_only(true);
+    // reqwest's native roots find nothing on iOS: share chad-irc's verifier (D58).
+    #[cfg(target_os = "ios")]
+    {
+        client = client.use_preconfigured_tls((*chad_irc::ws::tls_config()).clone());
+    }
     // glibc can't resolve `chat.localhost` without nss-myhostname (RFC 6761).
     if let Some(host) = Url::parse(url)
         .ok()
