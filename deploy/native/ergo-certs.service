@@ -1,0 +1,10 @@
+[Unit]
+Description=Copy Caddy's irchad.chat certificate for ergo's 6697 listener
+
+[Service]
+Type=oneshot
+Environment=SRC=/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory/irchad.chat/irchad.chat
+ExecStart=/usr/bin/install -D -o ergo -g ergo -m 0600 ${SRC}.crt /var/lib/ergo/tls/fullchain.pem
+ExecStart=/usr/bin/install -D -o ergo -g ergo -m 0600 ${SRC}.key /var/lib/ergo/tls/privkey.pem
+# ergo re-reads TLS certs on SIGHUP.
+ExecStart=/bin/systemctl reload-or-restart ergo

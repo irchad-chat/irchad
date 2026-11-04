@@ -16,6 +16,9 @@ REPLACE = [
     # Loopback only: Caddy proxies /irc, and raw IRC is for SSH-tunnelled admins.
     ('        ":6667":\n', '        "127.0.0.1:6667":\n'),
     ('        ":8097":\n', '        "127.0.0.1:8097":\n'),
+    # Public TLS for plain IRC clients, using Caddy's Let's Encrypt cert (copied by ergo-certs.service).
+    ("        # irchad: no TLS listener; Caddy terminates TLS.\n",
+     '        ":6697":\n            tls:\n                cert: /var/lib/ergo/tls/fullchain.pem\n                key: /var/lib/ergo/tls/privkey.pem\n'),
     ("        - 10.89.77.0/24 # irchad: compose network (Caddy sets X-Forwarded-For)\n", ""),
     ('            - "10.89.77.0/24"\n', ""),
     ('lock-file: "ircd.lock"', 'lock-file: "/var/lib/ergo/ircd.lock"'),
