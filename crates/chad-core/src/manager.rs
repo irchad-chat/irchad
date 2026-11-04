@@ -202,6 +202,7 @@ fn spawn_with(
         guest: p.guest,
         uploads: None,
         gifs: None,
+        oper: false,
     };
     let mut net = Net::new(store, info);
     net.invite_channel = invite_channel;

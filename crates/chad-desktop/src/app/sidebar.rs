@@ -195,7 +195,11 @@ impl App {
                 }
             }
         }
-        let own = self.view.nets[ni].info.nick.clone();
+        let info = self.view.nets[ni].info.clone();
+        if info.oper {
+            ui.label(RichText::new(icons::CROWN).small());
+        }
+        let own = info.nick.clone();
         let shown = chatlog::shown(&self.view.nets[ni].profiles, &own).to_owned();
         let (dot, color) = if self.away_sent {
             (icons::MOON, voice::AWAY)
@@ -439,7 +443,7 @@ impl App {
             .map(|m| {
                 let name = chatlog::shown(profiles, &m.nick);
                 let icon = if m.oper {
-                    format!("{} ", icons::WRENCH)
+                    format!("{} ", icons::CROWN)
                 } else {
                     String::new()
                 };
@@ -490,7 +494,7 @@ impl App {
                         let r = ui
                             .horizontal(|ui| {
                                 if m.oper {
-                                    ui.label(icons::WRENCH).on_hover_text("IRC operator");
+                                    ui.label(icons::CROWN).on_hover_text("IRC operator");
                                 }
                                 if m.account.is_none() {
                                     ui.label(RichText::new(icons::GHOST).weak())

@@ -340,11 +340,29 @@ impl Net {
                     }
                 }
             }
-            "MODE" => {
-                let (Some(chan), Some(modes)) = (m.param(0), m.param(1)) else {
+            "MODE" | "221" => {
+                let (Some(target), Some(modes)) = (m.param(0), m.param(1)) else {
                     return;
                 };
-                let key = self.fold(chan);
+
+                if self.cm.eq(target, &self.info.nick) {
+                    let mut add = true;
+                    let was = self.info.oper;
+                    for c in modes.chars() {
+                        match c {
+                            '+' => add = true,
+                            '-' => add = false,
+                            'o' => self.info.oper = add,
+                            _ => {}
+                        }
+                    }
+                    if self.info.oper != was {
+                        self.events.push(Event::Network(self.info.clone()));
+                    }
+                    return;
+                }
+
+                let key = self.fold(target);
                 // Members keep only their highest prefix, so a WHO is simpler than replaying the change.
                 if self.joined.contains(&key)
                     && self
@@ -357,7 +375,7 @@ impl Net {
                         .iter()
                         .any(|(c, _)| modes.contains(*c))
                 {
-                    self.who(chan.to_owned());
+                    self.who(target.to_owned());
                 }
             }
             "RENAME" => {

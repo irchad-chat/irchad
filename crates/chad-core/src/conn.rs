@@ -435,6 +435,9 @@ async fn session(
             "433" if p.guest => return End::Fatal("That nickname is taken.".into()),
             "433" => return End::Fatal("That username is taken.".into()),
             "432" => return End::Fatal("That name isn't allowed here.".into()),
+            "MODE" | "221" => {
+                let _ = net.handle(m);
+            }
             "ERROR" => return End::Lost(m.params.last().cloned().unwrap_or_default()),
             _ => {}
         }

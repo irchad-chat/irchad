@@ -408,6 +408,7 @@ mod tests {
             guest: false,
             uploads: None,
             gifs: None,
+            oper: false,
         })
     }
 

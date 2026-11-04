@@ -460,6 +460,8 @@ pub struct NetworkInfo {
     pub state: ConnState,
     /// No account; `NetCommand::Register` makes one.
     pub guest: bool,
+    // Whether or not we're an oper.
+    pub oper: bool,
     /// Largest upload chadd takes, if it takes them (and we have an account).
     pub uploads: Option<u64>,
     /// Who chadd's GIF search comes from, if it has one (and we have an account).
