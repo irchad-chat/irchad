@@ -177,8 +177,11 @@ private struct NetworkHeader: View {
         }
         .confirmationDialog("Leave \(net.name)?", isPresented: $leaving, titleVisibility: .visible) {
             Button("Leave network", role: .destructive) { model.client.remove(network: net.network) }
+            if !net.guest {
+                Button("Delete account and leave", role: .destructive) { model.client.deleteAccount(network: net.network) }
+            }
         } message: {
-            Text("This device forgets the network, its messages and your password. Your account stays.")
+            Text("This device forgets the network, its messages and your password. Deleting the account also removes it and its channels from the server.")
         }
         .sheet(isPresented: $signingUp) { SignUpView(net: net) }
     }

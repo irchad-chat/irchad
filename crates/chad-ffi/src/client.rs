@@ -255,6 +255,12 @@ impl Client {
         self.core.send(Command::Remove { network });
     }
 
+    /// Unregister the account on the server, then forget the network.
+    /// Failures come as `Listener::notice`, and the network stays.
+    pub fn delete_account(&self, network: String) {
+        self.net(network, NetCommand::DeleteAccount);
+    }
+
     /// The app went to the background, or came back (D39): connections
     /// pause meanwhile (not one in voice) and catch up when back.
     pub fn background(&self, on: bool) {

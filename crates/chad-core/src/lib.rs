@@ -189,6 +189,9 @@ pub enum NetCommand {
     OpenDm {
         nick: String,
     },
+    /// Unregister our account on the server (ergo's two-step `NS UNREGISTER`),
+    /// then forget the network as [`Command::Remove`] does. Only while connected.
+    DeleteAccount,
     /// Hide a DM and forget its local history; a new message reopens it.
     CloseDm {
         nick: String,

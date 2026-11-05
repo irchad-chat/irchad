@@ -191,6 +191,11 @@ impl Net {
             NetCommand::JoinChannel { channel } => self.out.push(Message::new("JOIN", [channel])),
             NetCommand::Part { channel } => self.out.push(Message::new("PART", [channel])),
             NetCommand::OpenDm { .. } => {}
+            // The connection handles it while live (conn.rs), so here we're offline or a guest.
+            NetCommand::DeleteAccount => self.events.push(Event::Error {
+                network: self.info.network.clone(),
+                error: "Connect first to delete your account.".into(),
+            }),
         }
     }
 

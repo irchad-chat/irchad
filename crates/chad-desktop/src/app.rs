@@ -77,6 +77,8 @@ pub struct App {
     signin_password: String,
     verify_dismissed: Option<String>,
     confirm_remove: Option<String>,
+    /// The "Delete account" box in the leave dialog.
+    delete_account: bool,
     /// A guest making an account.
     signup: Option<SignUpDialog>,
     adding: Option<(BufferKind, String)>,
@@ -359,6 +361,7 @@ impl App {
             signin_password: String::new(),
             verify_dismissed: None,
             confirm_remove: None,
+            delete_account: false,
             signup: None,
             adding: None,
             toasts: Vec::new(),

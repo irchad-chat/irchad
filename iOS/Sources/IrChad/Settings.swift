@@ -130,8 +130,14 @@ struct SettingsView: View {
                     if let n = leaving { model.client.remove(network: n.network) }
                     leaving = nil
                 }
+                if let n = leaving, !n.guest {
+                    Button("Delete account and leave", role: .destructive) {
+                        model.client.deleteAccount(network: n.network)
+                        leaving = nil
+                    }
+                }
             } message: {
-                Text("This device forgets the network, its messages and your password. Your account stays.")
+                Text("This device forgets the network, its messages and your password. Deleting the account also removes it and its channels from the server.")
             }
         }
     }

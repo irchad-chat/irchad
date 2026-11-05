@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.ui.unit.Dp
@@ -48,6 +49,7 @@ import livekit.org.webrtc.RendererCommon
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -116,6 +118,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -551,9 +554,10 @@ private fun Devices(devices: List<Device>, onRemove: ((String) -> Unit)?) {
     }
 }
 
-/** Forget the network here, as on desktop; the account stays. */
+/** Forget the network here, as on desktop; optionally delete the account too. */
 @Composable
 private fun LeaveDialog(app: IrChad, net: Network, onDismiss: () -> Unit) {
+    var delete by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Leave ${net.name}?") },
@@ -561,20 +565,33 @@ private fun LeaveDialog(app: IrChad, net: Network, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("IrChad forgets this network and your saved password for it.")
                 Text("This device's encryption keys go too, so it can't read encrypted DMs again.")
-                Text("Your account stays, so you can join again later.")
+                if (delete) {
+                    Text("Your account is deleted from the server, and its channels with it. The name stays reserved.")
+                } else {
+                    Text("Your account stays, so you can join again later.")
+                }
+                if (!net.guest) {
+                    Row(
+                        Modifier.fillMaxWidth().toggleable(delete, role = Role.Checkbox) { delete = it },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = delete, onCheckedChange = null)
+                        Text("Delete account", Modifier.padding(start = 8.dp))
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    app.client.remove(net.network)
+                    if (delete) app.client.deleteAccount(net.network) else app.client.remove(net.network)
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error,
                     contentColor = MaterialTheme.colorScheme.onError,
                 ),
-            ) { Text("Leave") }
+            ) { Text(if (delete) "Delete and leave" else "Leave") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

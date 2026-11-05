@@ -217,6 +217,35 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
     }
 }
 
+/// The code in NickServ's "To confirm, run this command: /NS UNREGISTER <account> <code>".
+fn unregister_code(m: &Message, account: &str) -> Option<String> {
+    if m.command != "NOTICE" || !m.source_nick()?.eq_ignore_ascii_case("NickServ") {
+        return None;
+    }
+    let mut words = m
+        .params
+        .last()?
+        .split_whitespace()
+        .skip_while(|w| *w != "UNREGISTER")
+        .skip(1);
+    let (name, code) = (words.next()?, words.next()?);
+    let ok = name.eq_ignore_ascii_case(account)
+        && (1..=32).contains(&code.len())
+        && code.bytes().all(|b| b.is_ascii_alphanumeric());
+    ok.then(|| code.to_owned())
+}
+
+#[test]
+fn finds_unregister_code() {
+    let m = |l: &str| Message::parse(l).unwrap();
+    let ok = ":NickServ!NickServ@localhost NOTICE zed :To confirm, run this command: /NS UNREGISTER zed 5zrg8";
+    assert_eq!(unregister_code(&m(ok), "Zed").as_deref(), Some("5zrg8"));
+    let other = ":NickServ!NickServ@localhost NOTICE zed :To confirm, run this command: /NS UNREGISTER bob 5zrg8";
+    assert_eq!(unregister_code(&m(other), "zed"), None);
+    let spoof = ":mallory!m@h NOTICE zed :/NS UNREGISTER zed 5zrg8";
+    assert_eq!(unregister_code(&m(spoof), "zed"), None);
+}
+
 fn offline(net: &mut Net, cmd: NetCommand, sink: &Sink) {
     net.command(cmd);
     net.out.clear();
@@ -505,6 +534,8 @@ async fn live(
     // Dropping `call` hangs up.
     let mut call: Option<mpsc::UnboundedReceiver<MediaEvent>> = None;
     let mut token: Option<JoinHandle<TokenResult>> = None;
+    // Deleting the account: when to give up, and whether we sent the confirmation code.
+    let mut deleting: Option<(tokio::time::Instant, bool)> = None;
     loop {
         // A call keeps the connection (it needs the voice metadata) until it ends.
         if p.background && net.voice.is_none() && call.is_none() && token.is_none() {
@@ -537,10 +568,28 @@ async fn live(
         let push_retry = net.push_retry_at();
         tokio::select! {
             () = tokio::time::sleep_until(push_retry.unwrap_or_else(std::time::Instant::now).into()), if push_retry.is_some() => net.retry_push(),
+            () = tokio::time::sleep_until(deleting.map_or_else(tokio::time::Instant::now, |d| d.0)), if deleting.is_some() => {
+                deleting = None;
+                sink.send([Event::Error {
+                    network: net.info.network.clone(),
+                    error: "The server didn't delete your account.".into(),
+                }]);
+            }
+            // ergo drops the connection once the account is gone.
             r = ws.recv() => match r {
+                Ok(Some(m)) if m.command == "ERROR" && deleting.is_some_and(|d| d.1) => return End::Remove,
+                Ok(None) | Err(_) if deleting.is_some_and(|d| d.1) => return End::Remove,
                 Ok(Some(m)) => {
                     if m.command == "ERROR" {
                         return End::Lost(m.params.last().cloned().unwrap_or_default());
+                    }
+                    if let Some(d) = deleting.as_mut()
+                        && !d.1
+                        && let Some(code) = unregister_code(&m, &p.account)
+                    {
+                        d.1 = true;
+                        let text = format!("UNREGISTER {} {code}", p.account);
+                        net.out.push(Message::new("PRIVMSG", ["NickServ", text.as_str()]));
                     }
                     if net.handle(m).is_err() {
                         return End::Lost("The server sent more than we can hold.".into());
@@ -575,6 +624,11 @@ async fn live(
                 }
             }
             cmd = rx.recv() => match cmd {
+                Some(ToNet::Cmd(NetCommand::DeleteAccount)) if !p.guest => {
+                    let text = format!("UNREGISTER {}", p.account);
+                    net.out.push(Message::new("PRIVMSG", ["NickServ", text.as_str()]));
+                    deleting = Some((tokio::time::Instant::now() + std::time::Duration::from_secs(20), false));
+                }
                 Some(ToNet::Cmd(NetCommand::Register { account, password, email })) if p.guest => {
                     let account = account.trim().to_owned();
                     if !crate::manager::valid_nick(&account) {

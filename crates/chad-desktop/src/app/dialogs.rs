@@ -251,6 +251,9 @@ impl App {
     fn remove_dialog(&mut self, ctx: &egui::Context) {
         if let Some(network) = self.confirm_remove.clone() {
             let name = self.net_name(&network);
+            let guest = self
+                .net_idx(&network)
+                .is_some_and(|i| self.view.nets[i].info.guest);
             let mut close = false;
             let modal = egui::Modal::new(egui::Id::unique("remove")).show(ctx, |ui| {
                 ui.heading(format!("Leave {name}?"));
@@ -258,25 +261,38 @@ impl App {
                 ui.label(
                     "This device's encryption keys go too, so it can't read encrypted DMs again.",
                 );
-                ui.label("Your account stays, so you can join again later.");
+                if self.delete_account {
+                    ui.label("Your account is deleted from the server, and its channels with it. The name stays reserved.");
+                } else {
+                    ui.label("Your account stays, so you can join again later.");
+                }
+                if !guest {
+                    ui.checkbox(&mut self.delete_account, "Delete account");
+                }
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let leave = egui::Button::new(RichText::new("Leave").color(Color32::WHITE))
+                    let label = if self.delete_account { "Delete and leave" } else { "Leave" };
+                    let leave = egui::Button::new(RichText::new(label).color(Color32::WHITE))
                         .fill(Color32::from_rgb(218, 55, 60));
                     let leave = ui.add(leave).clicked();
                     if ui.button("Cancel").clicked() {
                         close = true;
                     }
                     if leave {
-                        self.core.send(Command::Remove {
-                            network: network.clone(),
-                        });
+                        if self.delete_account {
+                            self.send(&network, NetCommand::DeleteAccount);
+                        } else {
+                            self.core.send(Command::Remove {
+                                network: network.clone(),
+                            });
+                        }
                         close = true;
                     }
                 });
             });
             if close || modal.should_close() {
                 self.confirm_remove = None;
+                self.delete_account = false;
             }
         }
     }
