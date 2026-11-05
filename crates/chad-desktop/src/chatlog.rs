@@ -273,11 +273,13 @@ impl ChatLog {
         self.prefix_dirty = false;
     }
 
-    fn set_width(&mut self, msgs: &[ChatMessage], width: f32, line: f32) {
+    /// True when the layout width or line height changed.
+    fn set_width(&mut self, msgs: &[ChatMessage], width: f32, line: f32) -> bool {
         // Out of step with the messages (a missed edit): start the layout over.
         let synced = self.rows.len() == msgs.len();
-        if synced && (width - self.width).abs() < 0.5 && (line - self.line).abs() < 0.01 {
-            return;
+        let resized = (width - self.width).abs() >= 0.5 || (line - self.line).abs() >= 0.01;
+        if synced && !resized {
+            return false;
         }
         let same_line = (line - self.line).abs() < 0.01;
         self.width = width;
@@ -290,6 +292,7 @@ impl ChatLog {
             self.rows = msgs.iter().map(|m| Row::new(self.estimate(m))).collect();
             self.prefix_dirty = true;
         }
+        resized
     }
 
     fn parse(&mut self, i: usize, msgs: &[ChatMessage], network: &str) {
@@ -339,7 +342,7 @@ impl ChatLog {
         extras: &mut Extras,
     ) -> Output {
         let line = ui.text_style_height(&egui::TextStyle::Body) + 2.0;
-        self.set_width(msgs, ui.available_width() - 16.0, line);
+        let resized = self.set_width(msgs, ui.available_width() - 16.0, line);
         self.rebuild_prefix();
         let mut out = Output::default();
         if msgs.is_empty() {
@@ -472,17 +475,21 @@ impl ChatLog {
         self.last_top = viewport.min.y;
         self.view_height = viewport.height();
         self.at_bottom = viewport.max.y >= res.content_size.y - 2.0;
+        // While a panel is dragged every frame relayouts; a frame of lag beats
+        // discarding every pass, so fix it up next frame instead.
+        let redo = |why: &'static str| match resized {
+            true => ui.ctx().request_repaint(),
+            false => ui.ctx().request_discard(why),
+        };
         if compensate != 0.0 && !self.at_bottom {
             self.pending_offset = Some(viewport.min.y + compensate);
-            ui.ctx()
-                .request_discard("chat log row heights changed above viewport");
+            redo("chat log row heights changed above viewport");
         }
         // Heights at the bottom changed (resize, new message): stick_to_bottom
         // would lag a frame behind the new total, so redo the pass pinned.
         if changed && was_bottom {
             self.to_bottom = true;
-            ui.ctx()
-                .request_discard("chat log height changed at bottom");
+            redo("chat log height changed at bottom");
         }
         if self.shift != 0.0 {
             ui.ctx().request_repaint();
