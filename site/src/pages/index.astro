@@ -155,6 +155,12 @@ const table = [
   </main>
   <footer>
     <a href={repo}>Source</a> · <a href={`${repo}/src/branch/main/docs/PLAN.md`}>Roadmap</a>
+    <a class="badge" href="https://alternativeto.net/software/irchad/about/?utm_source=badge&utm_medium=referral">
+      <picture>
+        <source srcset="https://alternativeto.net/static/badges/badge-compact-dark.svg" media="(prefers-color-scheme: dark)" />
+        <img src="https://alternativeto.net/static/badges/badge-compact-light.svg" alt="IrChad on AlternativeTo" width="244" height="83" loading="lazy" />
+      </picture>
+    </a>
   </footer>
 </body>
 </html>
@@ -203,5 +209,6 @@ const table = [
   @media (min-width: 48rem) { tbody th { white-space: nowrap; } }
   td { color: var(--muted); }
   td.mark { text-align: center; white-space: nowrap; color: var(--fg); }
+  .badge { display: block; width: fit-content; margin-top: 1rem; } .badge img { display: block; }
   footer { padding-top: 1.5rem; padding-bottom: 3rem; color: var(--muted); font-size: .875rem; border-top: 1px solid var(--line); }
 </style>
