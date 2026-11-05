@@ -12,6 +12,7 @@ use chad_irc::isupport::{Casemapping, Isupport};
 use chad_irc::label::Labels;
 
 use crate::store::{Store, StoredBuffer};
+use crate::view::Profile;
 use crate::{
     BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind, NetCommand,
     NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, time,
@@ -20,6 +21,7 @@ use crate::{
 mod command;
 mod e2e;
 mod inbound;
+mod members;
 mod metadata;
 mod push;
 pub use e2e::{DEVICES_KEY, E2e};
@@ -103,6 +105,21 @@ struct Buffer {
     voice_off: bool,
 }
 
+impl Buffer {
+    fn new(name: &str, kind: BufferKind) -> Self {
+        Self {
+            name: name.to_owned(),
+            kind,
+            topic: String::new(),
+            read: None,
+            members: HashMap::new(),
+            online: None,
+            away: false,
+            voice_off: false,
+        }
+    }
+}
+
 /// Our voice call on this network.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Voice {
@@ -122,7 +139,7 @@ pub struct Net {
     /// No account, so never always-on: rejoin our channels ourselves.
     pub guest: bool,
     pub out: Vec<Message>,
-    pub events: Vec<Event>,
+    events: Vec<Event>,
     cm: Casemapping,
     batches: Assembler,
     labels: Labels<Pending>,
@@ -152,6 +169,8 @@ pub struct Net {
     pub e2e: Option<E2e>,
     /// Our CTCP VERSION reply.
     pub version: String,
+    /// Channels whose member list changed since the last `drain_events`.
+    members_dirty: Vec<String>,
     ctcp_at: Option<Instant>,
     /// Where ergo pushes to, and whether this connection has registered it.
     push: Option<PushSubscription>,
@@ -159,12 +178,6 @@ pub struct Net {
     /// Failed REGISTERs on this connection, and when to try again.
     push_tries: u32,
     push_retry: Option<Instant>,
-}
-
-#[derive(Debug, Default, Clone)]
-struct Profile {
-    display_name: Option<String>,
-    avatar: Option<Url>,
 }
 
 impl Net {
@@ -199,6 +212,7 @@ impl Net {
             away: None,
             e2e: None,
             version: "IrChad".into(),
+            members_dirty: Vec::new(),
             ctcp_at: None,
             push: None,
             push_registered: false,
@@ -234,19 +248,12 @@ impl Net {
             read,
         } in self.store.buffers()
         {
-            self.buffers.insert(
-                key.clone(),
-                Buffer {
-                    name: name.clone(),
-                    kind,
-                    topic,
-                    read,
-                    members: HashMap::new(),
-                    online: None,
-                    away: false,
-                    voice_off: false,
-                },
-            );
+            let b = Buffer {
+                topic,
+                read,
+                ..Buffer::new(&name, kind)
+            };
+            self.buffers.insert(key.clone(), b);
             self.emit_buffer(&key);
             let messages = self.store.recent(&key, STARTUP_SCROLLBACK);
             if !messages.is_empty() {
@@ -257,7 +264,7 @@ impl Net {
 
     /// Registration finished (end of MOTD); `caps` and `isupport` are filled in.
     pub fn attach(&mut self, nick: &str) {
-        self.info.nick = nick.to_owned();
+        nick.clone_into(&mut self.info.nick);
         self.cm = self.isupport.casemapping();
         self.connected = true;
         self.synced = false;
@@ -312,6 +319,15 @@ impl Net {
         }
         let channels: HashSet<String> = self.voice_of.drain().map(|(_, (_, c))| c).collect();
         channels.iter().for_each(|c| self.emit_voice_members(c));
+    }
+
+    /// What happened since last time, for the UI. A member list that changed
+    /// many times (a netsplit, a big WHO) goes out once.
+    pub fn drain_events(&mut self) -> std::vec::Drain<'_, Event> {
+        for key in std::mem::take(&mut self.members_dirty) {
+            self.send_members(&key);
+        }
+        self.events.drain(..)
     }
 
     pub fn handle(&mut self, msg: Message) -> Result<(), Overflow> {
@@ -397,19 +413,7 @@ impl Net {
         }
         let key = self.fold(name);
         self.store.put_buffer(&key, name, kind);
-        self.buffers.insert(
-            key.clone(),
-            Buffer {
-                name: name.to_owned(),
-                kind,
-                topic: String::new(),
-                read: None,
-                members: HashMap::new(),
-                online: None,
-                away: false,
-                voice_off: false,
-            },
-        );
+        self.buffers.insert(key.clone(), Buffer::new(name, kind));
         self.emit_buffer(&key);
         if kind == BufferKind::Dm {
             self.fetch_devices(name);
@@ -578,6 +582,12 @@ impl Net {
     }
 
     fn emit_members(&mut self, key: &str) {
+        if self.buffers.contains_key(key) && !self.members_dirty.iter().any(|k| k == key) {
+            self.members_dirty.push(key.to_owned());
+        }
+    }
+
+    fn send_members(&mut self, key: &str) {
         let Some(b) = self.buffers.get(key) else {
             return;
         };
@@ -596,7 +606,7 @@ impl Net {
         self.events.push(Event::Members {
             network,
             channel,
-            members,
+            members: members.into(),
         });
     }
 }
@@ -709,13 +719,13 @@ fn pack<'a>(names: impl Iterator<Item = &'a str>, max: usize) -> Vec<String> {
     out
 }
 
-/// `nick` as a whole word, ignoring ASCII case.
 /// A TAGMSG's reaction emoji, and whether it adds (`react`) or removes (`unreact`).
 fn reaction(m: &Message) -> Option<(&str, bool)> {
     (m.tag("+draft/react").map(|e| (e, true)))
         .or_else(|| m.tag("+draft/unreact").map(|e| (e, false)))
 }
 
+/// `nick` as a whole word, ignoring ASCII case.
 fn mentions(text: &str, nick: &str) -> bool {
     if nick.is_empty() {
         return false;

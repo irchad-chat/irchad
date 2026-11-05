@@ -1,6 +1,8 @@
 //! Core events and the per-frame poll of channels and tasks.
 
 use super::*;
+use chad_core::NetworkInfo;
+use chad_core::view::Applied;
 
 impl App {
     pub(super) fn handle(&mut self, ev: Event, ctx: &egui::Context) {
@@ -24,51 +26,7 @@ impl App {
         };
         let applied = self.view.apply(&ev);
         match ev {
-            Event::Network(info) => {
-                let origin = info.network.clone();
-                let i = self.net_idx(&origin).unwrap_or_default();
-                if applied.reconnected {
-                    let n = &mut self.view.nets[i];
-                    for b in &mut n.buffers {
-                        b.ui.members_asked = false;
-                    }
-                    n.ui.media.retry_failed();
-                }
-                if applied.new && self.away_sent {
-                    let message = Some(AWAY.to_owned());
-                    self.send(&origin, NetCommand::SetAway { message });
-                }
-                if icon_changed {
-                    self.view.nets[i].ui.icon = Icon::None;
-                }
-                // Signed up, or waiting on the email's code: the dialog's done.
-                if let Some(s) = &self.signup
-                    && s.busy
-                    && s.network == origin
-                    && (!info.guest || matches!(info.state, ConnState::NeedsVerification { .. }))
-                {
-                    self.signup = None;
-                }
-                let waiting = matches!(
-                    info.state,
-                    ConnState::Connected | ConnState::NeedsVerification { .. }
-                );
-                if waiting
-                    && let Some(j) = &self.join
-                    && let Some(inv) = j.busy.as_deref().and_then(|b| invite::parse(b).ok())
-                    && inv.origin == origin
-                {
-                    self.join = None;
-                    self.current = Some(origin.clone());
-                    // Open the invite's channel, not whichever autojoin lands first.
-                    if let Some(ch) = inv.channel {
-                        self.view.nets[i].ui.selected = Some(key(&ch));
-                    }
-                }
-                if self.current.is_none() {
-                    self.current = Some(origin);
-                }
-            }
+            Event::Network(info) => self.network_changed(&info, &applied, icon_changed),
             Event::NetworkRemoved { network } => {
                 if self.current.as_deref() == Some(&network) {
                     self.current = self.view.nets.first().map(|n| n.info.network.clone());
@@ -139,7 +97,7 @@ impl App {
                 }
                 for p in &mut self.panes {
                     if p.0 == network && p.1 == old {
-                        p.1 = new.clone();
+                        p.1.clone_from(&new);
                     }
                 }
             }
@@ -147,44 +105,9 @@ impl App {
                 network,
                 target,
                 messages,
-            } => {
-                // On screen counts as seen, even when focus is elsewhere.
-                let seen = ctx.input(|i| {
-                    let v = i.viewport();
-                    i.focused || (v.minimized != Some(true) && v.occluded != Some(true))
-                });
-                let k = key(&target);
-                let viewing = seen && self.panes.iter().any(|p| p.0 == network && p.1 == k);
-                let Some(ni) = self.net_idx(&network) else {
-                    return;
-                };
-                let n = &mut self.view.nets[ni];
-                let Some(bi) = n.buffer(&k) else { return };
-                let b = &mut n.buffers[bi];
-                b.ui.older_asked = None;
-                b.ui.log.apply(&applied.edits, &messages);
-                for &i in &applied.fresh {
-                    let m = &messages[i];
-                    if !viewing && should_notify(self.settings.notify, m) {
-                        let who = chatlog::shown(&n.profiles, &m.nick);
-                        let summary = match b.info.kind {
-                            BufferKind::Dm => who.to_owned(),
-                            BufferKind::Channel => format!("{who} in {}", b.info.target),
-                        };
-                        platform::notify(summary, chatlog::snippet(&format::strip(&m.text), 200));
-                    }
-                }
-                if let Some(id) = &b.ui.jump
-                    && let Some(i) = b.index_of(id)
-                {
-                    b.ui.log.scroll_to_index(i, 60.0);
-                    b.ui.jump = None;
-                }
-            }
+            } => self.messages_arrived(ctx, &network, &target, &messages, &applied),
             Event::Error { network, error } => {
-                let name = self
-                    .net_idx(&network)
-                    .map_or(network, |i| self.view.nets[i].info.name.clone());
+                let name = self.net_name(&network);
                 self.toast(format!("{name}: {error}"));
             }
             Event::Uploaded {
@@ -301,6 +224,96 @@ impl App {
         }
     }
 
+    /// A network connected, changed name or icon, or finished signing up.
+    fn network_changed(&mut self, info: &NetworkInfo, applied: &Applied, icon_changed: bool) {
+        let origin = info.network.clone();
+        let i = self.net_idx(&origin).unwrap_or_default();
+        if applied.reconnected {
+            let n = &mut self.view.nets[i];
+            for b in &mut n.buffers {
+                b.ui.members_asked = false;
+            }
+            n.ui.media.retry_failed();
+        }
+        if applied.new && self.away_sent {
+            let message = Some(AWAY.to_owned());
+            self.send(&origin, NetCommand::SetAway { message });
+        }
+        if icon_changed {
+            self.view.nets[i].ui.icon = Icon::None;
+        }
+        // Signed up, or waiting on the email's code: the dialog's done.
+        if let Some(s) = &self.signup
+            && s.busy
+            && s.network == origin
+            && (!info.guest || matches!(info.state, ConnState::NeedsVerification { .. }))
+        {
+            self.signup = None;
+        }
+        let waiting = matches!(
+            info.state,
+            ConnState::Connected | ConnState::NeedsVerification { .. }
+        );
+        if waiting
+            && let Some(j) = &self.join
+            && let Some(inv) = j.busy.as_deref().and_then(|b| invite::parse(b).ok())
+            && inv.origin == origin
+        {
+            self.join = None;
+            self.current = Some(origin.clone());
+            // Open the invite's channel, not whichever autojoin lands first.
+            if let Some(ch) = inv.channel {
+                self.view.nets[i].ui.selected = Some(key(&ch));
+            }
+        }
+        if self.current.is_none() {
+            self.current = Some(origin);
+        }
+    }
+
+    /// New or changed messages: follow them in the log, and notify.
+    fn messages_arrived(
+        &mut self,
+        ctx: &egui::Context,
+        network: &str,
+        target: &str,
+        messages: &[ChatMessage],
+        applied: &Applied,
+    ) {
+        // On screen counts as seen, even when focus is elsewhere.
+        let seen = ctx.input(|i| {
+            let v = i.viewport();
+            i.focused || (v.minimized != Some(true) && v.occluded != Some(true))
+        });
+        let k = key(target);
+        let viewing = seen && self.panes.iter().any(|p| p.0 == network && p.1 == k);
+        let Some(ni) = self.net_idx(network) else {
+            return;
+        };
+        let n = &mut self.view.nets[ni];
+        let Some(bi) = n.buffer(&k) else { return };
+        let b = &mut n.buffers[bi];
+        b.ui.older_asked = None;
+        b.ui.log.apply(&applied.edits, messages);
+        for &i in &applied.fresh {
+            let m = &messages[i];
+            if !viewing && should_notify(self.settings.notify, m) {
+                let who = chatlog::shown(&n.profiles, &m.nick);
+                let summary = match b.info.kind {
+                    BufferKind::Dm => who.to_owned(),
+                    BufferKind::Channel => format!("{who} in {}", b.info.target),
+                };
+                platform::notify(summary, chatlog::snippet(&format::strip(&m.text), 200));
+            }
+        }
+        if let Some(id) = &b.ui.jump
+            && let Some(i) = b.index_of(id)
+        {
+            b.ui.log.scroll_to_index(i, 60.0);
+            b.ui.jump = None;
+        }
+    }
+
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(ev) = self.events.try_recv() {
             self.handle(ev, ctx);
@@ -345,16 +358,8 @@ impl App {
                 Err(e) => self.toast(format!("Couldn't play {file}: {e}")),
             }
         }
-        while let Ok((network, target, path)) = self.files.1.try_recv() {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "file".into());
-            let max = self
-                .net_idx(&network)
-                .and_then(|i| self.view.nets[i].info.uploads)
-                .unwrap_or(0);
-            match read_file(&path, max) {
+        while let Ok((network, target, name, bytes)) = self.files.1.try_recv() {
+            match bytes {
                 Ok(bytes) => self.upload(ctx, &network, target, name, bytes),
                 Err(e) => self.toast(format!("{name}: {e}")),
             }

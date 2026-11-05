@@ -480,7 +480,7 @@ fn snapshot(
                 muted: pubs
                     .values()
                     .filter(|t| t.source() == TrackSource::Microphone)
-                    .all(|t| t.is_muted()),
+                    .all(livekit::prelude::RemoteTrackPublication::is_muted),
                 local: false,
                 sharing: pubs
                     .values()

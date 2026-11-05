@@ -197,7 +197,7 @@ fn run(
             }
         })
         .global_remove({
-            let (nodes, publish, apps) = (nodes.clone(), publish.clone(), apps.clone());
+            let (nodes, publish, apps) = (nodes, publish, apps.clone());
             move |id| {
                 lock(&apps).remove(&id);
                 if nodes.borrow_mut().remove(&id).is_some() {
@@ -210,7 +210,7 @@ fn run(
     let streams: Rc<RefCell<Streams>> = Rc::default();
     let app_stream = RefCell::new(None);
     let _rx = rx.attach(mainloop.loop_(), {
-        let (core, shared) = (core.clone(), shared.clone());
+        let (core, shared) = (core, shared.clone());
         move |cmd| {
             if let Cmd::App(app) = cmd {
                 *app_stream.borrow_mut() = None;

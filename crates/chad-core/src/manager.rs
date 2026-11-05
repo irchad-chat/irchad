@@ -207,7 +207,7 @@ fn spawn_with(
     let mut net = Net::new(store, info);
     net.invite_channel = invite_channel;
     net.guest = p.guest;
-    net.version = p.version.clone();
+    net.version.clone_from(&p.version);
     if let Some(d) = net
         .store
         .meta("discovery")
@@ -218,7 +218,7 @@ fn spawn_with(
     }
     net.set_state(ConnState::Connecting);
     net.load_cache();
-    sink.send(net.events.drain(..));
+    sink.send(net.drain_events());
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(conn::run(net, p, rx, sink.clone()));
     tx
@@ -258,7 +258,7 @@ fn device_id(data_dir: &Path) -> String {
     }
     let mut bytes = [0u8; 8];
     let _ = getrandom::fill(&mut bytes);
-    let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let id = hex::encode(bytes);
     if let Err(e) = std::fs::write(&path, &id) {
         tracing::error!("saving device id: {e}");
     }

@@ -336,11 +336,12 @@ pub enum Event {
         network: String,
         target: String,
     },
-    /// Full member list of a channel after any change.
+    /// Full member list of a channel, at most once per batch of changes.
+    /// Shared, so the view keeps it without a copy.
     Members {
         network: String,
         channel: String,
-        members: Vec<Member>,
+        members: std::sync::Arc<[Member]>,
     },
     Typing {
         network: String,
@@ -531,7 +532,8 @@ pub enum BufferKind {
     Dm,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The default is a plain, sent PRIVMSG with everything else empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChatMessage {
     pub msgid: Option<String>,
     /// Set on your own messages from this session, so the echo can replace them.
@@ -556,8 +558,9 @@ pub struct ChatMessage {
     pub crypt: Crypt,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Crypt {
+    #[default]
     Plain,
     /// End-to-end encrypted; `text` is what it decrypted to.
     Encrypted,
@@ -566,16 +569,18 @@ pub enum Crypt {
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MessageKind {
+    #[default]
     Privmsg,
     Notice,
     Action,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SendStatus {
     Pending,
+    #[default]
     Sent,
     Failed(String),
 }
@@ -612,4 +617,10 @@ impl Typing {
             Self::Done => "done",
         }
     }
+}
+
+/// Locks `m`, recovering from poisoning: a holder that panicked mustn't
+/// take every later user down with it.
+pub fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

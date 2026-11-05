@@ -11,7 +11,7 @@ const STEP: Duration = Duration::from_secs(60);
 pub fn watch(since: Since, wake: Box<dyn Fn() + Send + Sync>) -> bool {
     #[cfg(feature = "wayland")]
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        match wayland::Watch::new(since.clone(), wake) {
+        match wayland::Watch::new(since, wake) {
             Ok(w) => {
                 std::thread::spawn(move || {
                     if let Err(e) = w.run() {
@@ -101,7 +101,7 @@ mod wayland {
                 ext_idle_notification_v1::Event::Idled => Instant::now().checked_sub(STEP),
                 _ => None,
             };
-            *state.since.lock().unwrap_or_else(|e| e.into_inner()) = now;
+            *chad_core::lock(&state.since) = now;
             (state.wake)();
         }
     }
@@ -137,7 +137,7 @@ fn x11(since: &Since, wake: &(dyn Fn() + Send + Sync)) -> Result<(), Box<dyn std
             .flatten();
         // Scoped: the UI locks this every frame, so never hold it across the sleep.
         let changed = {
-            let mut s = since.lock().unwrap_or_else(|e| e.into_inner());
+            let mut s = chad_core::lock(since);
             let changed = s.is_some() != now.is_some();
             if changed {
                 *s = now;

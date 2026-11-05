@@ -47,7 +47,8 @@ const AWAY: &str = "Away";
 /// A network's decoded icon, or `None` if it couldn't be had.
 type IconMsg = (String, Option<egui::ColorImage>);
 /// A file from the file dialog: (network, buffer or `None` for an avatar, path).
-type Picked = (String, Option<String>, std::path::PathBuf);
+/// A file read for upload: (network, target, file name, its bytes).
+type Picked = (String, Option<String>, String, Result<Vec<u8>, String>);
 /// (network, file, the clip or why not).
 type Decoded = (String, String, Result<std::sync::Arc<[i16]>, String>);
 
@@ -170,6 +171,9 @@ enum Icon {
 struct BufUi {
     log: ChatLog,
     members_asked: bool,
+    /// The member panel's width, for the member list (by address) and
+    /// profile count it was measured against.
+    members_width: std::cell::Cell<Option<(usize, usize, f32)>>,
     older_asked: Option<Instant>,
     mark_sent: bool,
     draft: String,
@@ -417,6 +421,14 @@ impl App {
         self.view.net(origin)
     }
 
+    /// The network's name, or its origin before discovery names it.
+    fn net_name(&self, origin: &str) -> String {
+        self.net_idx(origin).map_or_else(
+            || origin.to_owned(),
+            |i| self.view.nets[i].info.name.clone(),
+        )
+    }
+
     fn send(&self, network: &str, cmd: NetCommand) {
         self.core.send(Command::Net {
             network: network.to_owned(),
@@ -424,9 +436,23 @@ impl App {
         });
     }
 
-    /// Queued for `poll`, which reads and uploads it.
-    fn upload_file(&self, network: &str, target: Option<String>, path: std::path::PathBuf) {
-        let _ = self.files.0.send((network.to_owned(), target, path));
+    /// Read off the UI thread, then uploaded by `poll`.
+    fn upload_file(
+        &self,
+        ctx: &egui::Context,
+        network: &str,
+        target: Option<String>,
+        path: std::path::PathBuf,
+    ) {
+        let max = self.upload_limit(network);
+        let (tx, ctx) = (self.files.0.clone(), ctx.clone());
+        read_picked(tx, ctx, network.to_owned(), target, path, max);
+    }
+
+    fn upload_limit(&self, network: &str) -> u64 {
+        self.net_idx(network)
+            .and_then(|i| self.view.nets[i].info.uploads)
+            .unwrap_or(0)
     }
 
     /// Attaches a file to the buffer's composer, to go up when the message
@@ -707,7 +733,7 @@ fn png(img: &egui::ColorImage) -> Option<Vec<u8>> {
     let raw: Vec<u8> = img
         .pixels
         .iter()
-        .flat_map(|c| c.to_srgba_unmultiplied())
+        .flat_map(egui::Color32::to_srgba_unmultiplied)
         .collect();
     let buf = image::RgbaImage::from_raw(u32::try_from(w).ok()?, u32::try_from(h).ok()?, raw)?;
     let mut out = Vec::new();
@@ -717,6 +743,25 @@ fn png(img: &egui::ColorImage) -> Option<Vec<u8>> {
 }
 
 /// The file, if it isn't over `max` bytes (checked before reading it).
+/// Reads a picked, pasted or dropped file on a blocking thread and hands it to `poll`.
+fn read_picked(
+    tx: mpsc::Sender<Picked>,
+    ctx: egui::Context,
+    network: String,
+    target: Option<String>,
+    path: std::path::PathBuf,
+    max: u64,
+) {
+    tokio::task::spawn_blocking(move || {
+        let name = path
+            .file_name()
+            .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
+        let bytes = read_file(&path, max);
+        let _ = tx.send((network, target, name, bytes));
+        ctx.request_repaint();
+    });
+}
+
 fn read_file(path: &std::path::Path, max: u64) -> Result<Vec<u8>, String> {
     let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     if len > max {
@@ -808,7 +853,7 @@ impl eframe::App for App {
         });
         if let Some((network, target)) = self.on_screen() {
             for path in dropped {
-                self.upload_file(&network, Some(target.clone()), path);
+                self.upload_file(&ctx, &network, Some(target.clone()), path);
             }
             if hovering {
                 egui::Area::new(egui::Id::unique("drop-hint"))

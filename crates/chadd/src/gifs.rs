@@ -78,7 +78,7 @@ pub async fn search(
         .get(url)
         .send()
         .await
-        .and_then(|r| r.error_for_status())
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|e| {
             // Without the URL: it has the key in it.
             tracing::warn!("gifs: {}", e.without_url());

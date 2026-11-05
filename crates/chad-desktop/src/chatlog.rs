@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use chad_core::view::Edit;
+use chad_core::view::{Edit, Msgs};
 use chad_core::{ChatMessage, Crypt, MessageKind, SendStatus};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
@@ -77,10 +77,10 @@ pub struct Output {
 /// Layout of one buffer's messages, which live in the view (`Buf::msgs`).
 #[derive(Default)]
 pub struct ChatLog {
-    heights: Vec<f32>,
+    /// One per message, in step with them.
+    rows: Vec<Row>,
     prefix: Vec<f32>,
     prefix_dirty: bool,
-    measured: Vec<bool>,
     width: f32,
     /// Applied on the next pass (often a discarded re-run of this frame).
     pending_offset: Option<f32>,
@@ -97,19 +97,65 @@ pub struct ChatLog {
     hover: Option<(String, Rect)>,
 }
 
-fn index_of(msgs: &[ChatMessage], msgid: &str) -> Option<usize> {
-    msgs.iter().rposition(|m| m.msgid.as_deref() == Some(msgid))
+struct Row {
+    height: f32,
+    measured: bool,
+    /// Made on first draw, dropped when the message changes.
+    parsed: Option<Parsed>,
 }
 
-fn day(ms: i64) -> Option<jiff::civil::Date> {
-    let ts = jiff::Timestamp::from_millisecond(ms).ok()?;
-    Some(ts.to_zoned(TimeZone::system()).date())
+impl Row {
+    fn new(height: f32) -> Self {
+        Self {
+            height,
+            measured: false,
+            parsed: None,
+        }
+    }
 }
 
-pub fn clock(ms: i64) -> String {
-    jiff::Timestamp::from_millisecond(ms)
-        .map(|t| t.to_zoned(TimeZone::system()).strftime("%H:%M").to_string())
-        .unwrap_or_default()
+/// What drawing a message needs that's too costly to work out every frame.
+struct Parsed {
+    /// Spans per line: each line is its own PRIVMSG to plain clients.
+    lines: Vec<Vec<format::Span>>,
+    /// Without formatting, for reply snippets.
+    plain: String,
+    /// Inline media and previews, in order.
+    links: Vec<(String, Kind)>,
+    /// shortcut: kept across a change of the system time zone; restart to pick it up.
+    day: Option<jiff::civil::Date>,
+    clock: String,
+    /// Where the message this replies to was last seen.
+    parent: Option<usize>,
+}
+
+impl Parsed {
+    fn new(m: &ChatMessage, network: &str) -> Self {
+        let lines: Vec<Vec<format::Span>> = m.text.split('\n').map(format::parse).collect();
+        let links = lines
+            .iter()
+            .flatten()
+            .filter(|s| s.link)
+            .filter_map(|s| Some((s.text.clone(), media::kind(&s.text, network)?)))
+            .collect();
+        let ts = jiff::Timestamp::from_millisecond(m.time)
+            .ok()
+            .map(|t| t.to_zoned(TimeZone::system()));
+        Self {
+            plain: lines
+                .iter()
+                .map(|l| l.iter().map(|s| s.text.as_str()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            lines,
+            links,
+            day: ts.as_ref().map(jiff::Zoned::date),
+            clock: ts
+                .map(|t| t.strftime("%H:%M").to_string())
+                .unwrap_or_default(),
+            parent: None,
+        }
+    }
 }
 
 /// Stable per nick, readable on both themes.
@@ -124,38 +170,77 @@ pub fn nick_color(nick: &str, dark: bool) -> Color32 {
 impl ChatLog {
     /// Follows the view's merge of `incoming` into the buffer's messages.
     pub fn apply(&mut self, edits: &[Edit], incoming: &[ChatMessage]) {
-        for e in edits {
+        let mut rest = edits;
+        while let Some((e, tail)) = rest.split_first() {
             match *e {
                 Edit::Replaced(i) => {
-                    if let Some(m) = self.measured.get_mut(i) {
-                        *m = false;
+                    if let Some(r) = self.rows.get_mut(i) {
+                        (r.measured, r.parsed) = (false, None);
                     }
                 }
-                Edit::Removed(i) if i < self.heights.len() => {
-                    self.rebuild_prefix();
-                    if self.prefix[i] < self.last_top && !self.at_bottom {
-                        self.shift -= self.heights[i];
+                Edit::Removed(i) if i < self.rows.len() => {
+                    let y: f32 = self.rows[..i].iter().map(|r| r.height).sum();
+                    let r = self.rows.remove(i);
+                    if y < self.last_top && !self.at_bottom {
+                        self.shift -= r.height;
                     }
-                    self.heights.remove(i);
-                    self.measured.remove(i);
                     self.prefix_dirty = true;
                 }
-                Edit::Inserted { at, from } if at <= self.heights.len() => {
-                    let Some(m) = incoming.get(from) else {
-                        continue;
-                    };
-                    let h = self.estimate(m);
-                    self.rebuild_prefix();
-                    if self.prefix[at] < self.last_top && !self.at_bottom {
-                        self.shift += h;
-                    }
-                    self.heights.insert(at, h);
-                    self.measured.insert(at, false);
-                    self.prefix_dirty = true;
+                Edit::Inserted { .. } => {
+                    let n = rest
+                        .iter()
+                        .take_while(|e| matches!(e, Edit::Inserted { .. }))
+                        .count();
+                    self.insert_run(&rest[..n], incoming);
+                    rest = &rest[n..];
+                    continue;
                 }
-                _ => {}
+                Edit::Removed(_) => {}
             }
+            rest = tail;
         }
+    }
+
+    /// Consecutive inserts in one pass over the rows (a history page is a
+    /// hundred of them). Each `at` counts the run's earlier inserts.
+    fn insert_run(&mut self, run: &[Edit], incoming: &[ChatMessage]) {
+        let mut old = std::mem::take(&mut self.rows).into_iter();
+        let mut rows: Vec<Row> = Vec::with_capacity(old.len() + run.len());
+        // Height of `rows` so far.
+        let mut total = 0.0;
+        for e in run {
+            let Edit::Inserted { at, from } = *e else {
+                continue;
+            };
+            let Some(m) = incoming.get(from) else {
+                continue;
+            };
+            while rows.len() < at
+                && let Some(r) = old.next()
+            {
+                total += r.height;
+                rows.push(r);
+            }
+            // Past the end: stale or hostile.
+            if rows.len() < at {
+                continue;
+            }
+            let y = if at == rows.len() {
+                total
+            } else {
+                // Out of order, which `View` never sends: correct, if slower.
+                rows[..at].iter().map(|r| r.height).sum()
+            };
+            let h = self.estimate(m);
+            if y < self.last_top && !self.at_bottom {
+                self.shift += h;
+            }
+            total += h;
+            rows.insert(at, Row::new(h));
+        }
+        rows.extend(old);
+        self.rows = rows;
+        self.prefix_dirty = true;
     }
 
     fn estimate(&self, m: &ChatMessage) -> f32 {
@@ -175,14 +260,14 @@ impl ChatLog {
     }
 
     fn rebuild_prefix(&mut self) {
-        if !self.prefix_dirty && self.prefix.len() == self.heights.len() + 1 {
+        if !self.prefix_dirty && self.prefix.len() == self.rows.len() + 1 {
             return;
         }
         self.prefix.clear();
         let mut y = 0.0;
         self.prefix.push(0.0);
-        for h in &self.heights {
-            y += h;
+        for r in &self.rows {
+            y += r.height;
             self.prefix.push(y);
         }
         self.prefix_dirty = false;
@@ -190,20 +275,44 @@ impl ChatLog {
 
     fn set_width(&mut self, msgs: &[ChatMessage], width: f32, line: f32) {
         // Out of step with the messages (a missed edit): start the layout over.
-        let synced = self.heights.len() == msgs.len();
+        let synced = self.rows.len() == msgs.len();
         if synced && (width - self.width).abs() < 0.5 && (line - self.line).abs() < 0.01 {
             return;
         }
         let same_line = (line - self.line).abs() < 0.01;
         self.width = width;
         self.line = line;
-        self.measured = vec![false; msgs.len()];
         // A resize keeps the old heights as guesses: close enough that a
         // panel drag doesn't throw the scroll position around every frame.
-        if !(synced && same_line) {
-            self.heights = msgs.iter().map(|m| self.estimate(m)).collect();
+        if synced && same_line {
+            self.rows.iter_mut().for_each(|r| r.measured = false);
+        } else {
+            self.rows = msgs.iter().map(|m| Row::new(self.estimate(m))).collect();
             self.prefix_dirty = true;
         }
+    }
+
+    fn parse(&mut self, i: usize, msgs: &[ChatMessage], network: &str) {
+        if self.rows[i].parsed.is_none() {
+            self.rows[i].parsed = Some(Parsed::new(&msgs[i], network));
+        }
+    }
+
+    /// The index of the message row `i` replies to, if it's loaded.
+    fn parent(&mut self, i: usize, msgs: &Msgs) -> Option<usize> {
+        let id = msgs[i].reply_to.as_deref()?;
+        let cached = self.rows[i].parsed.as_ref().and_then(|p| p.parent);
+        if let Some(p) =
+            cached.filter(|&p| msgs.get(p).is_some_and(|m| m.msgid.as_deref() == Some(id)))
+        {
+            return Some(p);
+        }
+        // Only scans when it moved; an unloaded parent is an index miss.
+        let p = msgs.position(id)?;
+        if let Some(parsed) = &mut self.rows[i].parsed {
+            parsed.parent = Some(p);
+        }
+        Some(p)
     }
 
     /// A real offset, not f32::MAX: egui uses an out-of-range offset as-is for
@@ -224,7 +333,7 @@ impl ChatLog {
     pub fn ui(
         &mut self,
         ui: &mut egui::Ui,
-        msgs: &[ChatMessage],
+        msgs: &Msgs,
         own_nick: &str,
         highlights: bool,
         extras: &mut Extras,
@@ -276,19 +385,20 @@ impl ChatLog {
                     origin + vec2(GUTTER, y),
                     vec2(self.width - GUTTER, f32::INFINITY),
                 );
-                let prev = i.checked_sub(1).map(|p| &msgs[p]);
-                let m = &msgs[i];
-                let unread = m.msgid.is_some() && self.unread_from == m.msgid;
-                let parent = m
-                    .reply_to
-                    .as_deref()
-                    .and_then(|id| index_of(msgs, id))
-                    .map(|p| &msgs[p]);
+                let parent = self.parent(i, msgs);
+                for j in [Some(i), i.checked_sub(1), parent].into_iter().flatten() {
+                    self.parse(j, msgs, extras.network);
+                }
+                let parsed = |j: usize| self.rows[j].parsed.as_ref().expect("parsed above");
+                let prev = i.checked_sub(1).map(|p| (&msgs[p], parsed(p)));
+                let parent = parent.map(|p| (&msgs[p], parsed(p)));
+                let m = (&msgs[i], parsed(i));
+                let unread = m.0.msgid.is_some() && self.unread_from == m.0.msgid;
                 let resp = ui.scope_builder(
                     UiBuilder::new()
                         .max_rect(rect)
                         .layout(Layout::top_down(Align::Min))
-                        .id_salt(("row", m.msgid.as_deref(), m.local_id)),
+                        .id_salt(("row", m.0.msgid.as_deref(), m.0.local_id)),
                     |ui| {
                         row_ui(
                             ui,
@@ -308,13 +418,13 @@ impl ChatLog {
                 let row = Rect::from_x_y_ranges(rect.x_range(), resp.response.rect.y_range());
                 rows.push((i, row));
                 let h = resp.response.rect.height() + ROW_GAP;
-                if !self.measured[i] || (h - self.heights[i]).abs() > 0.5 {
-                    let d = h - self.heights[i];
+                let r = &mut self.rows[i];
+                if !r.measured || (h - r.height).abs() > 0.5 {
+                    let d = h - r.height;
                     if self.prefix[i] < viewport.min.y && d.abs() > 0.5 {
                         compensate += d;
                     }
-                    self.heights[i] = h;
-                    self.measured[i] = true;
+                    (r.height, r.measured) = (h, true);
                     changed = true;
                 }
                 y += h;
@@ -338,12 +448,10 @@ impl ChatLog {
                 .as_ref()
                 .filter(|(_, bar)| pointer.is_some_and(|p| bar.contains(p)));
             let hovered = match keep {
-                Some((id, _)) => {
-                    let id = id.clone();
-                    rows.iter()
-                        .copied()
-                        .find(|(i, _)| msgs[*i].msgid.as_ref() == Some(&id))
-                }
+                Some((id, _)) => rows
+                    .iter()
+                    .copied()
+                    .find(|(i, _)| msgs[*i].msgid.as_ref() == Some(id)),
                 None => rows
                     .iter()
                     .copied()
@@ -388,9 +496,9 @@ impl ChatLog {
 #[allow(clippy::too_many_arguments)]
 fn row_ui(
     ui: &mut egui::Ui,
-    m: &ChatMessage,
-    prev: Option<&ChatMessage>,
-    parent: Option<&ChatMessage>,
+    (m, parsed): (&ChatMessage, &Parsed),
+    prev: Option<(&ChatMessage, &Parsed)>,
+    parent: Option<(&ChatMessage, &Parsed)>,
     unread: bool,
     own_nick: &str,
     highlights: bool,
@@ -398,7 +506,8 @@ fn row_ui(
     extras: &mut Extras,
     actions: &mut Vec<Action>,
 ) {
-    let new_day = prev.is_none_or(|p| day(p.time) != day(m.time));
+    let new_day = prev.is_none_or(|(_, p)| p.day != parsed.day);
+    let prev = prev.map(|(p, _)| p);
     if new_day && let Some(ts) = jiff::Timestamp::from_millisecond(m.time).ok() {
         let label = ts
             .to_zoned(TimeZone::system())
@@ -443,14 +552,11 @@ fn row_ui(
                     let label = RichText::new(name)
                         .strong()
                         .color(nick_color(&m.nick, dark));
-                    let who = match &m.account {
-                        Some(a) if name != m.nick => format!("{} · account {a}", m.nick),
-                        Some(a) => format!("account {a}"),
-                        None => format!("{} · not logged in", m.nick),
-                    };
                     if ui
                         .add(egui::Label::new(label).sense(Sense::click()))
-                        .on_hover_text(who)
+                        .on_hover_ui(|ui| {
+                            ui.label(account_tip(&m.nick, name, m.account.as_deref()));
+                        })
                         .clicked()
                         && !m.own
                     {
@@ -458,10 +564,9 @@ fn row_ui(
                     }
                     // Own pending lines have no account until the echo; skip them.
                     if m.account.is_none() && !m.own {
-                        ui.label(RichText::new(icons::GHOST).weak())
-                            .on_hover_text("Guest (not logged in)");
+                        guest_badge(ui);
                     }
-                    ui.label(RichText::new(clock(m.time)).weak().small());
+                    ui.label(RichText::new(&parsed.clock).weak().small());
                     if extras.dm && m.crypt == Crypt::Plain {
                         ui.label(
                             RichText::new(format!("{} not encrypted", icons::LOCK_OPEN))
@@ -473,18 +578,18 @@ fn row_ui(
             }
             if m.reply_to.is_some() {
                 let text = match parent {
-                    Some(p) if p.redacted => {
+                    Some((p, _)) if p.redacted => {
                         format!(
                             "{} {}: (deleted)",
                             icons::ARROW_BEND_DOWN_RIGHT,
                             shown(extras.profiles, &p.nick)
                         )
                     }
-                    Some(p) => format!(
+                    Some((p, pp)) => format!(
                         "{} {}: {}",
                         icons::ARROW_BEND_DOWN_RIGHT,
                         shown(extras.profiles, &p.nick),
-                        snippet(&format::strip(&p.text), 80)
+                        snippet(&pp.plain, 80)
                     ),
                     None => format!("{} Earlier message", icons::ARROW_BEND_DOWN_RIGHT),
                 };
@@ -513,11 +618,11 @@ fn row_ui(
                         .color(ui.visuals().error_fg_color),
                 );
             } else {
-                body_ui(ui, m, name, dark);
+                body_ui(ui, m, &parsed.lines, name, dark);
                 if m.edited {
                     ui.label(RichText::new("(edited)").weak().small());
                 }
-                links_ui(ui, m, extras);
+                links_ui(ui, m, &parsed.links, extras);
             }
             if let SendStatus::Failed(why) = &m.status {
                 ui.label(
@@ -533,9 +638,11 @@ fn row_ui(
                         let chip = egui::Button::new(format!("{} {}", r.emoji, r.nicks.len()))
                             .small()
                             .selected(mine);
-                        let who: Vec<&str> =
-                            r.nicks.iter().map(|n| shown(extras.profiles, n)).collect();
-                        let resp = ui.add(chip).on_hover_text(who.join(", "));
+                        let resp = ui.add(chip).on_hover_ui(|ui| {
+                            let who: Vec<&str> =
+                                r.nicks.iter().map(|n| shown(extras.profiles, n)).collect();
+                            ui.label(who.join(", "));
+                        });
                         if resp.clicked()
                             && let Some(id) = &m.msgid
                         {
@@ -650,32 +757,50 @@ fn toolbar(
         .rect
 }
 
+/// "nick · account x", for hovering someone's name.
+pub fn account_tip(nick: &str, name: &str, account: Option<&str>) -> String {
+    match account {
+        Some(a) if name != nick => format!("{nick} · account {a}"),
+        Some(a) => format!("account {a}"),
+        None => format!("{nick} · not logged in"),
+    }
+}
+
+pub fn guest_badge(ui: &mut egui::Ui) {
+    ui.label(RichText::new(icons::GHOST).weak())
+        .on_hover_text("Guest (not logged in)");
+}
+
 /// Images inline, videos and files as cards, and a preview of the first page.
-fn links_ui(ui: &mut egui::Ui, m: &ChatMessage, extras: &mut Extras) {
+fn links_ui(ui: &mut egui::Ui, m: &ChatMessage, links: &[(String, Kind)], extras: &mut Extras) {
     if m.kind == MessageKind::Notice || (!extras.guest_media && m.account.is_none() && !m.own) {
         return;
     }
     let (mut images, mut previewed) = (0, false);
-    for span in format::parse(&m.text).into_iter().filter(|s| s.link) {
-        match media::kind(&span.text, extras.network) {
-            Some(Kind::Image) if images < MAX_IMAGES => {
+    for (url, kind) in links {
+        match *kind {
+            Kind::Image if images < MAX_IMAGES => {
                 images += 1;
-                extras.media.image(ui, &span.text, extras.auto_media);
+                extras.media.image(ui, url, extras.auto_media);
             }
-            Some(k @ (Kind::Video | Kind::File)) => Media::card(ui, &span.text, k),
-            Some(Kind::Page) if !previewed => {
+            k @ (Kind::Video | Kind::File) => Media::card(ui, url, k),
+            Kind::Page if !previewed => {
                 previewed = true;
-                extras.media.link_preview(ui, &span.text, extras.auto_media);
+                extras.media.link_preview(ui, url, extras.auto_media);
             }
             _ => {}
         }
     }
 }
 
-fn body_ui(ui: &mut egui::Ui, m: &ChatMessage, name: &str, dark: bool) {
+fn body_ui(
+    ui: &mut egui::Ui,
+    m: &ChatMessage,
+    lines: &[Vec<format::Span>],
+    name: &str,
+    dark: bool,
+) {
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
-    // Per line, as plain clients see it: each line is its own PRIVMSG to them.
-    let lines: Vec<_> = m.text.split('\n').map(format::parse).collect();
     let mut first = true;
     for group in lines.chunk_by(|a, b| format::code_line(a) == format::code_line(b)) {
         if format::code_line(&group[0]) {
@@ -768,37 +893,27 @@ fn separator(ui: &mut egui::Ui, text: &str, color: Color32) {
     ui.add_space(2.0);
 }
 
+/// The first `max` characters on one line; only looks that far into `s`.
 pub fn snippet(s: &str, max: usize) -> String {
-    let one_line = s.replace('\n', " ");
-    match one_line.char_indices().nth(max) {
-        Some((i, _)) => format!("{}…", &one_line[..i]),
-        None => one_line,
+    let mut chars = s.chars().map(|c| if c == '\n' { ' ' } else { c });
+    let mut out: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        out.push('…');
     }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chad_core::{MessageKind, SendStatus};
 
     fn msg(id: &str, time: i64) -> ChatMessage {
         ChatMessage {
             msgid: Some(id.into()),
-            local_id: None,
             time,
             nick: "a".into(),
-            account: None,
-            kind: MessageKind::Privmsg,
             text: "hi".into(),
-            reply_to: None,
-            status: SendStatus::Sent,
-            redacted: false,
-            edits: None,
-            edited: false,
-            reactions: vec![],
-            mention: false,
-            own: false,
-            crypt: Crypt::Plain,
+            ..Default::default()
         }
     }
 
@@ -808,20 +923,27 @@ mod tests {
         let incoming = [msg("b", 2), msg("a", 1)];
         let ins = |at, from| Edit::Inserted { at, from };
         log.apply(&[ins(0, 0), ins(0, 1)], &incoming);
-        assert_eq!((log.heights.len(), log.measured.len()), (2, 2));
+        assert_eq!(log.rows.len(), 2);
         log.apply(&[Edit::Removed(1), ins(1, 0)], &incoming);
-        assert_eq!(log.heights.len(), 2);
+        assert_eq!(log.rows.len(), 2);
         // Hostile or stale edits are skipped, not panicked on.
         log.apply(
             &[Edit::Removed(9), ins(9, 0), ins(0, 9), Edit::Replaced(9)],
             &incoming,
         );
-        assert_eq!(log.heights.len(), 2);
+        assert_eq!(log.rows.len(), 2);
+        // A run in View's order (ascending) lands in one pass, in place.
+        log.rows[0].height = 100.0;
+        log.apply(&[ins(0, 0), ins(2, 1), ins(4, 0)], &incoming);
+        let h: Vec<f32> = log.rows.iter().map(|r| r.height).collect();
+        assert_eq!(h.len(), 5);
+        assert_eq!(h[1], 100.0);
     }
 
     #[test]
     fn snippets() {
         assert_eq!(snippet("a\nb", 10), "a b");
         assert_eq!(snippet("héllo", 2), "hé…");
+        assert_eq!(snippet("ab", 2), "ab");
     }
 }

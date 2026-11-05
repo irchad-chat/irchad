@@ -101,7 +101,7 @@ impl Ptt {
             let status = status.clone();
             move |s: PttStatus| {
                 tracing::info!("push-to-talk: {s:?}");
-                *status.lock().unwrap_or_else(|e| e.into_inner()) = s;
+                *chad_core::lock(&status) = s;
                 wake();
             }
         };
@@ -115,10 +115,7 @@ impl Ptt {
     }
 
     pub fn status(&self) -> PttStatus {
-        self.status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        chad_core::lock(&self.status).clone()
     }
 
     pub fn focused_only(&self) -> bool {

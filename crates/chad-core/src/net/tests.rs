@@ -45,7 +45,7 @@ fn out(n: &mut Net) -> Vec<String> {
 }
 
 fn events(n: &mut Net) -> Vec<Event> {
-    std::mem::take(&mut n.events)
+    n.drain_events().collect()
 }
 
 fn ts(ms: i64) -> String {
@@ -301,7 +301,7 @@ fn web_push_registers_once_per_connection() {
     n.command(NetCommand::Push {
         subscription: Some(PushSubscription {
             endpoint: "https://a b".into(),
-            ..sub.clone()
+            ..sub
         }),
     });
     assert_eq!(

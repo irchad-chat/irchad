@@ -314,6 +314,19 @@ fn members_and_presence() {
     assert!(m[1].away);
     assert!(m[0].oper && !m[1].oper);
 
+    // A burst of changes is one list, not one per change.
+    for nick in ["x", "y", "z"] {
+        feed(&mut n, &format!(":{nick}!u@h JOIN #c * :{nick}"));
+    }
+    for nick in ["x", "y", "z"] {
+        feed(&mut n, &format!(":{nick}!u@h PART #c"));
+    }
+    let lists = events(&mut n)
+        .into_iter()
+        .filter(|e| matches!(e, Event::Members { .. }))
+        .count();
+    assert_eq!(lists, 1);
+
     feed(&mut n, ":dave!u@h JOIN #c dave :Dave");
     assert_eq!(members(&mut n)[2].account.as_deref(), Some("dave"));
     // ergo grants a founder's +q after the JOIN; only prefix modes refresh the list.

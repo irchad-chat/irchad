@@ -32,11 +32,7 @@ impl Idle {
         if input {
             self.last_input = Instant::now();
         }
-        let desktop = self
-            .since
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .map(|t| t.elapsed());
+        let desktop = chad_core::lock(&self.since).map(|t| t.elapsed());
         match desktop {
             _ if input => Duration::ZERO,
             Some(d) => d,

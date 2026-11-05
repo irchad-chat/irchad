@@ -298,10 +298,7 @@ impl Denoiser {
             .map(|&b| f32::from(i16::from_le_bytes(b)))
             .collect();
         let mut out = [0f32; N];
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .process_frame(&mut out, &input);
+        chad_core::lock(&self.0).process_frame(&mut out, &input);
         out.iter()
             .flat_map(|&f| (f.clamp(-32768.0, 32767.0) as i16).to_le_bytes())
             .collect()

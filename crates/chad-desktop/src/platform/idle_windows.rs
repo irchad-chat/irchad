@@ -26,7 +26,7 @@ pub fn watch(since: Since, wake: Box<dyn Fn() + Send + Sync>) -> bool {
                 .flatten();
             // Scoped: the UI locks this every frame, so never hold it across the sleep.
             let changed = {
-                let mut s = since.lock().unwrap_or_else(|e| e.into_inner());
+                let mut s = chad_core::lock(&since);
                 let changed = s.is_some() != now.is_some();
                 if changed {
                     *s = now;

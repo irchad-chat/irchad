@@ -94,11 +94,16 @@ impl App {
     }
 
     pub(super) fn channels(&mut self, ui: &mut egui::Ui, ni: usize) {
-        let network = self.view.nets[ni].info.network.clone();
+        self.call_panel(ui);
+        self.network_header(ui, ni);
+        self.status_menu(ui, ni);
+        self.buffer_list(ui, ni);
+    }
+
+    /// Our call, pinned to the bottom of the sidebar.
+    fn call_panel(&mut self, ui: &mut egui::Ui) {
         if let Some((net, state)) = self.view.call.clone() {
-            let name = self
-                .net_idx(&net)
-                .map_or(net.clone(), |i| self.view.nets[i].info.name.clone());
+            let name = self.net_name(&net);
             let action = egui::Panel::bottom("voice-panel")
                 .show(ui, |ui| {
                     voice::panel(
@@ -142,6 +147,11 @@ impl App {
                 None => {}
             }
         }
+    }
+
+    /// The network's name and menu, and its connection state.
+    fn network_header(&mut self, ui: &mut egui::Ui, ni: usize) {
+        let network = self.view.nets[ni].info.network.clone();
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -195,11 +205,16 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Our name, away state and profile.
+    fn status_menu(&mut self, ui: &mut egui::Ui, ni: usize) {
+        let network = self.view.nets[ni].info.network.clone();
         let info = self.view.nets[ni].info.clone();
         if info.oper {
             ui.label(RichText::new(icons::CROWN).small());
         }
-        let own = info.nick.clone();
+        let own = info.nick;
         let shown = chatlog::shown(&self.view.nets[ni].profiles, &own).to_owned();
         let (dot, color) = if self.away_sent {
             (icons::MOON, voice::AWAY)
@@ -239,7 +254,11 @@ impl App {
         .response
         .tip("Your status and profile");
         ui.separator();
+    }
 
+    /// Channels, then DMs.
+    fn buffer_list(&mut self, ui: &mut egui::Ui, ni: usize) {
+        let network = self.view.nets[ni].info.network.clone();
         let mut pick = None;
         let mut part = None;
         let mut close = None;
@@ -426,9 +445,18 @@ impl App {
     /// can be long; past that they truncate.
     pub(super) fn members_width(&self, ui: &egui::Ui, ni: usize, bi: usize) -> f32 {
         let profiles = &self.view.nets[ni].profiles;
-        let Some(members) = &self.view.nets[ni].buffers[bi].members else {
+        let b = &self.view.nets[ni].buffers[bi];
+        let Some(members) = &b.members else {
             return 100.0;
         };
+        // shortcut: a changed display name shows at the old width until the
+        // member list or profile count next changes; key on a profile revision if that bites.
+        let key = (members.as_ptr() as usize, profiles.len());
+        if let Some((m, p, w)) = b.ui.members_width.get()
+            && (m, p) == key
+        {
+            return w;
+        }
         let body = egui::TextStyle::Body.resolve(ui.style());
         let small = egui::TextStyle::Small.resolve(ui.style());
         let width = |text: String, font: &FontId| {
@@ -456,7 +484,9 @@ impl App {
             .fold(0.0, f32::max);
         let s = &ui.style().spacing.scroll;
         let bar = s.bar_width + s.bar_inner_margin + s.bar_outer_margin;
-        (widest + 16.0 + bar + 12.0).clamp(100.0, 360.0)
+        let w = (widest + 16.0 + bar + 12.0).clamp(100.0, 360.0);
+        b.ui.members_width.set(Some((key.0, key.1, w)));
+        w
     }
 
     pub(super) fn members(&mut self, ui: &mut egui::Ui, ni: usize, bi: usize) {
@@ -469,50 +499,75 @@ impl App {
             ui.spinner();
             return;
         };
+        enum Line<'a> {
+            Gap,
+            Header(&'static str, usize),
+            Member(&'a Member),
+        }
+        let mut lines = Vec::with_capacity(members.len() + 4);
+        for (away, title) in [(false, "ONLINE"), (true, "AWAY")] {
+            let start = lines.len();
+            lines.extend([Line::Gap, Line::Header(title, 0)]);
+            lines.extend(members.iter().filter(|m| m.away == away).map(Line::Member));
+            match lines.len() - start - 2 {
+                0 => lines.truncate(start),
+                n => lines[start + 1] = Line::Header(title, n),
+            }
+        }
         let mut dm = None;
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                for (away, title) in [(false, "ONLINE"), (true, "AWAY")] {
-                    let list: Vec<&Member> = members.iter().filter(|m| m.away == away).collect();
-                    if list.is_empty() {
-                        continue;
+        let h = ui.spacing().interact_size.y;
+        // Only the rows in view are laid out: a channel can have thousands.
+        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+            ui,
+            h,
+            lines.len(),
+            |ui, range| {
+                for line in &lines[range] {
+                    let size = vec2(ui.available_width(), h);
+                    let row = egui::Layout::left_to_right(egui::Align::Center);
+                    let m = match line {
+                        Line::Gap => {
+                            ui.allocate_exact_size(size, Sense::hover());
+                            continue;
+                        }
+                        Line::Header(title, n) => {
+                            ui.allocate_ui_with_layout(size, row, |ui| {
+                                ui.label(RichText::new(format!("{title} — {n}")).small().weak());
+                            });
+                            continue;
+                        }
+                        Line::Member(m) => m,
+                    };
+                    let name = chatlog::shown(profiles, &m.nick);
+                    let mut t = RichText::new(format!("{}{name}", m.prefix))
+                        .color(chatlog::nick_color(&m.nick, dark));
+                    if m.away {
+                        t = t.weak();
                     }
-                    ui.add_space(8.0);
-                    ui.label(
-                        RichText::new(format!("{title} — {}", list.len()))
-                            .small()
-                            .weak(),
-                    );
-                    for m in list {
-                        let name = chatlog::shown(profiles, &m.nick);
-                        let mut t = RichText::new(format!("{}{name}", m.prefix))
-                            .color(chatlog::nick_color(&m.nick, dark));
-                        if away {
-                            t = t.weak();
-                        }
-                        let r = ui
-                            .horizontal(|ui| {
-                                if m.oper {
-                                    ui.label(icons::CROWN).on_hover_text("IRC operator");
-                                }
-                                if m.account.is_none() {
-                                    ui.label(RichText::new(icons::GHOST).weak())
-                                        .on_hover_text("Guest (not logged in)");
-                                }
-                                ui.add(egui::Label::new(t).sense(Sense::click()).truncate())
-                                    .on_hover_text(match &m.account {
-                                        Some(a) => format!("{} · account {a}", m.nick),
-                                        None => format!("{} · not logged in", m.nick),
-                                    })
-                            })
-                            .inner;
-                        if r.clicked() && m.nick != own {
-                            dm = Some(m.nick.clone());
-                        }
+                    let r = ui
+                        .allocate_ui_with_layout(size, row, |ui| {
+                            if m.oper {
+                                ui.label(icons::CROWN).on_hover_text("IRC operator");
+                            }
+                            if m.account.is_none() {
+                                chatlog::guest_badge(ui);
+                            }
+                            ui.add(egui::Label::new(t).sense(Sense::click()).truncate())
+                                .on_hover_ui(|ui| {
+                                    ui.label(chatlog::account_tip(
+                                        &m.nick,
+                                        name,
+                                        m.account.as_deref(),
+                                    ));
+                                })
+                        })
+                        .inner;
+                    if r.clicked() && m.nick != own {
+                        dm = Some(m.nick.clone());
                     }
                 }
-            });
+            },
+        );
         if let Some(nick) = dm {
             self.send(&network, NetCommand::OpenDm { nick: nick.clone() });
             select(&mut self.view.nets[ni], &key(&nick));

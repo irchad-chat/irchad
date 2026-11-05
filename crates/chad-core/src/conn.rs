@@ -84,7 +84,7 @@ enum End {
 pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<ToNet>, sink: Sink) {
     if !p.guest {
         init_e2e(&mut net, &p).await;
-        sink.send(net.events.drain(..));
+        sink.send(net.drain_events());
     }
     let mut backoff = Backoff::new();
     loop {
@@ -92,7 +92,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
             net.set_state(ConnState::Disconnected {
                 error: "Paused while IrChad is in the background.".into(),
             });
-            sink.send(net.events.drain(..));
+            sink.send(net.drain_events());
             loop {
                 match rx.recv().await {
                     Some(ToNet::Background(false)) => break,
@@ -166,7 +166,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 // Keep the code prompt up across the reconnect.
                 if !retry_verify {
                     net.set_state(ConnState::Disconnected { error });
-                    sink.send(net.events.drain(..));
+                    sink.send(net.drain_events());
                 }
                 let delay = backoff.next_delay();
                 tracing::info!("{}: reconnecting in {delay:?}", net.info.network);
@@ -191,7 +191,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                     return remove(net, &p, &sink).await;
                 }
                 net.set_state(ConnState::Failed { error });
-                sink.send(net.events.drain(..));
+                sink.send(net.drain_events());
                 // Stay listed with the cache readable until removed, or
                 // until the user signs in again.
                 loop {
@@ -220,7 +220,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
 fn offline(net: &mut Net, cmd: NetCommand, sink: &Sink) {
     net.command(cmd);
     net.out.clear();
-    sink.send(net.events.drain(..));
+    sink.send(net.drain_events());
 }
 
 async fn remove(net: Net, p: &Params, sink: &Sink) {
@@ -257,8 +257,8 @@ async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
         }
         Err(e) => cached.ok_or(e)?,
     };
-    net.info.name = d.name.clone();
-    net.info.icon = d.icon.clone();
+    net.info.name.clone_from(&d.name);
+    net.info.icon.clone_from(&d.icon);
     net.home = d.home.clone().filter(|h| net.is_home_name(h));
     net.info.uploads = d
         .chadd
@@ -285,7 +285,7 @@ async fn session(
 ) -> End {
     if p.verifying.is_none() {
         net.set_state(ConnState::Connecting);
-        sink.send(net.events.drain(..));
+        sink.send(net.drain_events());
     }
     let d = match discover(net, p.guest).await {
         Ok(d) => d,
@@ -316,15 +316,37 @@ async fn session(
         }
     }
 
+    let nick = match register(net, p, password, rx, sink, backoff, &d, &mut ws).await {
+        Ok(nick) => nick,
+        Err(end) => return end,
+    };
+    net.attach(&nick);
+    backoff.reset();
+    live(net, p, password, rx, sink, &d, ws).await
+}
+
+/// CAP, SASL or sign-up, until the end of the MOTD. Returns our nick.
+#[allow(clippy::too_many_arguments)]
+async fn register(
+    net: &mut Net,
+    p: &mut Params,
+    password: &str,
+    rx: &mut mpsc::UnboundedReceiver<ToNet>,
+    sink: &Sink,
+    backoff: &mut Backoff,
+    d: &Discovery,
+    ws: &mut Connection,
+) -> Result<String, End> {
+    let account = p.account.clone();
     let mut auth_started = false;
     let mut nick_tries = 0;
     let mut sasl: Option<Sasl> = None;
-    let nick = loop {
+    loop {
         let m = tokio::select! {
             r = ws.recv() => match r {
                 Ok(Some(m)) => m,
-                Ok(None) => return End::Lost("The server closed the connection.".into()),
-                Err(e) => return lost(e),
+                Ok(None) => return Err(End::Lost("The server closed the connection.".into())),
+                Err(e) => return Err(lost(e)),
             },
             cmd = rx.recv() => {
                 match cmd {
@@ -334,8 +356,8 @@ async fn session(
                     Some(ToNet::Cmd(c)) => offline(net, c, sink),
                     // Paused once logged in, so a sign-up isn't cut short.
                     Some(ToNet::Background(on)) => p.background = on,
-                    Some(ToNet::Remove) => return End::Remove,
-                    None => return End::Stop,
+                    Some(ToNet::Remove) => return Err(End::Remove),
+                    None => return Err(End::Stop),
                 }
                 continue;
             }
@@ -345,45 +367,7 @@ async fn session(
 
         if net.caps.ready() && !auth_started {
             auth_started = true;
-            // Before CAP END, so the reattach burst includes everyone's value.
-            if net.caps.enabled("draft/metadata-2") {
-                out.push(Message::new(
-                    "METADATA",
-                    [
-                        "*",
-                        "SUB",
-                        VOICE_KEY,
-                        DISPLAY_NAME_KEY,
-                        AVATAR_KEY,
-                        DEVICES_KEY,
-                        CHANNELS_KEY,
-                    ],
-                ));
-            }
-            if p.guest {
-                out.push(net.caps.end());
-            } else if let Some(email) = &p.register {
-                if !net.caps.enabled("draft/account-registration") {
-                    return End::Fatal(format!("{} isn't taking sign-ups.", d.name));
-                }
-                // Already signed up: VERIFY works from a fresh connection.
-                if p.verifying.is_none() {
-                    out.push(register::register("*", email.as_deref(), password));
-                }
-            } else {
-                if !net.caps.enabled("sasl") {
-                    return End::Fatal(format!("{} doesn't support logging in.", d.name));
-                }
-                let user = format!("{account}@{}", p.device);
-                let mechs = net.caps.value("sasl").unwrap_or_default();
-                match Sasl::new(&user, password, mechs) {
-                    Ok(mut s) => {
-                        out.push(s.start());
-                        sasl = Some(s);
-                    }
-                    Err(e) => return End::Fatal(sasl_error(e)),
-                }
-            }
+            sasl = start_auth(net, p, password, d, &mut out)?;
         }
         if let Some(s) = &mut sasl {
             match s.handle(&m) {
@@ -393,63 +377,125 @@ async fn session(
                     out.push(net.caps.end());
                     logged_in(net, p, password, sink).await;
                 }
-                Progress::Failed(e) => return End::Fatal(sasl_error(e)),
+                Progress::Failed(e) => return Err(End::Fatal(sasl_error(e))),
             }
         }
         match Reply::parse(&m) {
             Some(Reply::Registered { .. } | Reply::Verified { .. }) => {
                 let _ = ws.send(&Message::new("QUIT", ["signed up"])).await;
-                return End::Registered;
+                return Err(End::Registered);
             }
             Some(Reply::NeedsVerification { message, .. }) => {
                 p.verifying = Some(message.clone());
                 // The server's fine; only its registration timeout drops us.
                 backoff.reset();
                 net.set_state(ConnState::NeedsVerification { message });
-                sink.send(net.events.drain(..));
+                sink.send(net.drain_events());
             }
             Some(Reply::Failed { command, .. }) if command == "VERIFY" => {
                 net.error("That code didn't work. Check the email and try again.");
-                sink.send(net.events.drain(..));
+                sink.send(net.drain_events());
             }
             Some(Reply::Failed { message, .. }) => {
                 let plain = failure(&chad_irc::batch::Item::Message(m.clone()));
-                return End::Fatal(plain.unwrap_or(message));
+                return Err(End::Fatal(plain.unwrap_or(message)));
             }
             None => {}
         }
         match m.command.as_str() {
-            "001" => net.info.nick = m.param(0).unwrap_or(&account).to_owned(),
+            "001" => m
+                .param(0)
+                .unwrap_or(&account)
+                .clone_into(&mut net.info.nick),
             "376" | "422" => {
                 if p.guest && p.joining.take().is_some() {
                     net.store.set_meta("origin", &net.info.network.clone());
                     net.store.set_meta("guest", &account);
                 }
-                break net.info.nick.clone();
+                return Ok(net.info.nick.clone());
             }
             // Guests take the next free `nick1`..`nick9`.
             "433" if p.guest && nick_tries < 9 => {
                 nick_tries += 1;
                 out.push(Message::new("NICK", [format!("{account}{nick_tries}")]));
             }
-            "433" if p.guest => return End::Fatal("That nickname is taken.".into()),
-            "433" => return End::Fatal("That username is taken.".into()),
-            "432" => return End::Fatal("That name isn't allowed here.".into()),
+            "433" if p.guest => return Err(End::Fatal("That nickname is taken.".into())),
+            "433" => return Err(End::Fatal("That username is taken.".into())),
+            "432" => return Err(End::Fatal("That name isn't allowed here.".into())),
             "MODE" | "221" => {
                 let _ = net.handle(m);
             }
-            "ERROR" => return End::Lost(m.params.last().cloned().unwrap_or_default()),
+            "ERROR" => return Err(End::Lost(m.params.last().cloned().unwrap_or_default())),
             _ => {}
         }
         for o in out {
-            if let Err(e) = send(&mut ws, &o).await {
-                return lost(e);
+            if let Err(e) = send(ws, &o).await {
+                return Err(lost(e));
             }
         }
-    };
+    }
+}
 
-    net.attach(&nick);
-    backoff.reset();
+/// Once CAP LS is in: subscribe to metadata, then start SASL or a sign-up.
+/// Returns the SASL exchange, if one started.
+fn start_auth(
+    net: &mut Net,
+    p: &Params,
+    password: &str,
+    d: &Discovery,
+    out: &mut Vec<Message>,
+) -> Result<Option<Sasl>, End> {
+    // Before CAP END, so the reattach burst includes everyone's value.
+    if net.caps.enabled("draft/metadata-2") {
+        let keys = [
+            VOICE_KEY,
+            DISPLAY_NAME_KEY,
+            AVATAR_KEY,
+            DEVICES_KEY,
+            CHANNELS_KEY,
+        ];
+        out.push(Message::new(
+            "METADATA",
+            ["*", "SUB"].into_iter().chain(keys),
+        ));
+    }
+    if p.guest {
+        out.push(net.caps.end());
+        return Ok(None);
+    }
+    if let Some(email) = &p.register {
+        if !net.caps.enabled("draft/account-registration") {
+            return Err(End::Fatal(format!("{} isn't taking sign-ups.", d.name)));
+        }
+        // Already signed up: VERIFY works from a fresh connection.
+        if p.verifying.is_none() {
+            out.push(register::register("*", email.as_deref(), password));
+        }
+        return Ok(None);
+    }
+    if !net.caps.enabled("sasl") {
+        return Err(End::Fatal(format!(
+            "{} doesn't support logging in.",
+            d.name
+        )));
+    }
+    let user = format!("{}@{}", p.account, p.device);
+    let mechs = net.caps.value("sasl").unwrap_or_default();
+    let mut s = Sasl::new(&user, password, mechs).map_err(|e| End::Fatal(sasl_error(e)))?;
+    out.push(s.start());
+    Ok(Some(s))
+}
+
+/// Registered: IRC, voice and UI commands until the connection ends.
+async fn live(
+    net: &mut Net,
+    p: &mut Params,
+    password: &str,
+    rx: &mut mpsc::UnboundedReceiver<ToNet>,
+    sink: &Sink,
+    d: &Discovery,
+    mut ws: Connection,
+) -> End {
     let client = Arc::new(chadd::Client::new(
         d.chadd.api.clone(),
         p.account.clone(),
@@ -487,7 +533,7 @@ async fn session(
                 return lost(e);
             }
         }
-        sink.send(net.events.drain(..));
+        sink.send(net.drain_events());
         let push_retry = net.push_retry_at();
         tokio::select! {
             () = tokio::time::sleep_until(push_retry.unwrap_or_else(std::time::Instant::now).into()), if push_retry.is_some() => net.retry_push(),
@@ -590,11 +636,11 @@ async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
         net.guest = false;
         net.info.guest = false;
         init_e2e(net, p).await;
-        sink.send(net.events.drain(..));
+        sink.send(net.drain_events());
     }
     if let Err(e) = p.secrets.save(&origin, &p.account, password).await {
         net.error(format!("{e} You'll need to sign in again next time."));
-        sink.send(net.events.drain(..));
+        sink.send(net.drain_events());
     }
 }
 
@@ -623,7 +669,7 @@ async fn init_e2e(net: &mut Net, p: &Params) {
         Some(k) => k,
         None => {
             let k = chad_e2ee::new_pickle_key();
-            let hex: String = k.iter().map(|b| format!("{b:02x}")).collect();
+            let hex = hex::encode(k);
             if let Err(e) = p.secrets.save(&name, "e2e", &hex).await {
                 return net.error(format!("{e} Encrypted DMs are off for now."));
             }

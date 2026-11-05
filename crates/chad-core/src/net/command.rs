@@ -183,7 +183,8 @@ impl Net {
             NetCommand::Verification { nick, step } => self.verification(&nick, step),
             NetCommand::AcceptKeys { nick } => {
                 let key = self.fold(&nick);
-                self.store.trust(&key, None);
+                let r = self.store.trust(&key, None);
+                self.pin_failed(r);
                 self.emit_buffer(&key);
             }
             NetCommand::RemoveDevice { id } => self.remove_device(&id),
@@ -231,7 +232,7 @@ impl Net {
             account: None,
             kind: MessageKind::Privmsg,
             text: text.to_owned(),
-            reply_to: reply_to.clone(),
+            reply_to,
             status: SendStatus::Pending,
             redacted: false,
             edits,
@@ -278,7 +279,7 @@ impl Net {
         };
         if let Some(why) = fail {
             local.status = SendStatus::Failed(why.into());
-            self.emit_messages(target, vec![local.clone()]);
+            self.emit_messages(target, vec![local]);
             return;
         }
         self.emit_messages(target, vec![local.clone()]);

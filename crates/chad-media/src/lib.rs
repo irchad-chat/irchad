@@ -245,7 +245,7 @@ impl Voice {
     }
 
     pub fn testing(&self) -> bool {
-        self.users.lock().unwrap_or_else(|e| e.into_inner()).1
+        crate::engine::lock(&self.users).1
     }
 
     pub fn call(&self) -> Option<CallState> {
@@ -323,13 +323,13 @@ impl Voice {
     }
 
     fn running(&self) -> bool {
-        let u = *self.users.lock().unwrap_or_else(|e| e.into_inner());
+        let u = *crate::engine::lock(&self.users);
         u.0 > 0 || u.1
     }
 
     /// Starts or stops audio I/O when the reasons to run change.
     pub(crate) fn update(&self, f: impl FnOnce(&mut (u32, bool))) {
-        let mut u = self.users.lock().unwrap_or_else(|e| e.into_inner());
+        let mut u = crate::engine::lock(&self.users);
         let before = u.0 > 0 || u.1;
         f(&mut u);
         let after = u.0 > 0 || u.1;

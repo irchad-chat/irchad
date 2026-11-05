@@ -178,7 +178,7 @@ impl Gifs {
                     }
                 });
                 if self.pending.is_some() {
-                    ui.vertical_centered(|ui| ui.spinner());
+                    ui.vertical_centered(egui::Ui::spinner);
                 } else if let Some(e) = &self.error {
                     ui.label(RichText::new(e).weak());
                     if ui.small_button("Try again").clicked() {

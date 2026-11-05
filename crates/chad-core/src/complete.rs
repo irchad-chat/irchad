@@ -43,7 +43,7 @@ pub fn candidates<'a>(
 /// What can be completed in a buffer: its members, or the other side of a DM
 /// before the member list is in, recent speakers first.
 pub fn completable(
-    members: &Option<Vec<Member>>,
+    members: Option<&[Member]>,
     msgs: &[ChatMessage],
     info: &BufferInfo,
     own: &str,

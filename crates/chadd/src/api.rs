@@ -55,7 +55,7 @@ impl Throttle {
 
     /// Counts an attempt; false once `key` is over the limit.
     pub fn allow(&self, key: String) -> bool {
-        let mut map = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = crate::lock(&self.map);
         let now = Instant::now();
         if map.len() > 10_000 {
             map.retain(|_, (start, _)| now - *start < WINDOW);
@@ -129,7 +129,7 @@ pub async fn check_password(
         .json(&serde_json::json!({ "accountName": account, "passphrase": password }))
         .send()
         .await
-        .and_then(|r| r.error_for_status());
+        .and_then(reqwest::Response::error_for_status);
     let check: CheckAuth = match res {
         Ok(r) => r.json().await.map_err(|e| {
             tracing::error!("ergo check_auth: {e}");

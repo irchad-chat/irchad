@@ -185,7 +185,7 @@ async fn store(
     let name = file_name(&disposition_name(headers), sniff(&body));
     let mut id = [0u8; 16];
     getrandom::fill(&mut id).map_err(|_| internal())?;
-    let id: String = id.iter().map(|b| format!("{b:02x}")).collect();
+    let id = hex::encode(id);
     let dir = cfg.dir.join(&id);
     let write = async {
         tokio::fs::create_dir_all(&dir).await?;

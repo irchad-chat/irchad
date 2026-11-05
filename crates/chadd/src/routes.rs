@@ -47,7 +47,7 @@ impl AppState {
             config,
             discovery,
             http,
-            session_secret: key.iter().map(|b| format!("{b:02x}")).collect(),
+            session_secret: hex::encode(key),
             throttle: api::Throttle::new(api::MAX_ATTEMPTS),
             uploads: api::Throttle::new(30),
             // A page of the GIF picker is 20 thumbnails.

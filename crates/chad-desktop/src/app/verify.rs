@@ -119,7 +119,6 @@ impl App {
             step = Some(VerifyStep::Cancel);
         }
         if let Some(step) = step {
-            let nick = nick.clone();
             self.send(&network, NetCommand::Verification { nick, step });
         }
         if close || (finished && modal.should_close()) {

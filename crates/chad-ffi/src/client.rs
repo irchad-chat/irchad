@@ -4,7 +4,7 @@ use super::*;
 
 impl Client {
     pub(super) fn view(&self) -> MutexGuard<'_, View> {
-        self.view.lock().unwrap_or_else(|e| e.into_inner())
+        chad_core::lock(&self.view)
     }
 
     pub(super) fn net(&self, network: String, cmd: NetCommand) {
@@ -48,7 +48,7 @@ impl Client {
         let l = listener.clone();
         rt.spawn(async move {
             while let Some(ev) = events.recv().await {
-                let applied = v.lock().unwrap_or_else(|e| e.into_inner()).apply(&ev);
+                let applied = chad_core::lock(&v).apply(&ev);
                 match ev {
                     Event::Messages {
                         network,
@@ -56,7 +56,7 @@ impl Client {
                         messages,
                     } => {
                         let notes = notes(
-                            &v.lock().unwrap_or_else(|e| e.into_inner()),
+                            &chad_core::lock(&v),
                             &network,
                             &target,
                             &messages,
@@ -242,7 +242,7 @@ impl Client {
             return Vec::new();
         };
         let own = &v.nets[ni].info.nick;
-        let cands = chad_core::complete::completable(&b.members, &b.msgs, &b.info, own);
+        let cands = chad_core::complete::completable(b.members.as_deref(), &b.msgs, &b.info, own);
         chad_core::complete::suggest(&cands, &format!("@{query}"))
             .unwrap_or_default()
             .into_iter()
@@ -517,7 +517,7 @@ impl Client {
                     network: n.info.network.clone(),
                     name: n.info.name.clone(),
                     nick: n.info.nick.clone(),
-                    icon: n.info.icon.as_ref().map(|u| u.to_string()),
+                    icon: n.info.icon.as_ref().map(std::string::ToString::to_string),
                     status,
                     failed,
                     needs_code,
@@ -585,7 +585,7 @@ impl Client {
                     account: m.account.clone(),
                     avatar: profile
                         .and_then(|p| p.avatar.as_ref())
-                        .map(|u| u.to_string()),
+                        .map(std::string::ToString::to_string),
                     links: links(&spans, &network),
                     text: spans.iter().map(|s| s.text.as_str()).collect(),
                     spans,
@@ -624,7 +624,9 @@ impl Client {
             .and_then(|i| v.nets[i].profiles.get(&chad_core::view::key(&nick)));
         Profile {
             display_name: p.and_then(|p| p.display_name.clone()),
-            avatar: p.and_then(|p| p.avatar.as_ref()).map(|u| u.to_string()),
+            avatar: p
+                .and_then(|p| p.avatar.as_ref())
+                .map(std::string::ToString::to_string),
         }
     }
 

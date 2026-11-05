@@ -56,12 +56,12 @@ pub fn parse(text: &str) -> Vec<Span> {
         }
     };
     while let Some(c) = chars.next() {
-        match c {
-            '\x02' | '\x1d' | '\x1f' | '\x1e' | '\x11' | '\x16' | '\x0f' | '\x03' | '\x04' => {
-                flush(&mut cur, &mut out);
-            }
-            _ => {}
+        if !c.is_control() || matches!(c, '\n' | '\t') {
+            cur.text.push(c);
+            continue;
         }
+        // A style change ends the span; unknown control codes are dropped (D14).
+        flush(&mut cur, &mut out);
         match c {
             '\x02' => cur.bold = !cur.bold,
             '\x1d' => cur.italic = !cur.italic,
@@ -70,57 +70,12 @@ pub fn parse(text: &str) -> Vec<Span> {
             '\x11' => cur.mono = !cur.mono,
             '\x16' => std::mem::swap(&mut cur.fg, &mut cur.bg),
             '\x0f' => cur = Span::default(),
-            '\x03' => {
-                let fg = digits(&mut chars);
-                let bg = if fg.is_some() && chars.peek() == Some(&',') {
-                    let mut look = chars.clone();
-                    look.next();
-                    if look.peek().is_some_and(char::is_ascii_digit) {
-                        chars.next();
-                        digits(&mut chars)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                match fg {
-                    None => (cur.fg, cur.bg) = (None, None),
-                    Some(f) => {
-                        cur.fg = PALETTE.get(f).copied();
-                        if let Some(b) = bg {
-                            cur.bg = PALETTE.get(b).copied();
-                        }
-                    }
-                }
-            }
-            '\x04' => {
-                let fg = hex(&mut chars);
-                let bg = if fg.is_some() && chars.peek() == Some(&',') {
-                    let mut look = chars.clone();
-                    look.next();
-                    if hex(&mut look).is_some() {
-                        chars.next();
-                        hex(&mut chars)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                match fg {
-                    None => (cur.fg, cur.bg) = (None, None),
-                    Some(f) => {
-                        cur.fg = Some(f);
-                        if bg.is_some() {
-                            cur.bg = bg;
-                        }
-                    }
-                }
-            }
-            '\n' | '\t' => cur.text.push(c),
-            c if c.is_control() => {}
-            c => cur.text.push(c),
+            // 16–98 are the extended palette, shown as the default colour.
+            '\x03' => colors(&mut cur, &mut chars, |c| {
+                digits(c).map(|i| PALETTE.get(i).copied())
+            }),
+            '\x04' => colors(&mut cur, &mut chars, |c| hex(c).map(Some)),
+            _ => {}
         }
     }
     flush(&mut cur, &mut out);
@@ -227,7 +182,28 @@ pub fn code_line(spans: &[Span]) -> bool {
     !spans.is_empty() && spans.iter().all(|s| s.mono)
 }
 
-fn digits(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<usize> {
+type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+/// `fg[,bg]` after a colour code, each read by `read`: `None` if absent,
+/// `Some(None)` for "the default colour". No fg at all resets both.
+fn colors(cur: &mut Span, chars: &mut Chars, read: impl Fn(&mut Chars) -> Option<Option<Rgb>>) {
+    let Some(fg) = read(chars) else {
+        (cur.fg, cur.bg) = (None, None);
+        return;
+    };
+    cur.fg = fg;
+    if chars.peek() == Some(&',') {
+        let mut look = chars.clone();
+        look.next();
+        // Only a comma followed by a colour is a bg; otherwise it's text.
+        if read(&mut look).is_some() {
+            chars.next();
+            cur.bg = read(chars).flatten();
+        }
+    }
+}
+
+fn digits(chars: &mut Chars) -> Option<usize> {
     let mut n = None;
     for _ in 0..2 {
         match chars.peek().and_then(|c| c.to_digit(10)) {
@@ -241,7 +217,7 @@ fn digits(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<usize> {
     n
 }
 
-fn hex(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<Rgb> {
+fn hex(chars: &mut Chars) -> Option<Rgb> {
     let mut look = chars.clone();
     let s: String = (0..6)
         .map_while(|_| look.next_if(char::is_ascii_hexdigit))

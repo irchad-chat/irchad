@@ -1074,6 +1074,7 @@ dependencies = [
  "chad-proto",
  "emojis",
  "getrandom 0.3.4",
+ "hex",
  "oo7",
  "reqwest",
  "rusqlite",
@@ -1125,6 +1126,7 @@ name = "chad-e2ee"
 version = "0.1.10"
 dependencies = [
  "getrandom 0.3.4",
+ "hex",
  "sha2 0.10.9",
  "vodozemac",
 ]
@@ -1204,6 +1206,7 @@ dependencies = [
  "base64 0.22.1",
  "chad-proto",
  "getrandom 0.3.4",
+ "hex",
  "http-body-util",
  "livekit-api",
  "reqwest",

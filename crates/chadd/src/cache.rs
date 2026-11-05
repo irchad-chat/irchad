@@ -97,7 +97,7 @@ impl Cache {
             return Ok(hit);
         }
         let mut rx = {
-            let mut inflight = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            let mut inflight = crate::lock(&self.inflight);
             match inflight.get(&key) {
                 Some(rx) => rx.clone(),
                 None => {
@@ -115,10 +115,7 @@ impl Cache {
                             let _ = tokio::task::spawn_blocking(move || d.write(&key, &body)).await;
                         }
                         let _ = tx.send(Some(res));
-                        inflight
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .remove(&key);
+                        crate::lock(&inflight).remove(&key);
                     });
                     rx
                 }
@@ -144,7 +141,7 @@ fn name(key: &str) -> String {
 
 impl Disk {
     fn lock(&self) -> std::sync::MutexGuard<'_, Index> {
-        self.index.lock().unwrap_or_else(|e| e.into_inner())
+        crate::lock(&self.index)
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -166,11 +163,12 @@ impl Disk {
             return None;
         }
         let data = tokio::fs::read(&path).await.ok()?;
-        let body = parse(&data, key)?;
+        let start = data.len() - parse(&data, key)?.len();
         if let Some((_, used)) = self.lock().files.get_mut(&name) {
             *used = SystemTime::now();
         }
-        Some(Bytes::copy_from_slice(body))
+        // The body in place, without copying up to `max_item` bytes again.
+        Some(Bytes::from(data).slice(start..))
     }
 
     fn write(&self, key: &str, body: &[u8]) {

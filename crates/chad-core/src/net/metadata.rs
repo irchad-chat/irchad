@@ -236,3 +236,34 @@ impl Net {
         self.store.set_meta(OFFICIAL_META, &new.join(" "));
     }
 }
+
+impl Net {
+    /// Someone's display name or avatar: `761` is set, `766` unset.
+    pub(super) fn profile_metadata(&mut self, m: &Message) {
+        let value = if m.command == "761" { m.param(4) } else { None };
+        let (Some(nick), Some(key)) = (m.param(1), m.param(2)) else {
+            return;
+        };
+        let folded = self.fold(nick);
+        if !self.profiles.contains_key(&folded) && self.profiles.len() >= MAX_MEMBERS {
+            return;
+        }
+        let p = self.profiles.entry(folded).or_default();
+        if key == DISPLAY_NAME_KEY {
+            p.display_name = value
+                .map(|v| {
+                    v.chars()
+                        .filter(|c| !c.is_control())
+                        .take(MAX_DISPLAY_NAME)
+                        .collect::<String>()
+                })
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty());
+        } else {
+            p.avatar = value
+                .and_then(|v| Url::parse(v).ok())
+                .filter(|u| matches!(u.scheme(), "https" | "http"));
+        }
+        self.emit_profile(nick);
+    }
+}

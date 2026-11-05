@@ -54,21 +54,21 @@ fn list_dir(dir: &Path) -> Vec<Sound> {
             file,
         })
         .collect();
-    sounds.sort_by_key(|a| a.name.to_lowercase());
+    sounds.sort_by_cached_key(|a| a.name.to_lowercase());
     sounds.truncate(MAX_SOUNDS);
     sounds
 }
 
 pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> ApiResult<Vec<Sound>> {
     api::session_account(&state, &headers)?;
-    Ok(Json(
-        state
-            .config
-            .sounds
-            .as_ref()
-            .map(|s| list_dir(&s.dir))
-            .unwrap_or_default(),
-    ))
+    let Some(dir) = state.config.sounds.as_ref().map(|s| s.dir.clone()) else {
+        return Ok(Json(Vec::new()));
+    };
+    // A directory scan with a stat per file: not on the async workers.
+    let sounds = tokio::task::spawn_blocking(move || list_dir(&dir))
+        .await
+        .unwrap_or_default();
+    Ok(Json(sounds))
 }
 
 pub async fn get(

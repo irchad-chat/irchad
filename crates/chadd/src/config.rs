@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::{net::SocketAddr, path::Path};
 
 use anyhow::Context;
@@ -77,11 +78,11 @@ impl Palette {
             ("accent-2", &self.accent_2),
             ("on-accent", &self.on_accent),
         ];
-        fields
-            .iter()
-            .zip(defaults)
-            .map(|((name, c), d)| format!("--{name}: {};", c.as_ref().map_or(d, |c| &c.0)))
-            .collect()
+        let mut css = String::new();
+        for ((name, c), d) in fields.iter().zip(defaults) {
+            let _ = write!(css, "--{name}: {};", c.as_ref().map_or(d, |c| &c.0));
+        }
+        css
     }
 }
 

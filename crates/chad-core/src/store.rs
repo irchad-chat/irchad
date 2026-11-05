@@ -5,9 +5,10 @@
 //! back, and this device's Olm account and sessions, encrypted with a key from
 //! the OS secret store.
 
+use std::collections::HashMap;
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension as _, Row, params};
+use rusqlite::{Connection, OptionalExtension as _, Params, Row, params};
 
 use chad_e2ee::{Changes, Device};
 
@@ -78,6 +79,9 @@ fn ok<T: Default>(what: &str, r: rusqlite::Result<T>) -> T {
     })
 }
 
+const MESSAGE_COLUMNS: &str =
+    "msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited";
+
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         Self::init(Connection::open(path)?)
@@ -106,29 +110,40 @@ impl Store {
         Ok(Self { db })
     }
 
+    /// Runs a statement, prepared once per connection.
+    fn exec(&self, sql: &str, p: impl Params) -> rusqlite::Result<usize> {
+        self.db.prepare_cached(sql)?.execute(p)
+    }
+
+    fn one<T>(
+        &self,
+        sql: &str,
+        p: impl Params,
+        f: impl FnOnce(&Row) -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<Option<T>> {
+        self.db.prepare_cached(sql)?.query_row(p, f).optional()
+    }
+
     pub fn meta(&self, key: &str) -> Option<String> {
         ok(
             "read meta",
-            self.db
-                .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
-                .optional(),
+            self.one("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0)),
         )
     }
 
+    fn try_set_meta(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        self.exec("INSERT OR REPLACE INTO meta VALUES (?1, ?2)", [key, value])
+            .map(drop)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) {
-        ok(
-            "write meta",
-            self.db
-                .execute("INSERT OR REPLACE INTO meta VALUES (?1, ?2)", [key, value])
-                .map(drop),
-        );
+        ok("write meta", self.try_set_meta(key, value));
     }
 
     pub fn delete_meta(&self, key: &str) {
         ok(
             "delete meta",
-            self.db
-                .execute("DELETE FROM meta WHERE key = ?1", [key])
+            self.exec("DELETE FROM meta WHERE key = ?1", [key])
                 .map(drop),
         );
     }
@@ -160,21 +175,19 @@ impl Store {
         let kind = i64::from(kind == BufferKind::Dm);
         ok(
             "write buffer",
-            self.db
-                .execute(
-                    "INSERT INTO buffers (key, name, kind) VALUES (?1, ?2, ?3)
-                     ON CONFLICT (key) DO UPDATE SET name = ?2",
-                    params![key, name, kind],
-                )
-                .map(drop),
+            self.exec(
+                "INSERT INTO buffers (key, name, kind) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (key) DO UPDATE SET name = ?2",
+                params![key, name, kind],
+            )
+            .map(drop),
         );
     }
 
     pub fn set_topic(&self, key: &str, topic: &str) {
         ok(
             "write topic",
-            self.db
-                .execute("UPDATE buffers SET topic = ?2 WHERE key = ?1", [key, topic])
+            self.exec("UPDATE buffers SET topic = ?2 WHERE key = ?1", [key, topic])
                 .map(drop),
         );
     }
@@ -182,48 +195,39 @@ impl Store {
     pub fn set_read(&self, key: &str, time: i64) {
         ok(
             "write read marker",
-            self.db
-                .execute(
-                    "UPDATE buffers SET read = ?2 WHERE key = ?1",
-                    params![key, time],
-                )
-                .map(drop),
+            self.exec(
+                "UPDATE buffers SET read = ?2 WHERE key = ?1",
+                params![key, time],
+            )
+            .map(drop),
         );
     }
 
     pub fn remove_buffer(&self, key: &str) {
-        ok(
-            "remove buffer",
-            self.db
-                .execute_batch("BEGIN")
-                .and_then(|()| {
-                    self.db.execute(
-                        "DELETE FROM reactions WHERE msgid IN (SELECT msgid FROM messages WHERE buffer = ?1)",
-                        [key],
-                    )?;
-                    self.db.execute("DELETE FROM messages WHERE buffer = ?1", [key])?;
-                    self.db.execute("DELETE FROM buffers WHERE key = ?1", [key])?;
-                    self.db.execute_batch("COMMIT")
-                }),
-        );
+        let r = self.atomic(|| {
+            self.exec(
+                "DELETE FROM reactions WHERE msgid IN (SELECT msgid FROM messages WHERE buffer = ?1)",
+                [key],
+            )?;
+            self.exec("DELETE FROM messages WHERE buffer = ?1", [key])?;
+            self.exec("DELETE FROM buffers WHERE key = ?1", [key])
+        });
+        ok("remove buffer", r.map(drop));
     }
 
     /// `draft/channel-rename`: the buffer and its scrollback move to `new`.
     pub fn rename_buffer(&self, old: &str, new: &str, name: &str) {
-        ok(
-            "rename buffer",
-            self.db.execute_batch("BEGIN").and_then(|()| {
-                self.db.execute(
-                    "UPDATE buffers SET key = ?2, name = ?3 WHERE key = ?1",
-                    [old, new, name],
-                )?;
-                self.db.execute(
-                    "UPDATE messages SET buffer = ?2 WHERE buffer = ?1",
-                    [old, new],
-                )?;
-                self.db.execute_batch("COMMIT")
-            }),
-        );
+        let r = self.atomic(|| {
+            self.exec(
+                "UPDATE buffers SET key = ?2, name = ?3 WHERE key = ?1",
+                [old, new, name],
+            )?;
+            self.exec(
+                "UPDATE messages SET buffer = ?2 WHERE buffer = ?1",
+                [old, new],
+            )
+        });
+        ok("rename buffer", r.map(drop));
     }
 
     /// False if a message with this msgid is already stored.
@@ -240,42 +244,98 @@ impl Store {
         };
         ok(
             "write message",
-            self.db
-                .execute(
-                    "INSERT OR IGNORE INTO messages
-                     (buffer, msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                    params![
-                        buffer, m.msgid, m.time, m.nick, m.account, kind, m.text, m.reply_to,
-                        m.redacted, m.mention, m.own, crypt
-                    ],
-                )
-                .map(|n| n == 1),
+            self.exec(
+                "INSERT OR IGNORE INTO messages
+                 (buffer, msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![
+                    buffer, m.msgid, m.time, m.nick, m.account, kind, m.text, m.reply_to,
+                    m.redacted, m.mention, m.own, crypt
+                ],
+            )
+            .map(|n| n == 1),
         )
     }
 
-    /// Wraps many inserts in one transaction.
-    pub fn batch<T>(&self, f: impl FnOnce() -> T) -> T {
-        let began = self.db.execute_batch("BEGIN").is_ok();
-        let out = f();
-        if began {
-            ok("commit", self.db.execute_batch("COMMIT"));
+    /// All of `f` or none of it, nested inside any transaction already open.
+    fn atomic<T>(&self, f: impl FnOnce() -> rusqlite::Result<T>) -> rusqlite::Result<T> {
+        self.db.execute_batch("SAVEPOINT atomic")?;
+        match f() {
+            Ok(v) => self.release().map(|()| v),
+            Err(e) => {
+                self.rollback();
+                Err(e)
+            }
         }
+    }
+
+    /// Never leaves the savepoint open: a failed commit rolls back.
+    fn release(&self) -> rusqlite::Result<()> {
+        self.db
+            .execute_batch("RELEASE atomic")
+            .inspect_err(|_| self.rollback())
+    }
+
+    fn rollback(&self) {
+        let _ = self.db.execute_batch("ROLLBACK TO atomic; RELEASE atomic");
+    }
+
+    /// Starts many writes in one transaction (nested in any open one), for
+    /// when `batch` can't hold the store across them. False if it couldn't;
+    /// pass that to `commit`.
+    pub fn begin(&self) -> bool {
+        ok(
+            "begin",
+            self.db.execute_batch("SAVEPOINT atomic").map(|()| true),
+        )
+    }
+
+    /// Ends `begin`'s transaction; each failed write was logged, the rest kept.
+    pub fn commit(&self, began: bool) {
+        if began {
+            ok("commit", self.release());
+        }
+    }
+
+    /// `f`'s writes in one transaction.
+    #[cfg(test)]
+    pub fn batch<T>(&self, f: impl FnOnce() -> T) -> T {
+        let began = self.begin();
+        let out = f();
+        self.commit(began);
         out
     }
 
     /// The newest `limit` messages of a buffer, oldest first.
     pub fn recent(&self, buffer: &str, limit: u32) -> Vec<ChatMessage> {
         let read = || {
-            let mut st = self.db.prepare(
-                "SELECT * FROM (SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited
-                 FROM messages WHERE buffer = ?1 ORDER BY time DESC, id DESC LIMIT ?2) ORDER BY time, msgid",
-            )?;
+            let mut st = self.db.prepare_cached(&format!(
+                "SELECT * FROM (SELECT {MESSAGE_COLUMNS}
+                 FROM messages WHERE buffer = ?1 ORDER BY time DESC, id DESC LIMIT ?2) ORDER BY time, msgid"
+            ))?;
             st.query_map(params![buffer, limit], row)?.collect()
         };
         let mut out: Vec<ChatMessage> = ok("read messages", read());
+        // One query for all their reactions, not one per message.
+        let read = || {
+            let mut st = self.db.prepare_cached(
+                "SELECT r.msgid, r.emoji, r.nick FROM reactions r WHERE r.msgid IN
+                 (SELECT msgid FROM messages WHERE buffer = ?1 AND msgid IS NOT NULL
+                  ORDER BY time DESC, id DESC LIMIT ?2) ORDER BY r.rowid",
+            )?;
+            st.query_map(params![buffer, limit], |r| {
+                Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .collect::<rusqlite::Result<Vec<(String, String, String)>>>()
+        };
+        let mut by_msg: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        for (msgid, emoji, nick) in ok("read reactions", read()) {
+            by_msg.entry(msgid).or_default().push((emoji, nick));
+        }
         for m in &mut out {
-            m.reactions = self.reactions(m.msgid.as_deref().unwrap_or_default());
+            if let Some(rows) = m.msgid.as_deref().and_then(|id| by_msg.remove(id)) {
+                m.reactions = group(rows);
+            }
         }
         out
     }
@@ -284,14 +344,11 @@ impl Store {
     pub fn get(&self, msgid: &str) -> Option<(String, ChatMessage)> {
         let found = ok(
             "read message",
-            self.db
-                .query_row(
-                    "SELECT msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited, buffer
-                     FROM messages WHERE msgid = ?1",
-                    [msgid],
-                    |r| Ok((r.get(12)?, row(r)?)),
-                )
-                .optional(),
+            self.one(
+                &format!("SELECT {MESSAGE_COLUMNS}, buffer FROM messages WHERE msgid = ?1"),
+                [msgid],
+                |r| Ok((r.get(12)?, row(r)?)),
+            ),
         );
         found.map(|(b, mut m): (String, ChatMessage)| {
             m.reactions = self.reactions(msgid);
@@ -302,12 +359,11 @@ impl Store {
     pub fn redact(&self, msgid: &str) {
         ok(
             "redact",
-            self.db
-                .execute(
-                    "UPDATE messages SET redacted = 1, text = '' WHERE msgid = ?1",
-                    [msgid],
-                )
-                .map(drop),
+            self.exec(
+                "UPDATE messages SET redacted = 1, text = '' WHERE msgid = ?1",
+                [msgid],
+            )
+            .map(drop),
         );
     }
 
@@ -315,106 +371,78 @@ impl Store {
     pub fn edit(&self, msgid: &str, text: &str, time: i64) -> bool {
         ok(
             "edit",
-            self.db
-                .execute(
-                    "UPDATE messages SET text = ?2, edited = ?3
-                     WHERE msgid = ?1 AND redacted = 0 AND edited < ?3",
-                    params![msgid, text, time],
-                )
-                .map(|n| n == 1),
+            self.exec(
+                "UPDATE messages SET text = ?2, edited = ?3
+                 WHERE msgid = ?1 AND redacted = 0 AND edited < ?3",
+                params![msgid, text, time],
+            )
+            .map(|n| n == 1),
         )
     }
 
     pub fn react(&self, msgid: &str, nick: &str, emoji: &str, add: bool) {
-        if !add {
-            ok(
-                "remove reaction",
-                self.db
-                    .execute(
-                        "DELETE FROM reactions WHERE msgid = ?1 AND nick = ?2 AND emoji = ?3",
-                        [msgid, nick, emoji],
-                    )
-                    .map(drop),
-            );
-            return;
-        }
-        let count: i64 = ok(
-            "count reactions",
-            self.db.query_row(
-                "SELECT count(*) FROM reactions WHERE msgid = ?1",
-                [msgid],
-                |r| r.get(0),
-            ),
-        );
-        if count < MAX_REACTIONS {
-            ok(
-                "write reaction",
-                self.db
-                    .execute(
-                        "INSERT OR IGNORE INTO reactions VALUES (?1, ?2, ?3)",
-                        [msgid, nick, emoji],
-                    )
-                    .map(drop),
-            );
-        }
+        let r = if add {
+            // The cap is checked in the same statement, so a full message takes no more.
+            self.exec(
+                "INSERT OR IGNORE INTO reactions SELECT ?1, ?2, ?3
+                 WHERE (SELECT count(*) FROM reactions WHERE msgid = ?1) < ?4",
+                params![msgid, nick, emoji, MAX_REACTIONS],
+            )
+        } else {
+            self.exec(
+                "DELETE FROM reactions WHERE msgid = ?1 AND nick = ?2 AND emoji = ?3",
+                [msgid, nick, emoji],
+            )
+        };
+        ok("write reaction", r.map(drop));
     }
 
     fn reactions(&self, msgid: &str) -> Vec<Reaction> {
         let read = || {
-            let mut st = self
-                .db
-                .prepare("SELECT emoji, nick FROM reactions WHERE msgid = ?1 ORDER BY rowid")?;
+            let mut st = self.db.prepare_cached(
+                "SELECT emoji, nick FROM reactions WHERE msgid = ?1 ORDER BY rowid",
+            )?;
             st.query_map([msgid], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<(String, String)>>>()
         };
-        let mut out: Vec<Reaction> = Vec::new();
-        for (emoji, nick) in ok("read reactions", read()) {
-            match out.iter_mut().find(|r| r.emoji == emoji) {
-                Some(r) => r.nicks.push(nick),
-                None => out.push(Reaction {
-                    emoji,
-                    nicks: vec![nick],
-                }),
-            }
-        }
-        out
+        group(ok("read reactions", read()))
     }
 
     /// `(unread, mentions)` from other people after the read marker.
     pub fn counts(&self, buffer: &str, read: Option<i64>) -> (u32, u32) {
         ok(
             "count unread",
-            self.db.query_row(
+            self.one(
                 "SELECT count(*), coalesce(sum(mention), 0) FROM messages
                  WHERE buffer = ?1 AND own = 0 AND redacted = 0 AND time > ?2",
                 params![buffer, read.unwrap_or(i64::MIN)],
                 |r| Ok((r.get(0)?, r.get(1)?)),
-            ),
+            )
+            .map(Option::unwrap_or_default),
         )
     }
 
     /// `(msgid, time)` of the newest message with an id.
     pub fn newest(&self, buffer: &str) -> Option<(String, i64)> {
-        self.edge(buffer, "DESC")
+        self.edge(
+            "SELECT msgid, time FROM messages WHERE buffer = ?1 AND msgid IS NOT NULL
+             ORDER BY time DESC LIMIT 1",
+            buffer,
+        )
     }
 
     pub fn oldest(&self, buffer: &str) -> Option<(String, i64)> {
-        self.edge(buffer, "ASC")
+        self.edge(
+            "SELECT msgid, time FROM messages WHERE buffer = ?1 AND msgid IS NOT NULL
+             ORDER BY time ASC LIMIT 1",
+            buffer,
+        )
     }
 
-    fn edge(&self, buffer: &str, order: &str) -> Option<(String, i64)> {
+    fn edge(&self, sql: &str, buffer: &str) -> Option<(String, i64)> {
         ok(
             "read edge",
-            self.db
-                .query_row(
-                    &format!(
-                        "SELECT msgid, time FROM messages WHERE buffer = ?1 AND msgid IS NOT NULL
-                         ORDER BY time {order} LIMIT 1"
-                    ),
-                    [buffer],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional(),
+            self.one(sql, [buffer], |r| Ok((r.get(0)?, r.get(1)?))),
         )
     }
 
@@ -422,8 +450,8 @@ impl Store {
     pub fn latest_time(&self) -> Option<i64> {
         ok(
             "read latest",
-            self.db
-                .query_row("SELECT max(time) FROM messages", [], |r| r.get(0)),
+            self.one("SELECT max(time) FROM messages", [], |r| r.get(0))
+                .map(Option::flatten),
         )
     }
 
@@ -438,40 +466,32 @@ impl Store {
         ok("read sessions", read())
     }
 
-    pub fn save_e2e(&self, c: Changes) {
+    /// All or nothing: Olm state that no server can give back.
+    pub fn save_e2e(&self, c: &Changes) -> rusqlite::Result<()> {
         let now = crate::time::now_ms();
-        self.batch(|| {
+        self.atomic(|| {
             if let Some(a) = &c.account {
-                self.set_meta("e2e_account", a);
+                self.try_set_meta("e2e_account", a)?;
             }
             for (id, peer, pickle) in &c.sessions {
-                ok(
-                    "write session",
-                    self.db
-                        .execute(
-                            "INSERT OR REPLACE INTO e2e_sessions VALUES (?1, ?2, ?3, ?4)",
-                            params![id, peer, pickle, now],
-                        )
-                        .map(drop),
-                );
+                self.exec(
+                    "INSERT OR REPLACE INTO e2e_sessions VALUES (?1, ?2, ?3, ?4)",
+                    params![id, peer, pickle, now],
+                )?;
             }
             for id in &c.removed {
-                ok(
-                    "remove session",
-                    self.db
-                        .execute("DELETE FROM e2e_sessions WHERE id = ?1", [id])
-                        .map(drop),
-                );
+                self.exec("DELETE FROM e2e_sessions WHERE id = ?1", [id])?;
             }
-        });
+            Ok(())
+        })
     }
 
     /// Everyone's pinned devices, under their folded nick.
     pub fn pins(&self, nick: &str) -> Vec<Pin> {
         let read = || {
-            let mut st = self
-                .db
-                .prepare("SELECT id, record, verified, changed FROM e2e_pins WHERE nick = ?1")?;
+            let mut st = self.db.prepare_cached(
+                "SELECT id, record, verified, changed FROM e2e_pins WHERE nick = ?1",
+            )?;
             st.query_map([nick], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -494,31 +514,47 @@ impl Store {
             .collect()
     }
 
-    pub fn put_pin(&self, nick: &str, id: &str, record: &str, verified: bool, changed: bool) {
-        ok(
-            "write pin",
-            self.db
-                .execute(
-                    "INSERT OR REPLACE INTO e2e_pins VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![nick, id, record, verified, changed],
-                )
-                .map(drop),
-        );
+    pub fn put_pin(
+        &self,
+        nick: &str,
+        id: &str,
+        record: &str,
+        verified: bool,
+        changed: bool,
+    ) -> rusqlite::Result<()> {
+        self.exec(
+            "INSERT OR REPLACE INTO e2e_pins VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![nick, id, record, verified, changed],
+        )
+        .map(drop)
     }
 
     /// Someone's device was verified, or (`id` = `None`) all their key changes accepted.
-    pub fn trust(&self, nick: &str, id: Option<&str>) {
-        let r = match id {
-            Some(id) => self.db.execute(
+    pub fn trust(&self, nick: &str, id: Option<&str>) -> rusqlite::Result<()> {
+        match id {
+            Some(id) => self.exec(
                 "UPDATE e2e_pins SET verified = 1, changed = 0 WHERE nick = ?1 AND id = ?2",
                 [nick, id],
             ),
-            None => self
-                .db
-                .execute("UPDATE e2e_pins SET changed = 0 WHERE nick = ?1", [nick]),
-        };
-        ok("write trust", r.map(drop));
+            None => self.exec("UPDATE e2e_pins SET changed = 0 WHERE nick = ?1", [nick]),
+        }
+        .map(drop)
     }
+}
+
+/// `(emoji, nick)` rows, in order, as one reaction per emoji.
+fn group(rows: Vec<(String, String)>) -> Vec<Reaction> {
+    let mut out: Vec<Reaction> = Vec::new();
+    for (emoji, nick) in rows {
+        match out.iter_mut().find(|r| r.emoji == emoji) {
+            Some(r) => r.nicks.push(nick),
+            None => out.push(Reaction {
+                emoji,
+                nicks: vec![nick],
+            }),
+        }
+    }
+    out
 }
 
 fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
@@ -554,21 +590,10 @@ fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
 pub(crate) fn msg(msgid: &str, time: i64, nick: &str, text: &str) -> ChatMessage {
     ChatMessage {
         msgid: Some(msgid.into()),
-        local_id: None,
         time,
         nick: nick.into(),
-        account: None,
-        kind: MessageKind::Privmsg,
         text: text.into(),
-        reply_to: None,
-        status: SendStatus::Sent,
-        redacted: false,
-        edits: None,
-        edited: false,
-        reactions: Vec::new(),
-        mention: false,
-        own: false,
-        crypt: Crypt::Plain,
+        ..Default::default()
     }
 }
 
@@ -608,6 +633,41 @@ mod tests {
 
         s.remove_buffer("#a");
         assert!(s.buffers().is_empty() && s.recent("#a", 10).is_empty());
+    }
+
+    #[test]
+    fn transactions_never_stay_open() {
+        let s = Store::memory();
+        s.batch(|| {
+            s.batch(|| s.insert("#a", &msg("m1", 1, "bob", "x")));
+            s.remove_buffer("#a");
+        });
+        assert!(s.db.is_autocommit());
+        assert!(s.recent("#a", 10).is_empty());
+        // A failing E2EE save rolls back whole and leaves no transaction open.
+        s.db.execute_batch("DROP TABLE e2e_sessions").unwrap();
+        let c = Changes {
+            account: Some("acct".into()),
+            sessions: vec![("id".into(), "peer".into(), "p".into())],
+            removed: vec![],
+        };
+        assert!(s.save_e2e(&c).is_err());
+        assert!(s.db.is_autocommit());
+        assert_eq!(s.meta("e2e_account"), None);
+    }
+
+    #[test]
+    fn recent_carries_reactions() {
+        let s = Store::memory();
+        for i in 0..3 {
+            s.insert("#a", &msg(&format!("m{i}"), i, "bob", "x"));
+        }
+        s.react("m2", "bob", "👍", true);
+        s.react("m2", "amy", "👍", true);
+        s.react("m0", "amy", "x", true);
+        let r = s.recent("#a", 2);
+        assert!(r[0].reactions.is_empty());
+        assert_eq!(r[1].reactions[0].nicks, ["bob", "amy"]);
     }
 
     #[test]

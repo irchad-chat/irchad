@@ -116,7 +116,7 @@ async fn get(state: &AppState, url: &str, max: usize) -> Result<(Url, Vec<u8>), 
         .get(url)
         .send()
         .await
-        .and_then(|r| r.error_for_status())
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|e| {
             tracing::info!("fetch: {e}");
             StatusCode::BAD_GATEWAY

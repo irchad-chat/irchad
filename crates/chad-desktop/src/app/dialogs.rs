@@ -5,6 +5,18 @@ use super::*;
 
 impl App {
     pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
+        self.share_dialog(ctx);
+        self.join_dialog(ctx);
+        self.signup_dialog(ctx);
+        self.email_code_dialog(ctx);
+        self.remove_dialog(ctx);
+        self.settings_window(ctx);
+        self.update_banner(ctx);
+        self.toasts(ctx);
+    }
+
+    /// The screen-share picker.
+    fn share_dialog(&mut self, ctx: &egui::Context) {
         if let Some(d) = &mut self.share_dialog {
             let s = &mut self.settings;
             match d.show(ctx, &self.voice, &mut s.screen, &mut s.restore_token) {
@@ -18,6 +30,10 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Joining a network from an invite.
+    fn join_dialog(&mut self, ctx: &egui::Context) {
         if let Some(j) = &mut self.join {
             let mut submit = false;
             let mut cancel = false;
@@ -125,16 +141,15 @@ impl App {
                 self.join = None;
             }
         }
+    }
 
-        if let Some(s) = &mut self.signup {
+    /// Signing up a guest.
+    fn signup_dialog(&mut self, ctx: &egui::Context) {
+        if let Some(name) = self.signup.as_ref().map(|s| self.net_name(&s.network))
+            && let Some(s) = &mut self.signup
+        {
             let mut submit = false;
             let mut cancel = false;
-            let name = self
-                .view
-                .nets
-                .iter()
-                .find(|n| n.info.network == s.network)
-                .map_or(s.network.clone(), |n| n.info.name.clone());
             let modal = egui::Modal::new(egui::Id::unique("signup")).show(ctx, |ui| {
                 ui.set_width(360.0);
                 ui.heading(format!("Create an account on {name}"));
@@ -197,7 +212,10 @@ impl App {
                 self.signup = None;
             }
         }
+    }
 
+    /// The code from the sign-up email.
+    fn email_code_dialog(&mut self, ctx: &egui::Context) {
         if let Some(ni) = self.current.as_deref().and_then(|c| self.net_idx(c))
             && let ConnState::NeedsVerification { message } = &self.view.nets[ni].info.state
             && self.verify_dismissed.as_deref() != Some(&self.view.nets[ni].info.network)
@@ -227,11 +245,12 @@ impl App {
                 self.verify_dismissed = Some(network);
             }
         }
+    }
 
+    /// Confirming a network's removal.
+    fn remove_dialog(&mut self, ctx: &egui::Context) {
         if let Some(network) = self.confirm_remove.clone() {
-            let name = self
-                .net_idx(&network)
-                .map_or(network.clone(), |i| self.view.nets[i].info.name.clone());
+            let name = self.net_name(&network);
             let mut close = false;
             let modal = egui::Modal::new(egui::Id::unique("remove")).show(ctx, |ui| {
                 ui.heading(format!("Leave {name}?"));
@@ -260,7 +279,10 @@ impl App {
                 self.confirm_remove = None;
             }
         }
+    }
 
+    /// The settings window.
+    fn settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_settings;
         egui::Window::new("Settings")
             .open(&mut open)
@@ -309,6 +331,10 @@ impl App {
         self.switcher_ui(ctx);
         self.profile_ui(ctx);
         self.verify_ui(ctx);
+    }
+
+    /// A newer release is out.
+    fn update_banner(&mut self, ctx: &egui::Context) {
         if let Some((version, url)) = self.new_version.clone() {
             let mut close = false;
             egui::Area::new(egui::Id::unique("update"))
@@ -329,6 +355,10 @@ impl App {
         }
 
         self.toasts.retain(|(_, t)| t.elapsed() < TOAST_TTL);
+    }
+
+    /// Errors and notices, bottom right.
+    fn toasts(&mut self, ctx: &egui::Context) {
         if !self.toasts.is_empty() {
             ctx.request_repaint_after(Duration::from_secs(1));
             egui::Area::new(egui::Id::unique("toasts"))
@@ -650,15 +680,14 @@ impl App {
         }
         if choose {
             let (tx, ctx) = (self.files.0.clone(), ctx.clone());
-            let network = network.clone();
+            let (network, max) = (network.clone(), self.upload_limit(&network));
             tokio::spawn(async move {
                 let pick = rfd::AsyncFileDialog::new()
                     .add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp"])
                     .pick_file()
                     .await;
                 if let Some(f) = pick {
-                    let _ = tx.send((network, None, f.path().to_owned()));
-                    ctx.request_repaint();
+                    read_picked(tx, ctx, network, None, f.path().to_owned(), max);
                 }
             });
         }

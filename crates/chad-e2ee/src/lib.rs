@@ -30,7 +30,7 @@ pub fn valid_id(id: &str) -> bool {
 fn random_id() -> String {
     let mut b = [0u8; 8];
     let _ = getrandom::fill(&mut b);
-    b.iter().map(|b| format!("{b:02x}")).collect()
+    hex::encode(b)
 }
 
 /// A new key for the pickles, kept in the OS secret store.
@@ -96,6 +96,25 @@ pub struct Changes {
     pub sessions: Vec<(String, String, String)>,
     /// Session IDs to delete.
     pub removed: Vec<String>,
+}
+
+impl Changes {
+    pub fn is_empty(&self) -> bool {
+        self.account.is_none() && self.sessions.is_empty() && self.removed.is_empty()
+    }
+
+    /// Folds in `newer`, taken after these failed to save, so one save covers both.
+    pub fn absorb(&mut self, newer: Changes) {
+        if newer.account.is_some() {
+            self.account = newer.account;
+        }
+        self.sessions
+            .retain(|(id, _, _)| !newer.sessions.iter().any(|(n, _, _)| n == id));
+        self.sessions.extend(newer.sessions);
+        self.removed.extend(newer.removed);
+        let removed = &self.removed;
+        self.sessions.retain(|(id, _, _)| !removed.contains(id));
+    }
 }
 
 /// This device's Olm account and its sessions.
@@ -682,6 +701,25 @@ mod tests {
         let mut c = Olm::new();
         let m = c.encrypt(&old, "late").unwrap();
         assert_eq!(b.decrypt(c.device("c1").curve, &m).as_deref(), Some("late"));
+    }
+
+    #[test]
+    fn changes_absorb_newer() {
+        let s = |id: &str, p: &str| (id.to_owned(), "peer".to_owned(), p.to_owned());
+        let mut old = Changes {
+            account: Some("a1".into()),
+            sessions: vec![s("x", "1"), s("y", "1")],
+            removed: vec![],
+        };
+        old.absorb(Changes {
+            account: None,
+            sessions: vec![s("x", "2"), s("z", "1")],
+            removed: vec!["y".into()],
+        });
+        assert_eq!(old.account.as_deref(), Some("a1"));
+        assert_eq!(old.sessions, [s("x", "2"), s("z", "1")]);
+        assert_eq!(old.removed, ["y"]);
+        assert!(!old.is_empty() && Changes::default().is_empty());
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! position, textures) on `N` and `B`; those come and go with the network or
 //! buffer they belong to, and follow a buffer through a rename.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use url::Url;
@@ -65,9 +65,9 @@ pub struct Buf<B = ()> {
     pub key: String,
     pub info: BufferInfo,
     /// Sorted by time.
-    pub msgs: Vec<ChatMessage>,
+    pub msgs: Msgs,
     /// `None` until fetched (`NetCommand::Members`), and again after a reconnect.
-    pub members: Option<Vec<Member>>,
+    pub members: Option<std::sync::Arc<[Member]>>,
     typing: Vec<(String, Instant)>,
     /// Scrollback reaches the start of the history.
     pub history_start: bool,
@@ -152,9 +152,7 @@ impl<B> Buf<B> {
     }
 
     pub fn index_of(&self, msgid: &str) -> Option<usize> {
-        self.msgs
-            .iter()
-            .rposition(|m| m.msgid.as_deref() == Some(msgid))
+        self.msgs.position(msgid)
     }
 }
 
@@ -162,23 +160,114 @@ fn same_msg(a: &ChatMessage, b: &ChatMessage) -> bool {
     (a.msgid.is_some() && a.msgid == b.msgid) || (a.local_id.is_some() && a.local_id == b.local_id)
 }
 
-/// Merges new or updated messages, keeping `msgs` sorted by time.
-fn merge(msgs: &mut Vec<ChatMessage>, incoming: &[ChatMessage], out: &mut Applied) {
-    for (from, m) in incoming.iter().enumerate() {
-        if let Some(i) = msgs.iter().rposition(|x| same_msg(x, m)) {
-            if msgs[i].time == m.time {
-                msgs[i] = m.clone();
-                out.edits.push(Edit::Replaced(i));
-                continue;
-            }
-            msgs.remove(i);
-            out.edits.push(Edit::Removed(i));
-        } else {
-            out.fresh.push(from);
+/// A buffer's messages, sorted by time, with their ids indexed so telling a
+/// new message from an update doesn't scan them all.
+#[derive(Debug, Default)]
+pub struct Msgs {
+    list: Vec<ChatMessage>,
+    msgids: HashSet<String>,
+    locals: HashSet<u64>,
+}
+
+impl std::ops::Deref for Msgs {
+    type Target = [ChatMessage];
+    fn deref(&self) -> &[ChatMessage] {
+        &self.list
+    }
+}
+
+impl Msgs {
+    /// Where the message with this id is; a miss costs no scan.
+    pub fn position(&self, msgid: &str) -> Option<usize> {
+        if !self.msgids.contains(msgid) {
+            return None;
         }
-        let at = msgs.partition_point(|x| x.time <= m.time);
-        msgs.insert(at, m.clone());
-        out.edits.push(Edit::Inserted { at, from });
+        self.list
+            .iter()
+            .rposition(|m| m.msgid.as_deref() == Some(msgid))
+    }
+
+    fn holds(&self, m: &ChatMessage) -> bool {
+        m.msgid.as_ref().is_some_and(|i| self.msgids.contains(i))
+            || m.local_id.is_some_and(|i| self.locals.contains(&i))
+    }
+
+    fn index(&mut self, m: &ChatMessage) {
+        self.msgids.extend(m.msgid.clone());
+        self.locals.extend(m.local_id);
+    }
+
+    fn unindex(&mut self, m: &ChatMessage) {
+        if let Some(i) = &m.msgid {
+            self.msgids.remove(i);
+        }
+        if let Some(i) = m.local_id {
+            self.locals.remove(&i);
+        }
+    }
+
+    /// Where `m`'s earlier copy is. Looks among the same timestamp first, since
+    /// most updates (reactions, redactions, edits) keep it.
+    fn find(&self, m: &ChatMessage) -> Option<usize> {
+        let from = self.list.partition_point(|x| x.time < m.time);
+        let to = self.list.partition_point(|x| x.time <= m.time);
+        (from..to)
+            .find(|&i| same_msg(&self.list[i], m))
+            .or_else(|| self.list.iter().rposition(|x| same_msg(x, m)))
+    }
+
+    /// Merges new or updated messages, keeping them sorted by time. Inserts
+    /// are reported in ascending order of where they ended up.
+    fn merge(&mut self, incoming: &[ChatMessage], out: &mut Applied) {
+        // A later copy of a message in the same batch wins.
+        let (mut ids, mut locals) = (HashSet::new(), HashSet::new());
+        let mut keep = vec![false; incoming.len()];
+        for (i, m) in incoming.iter().enumerate().rev() {
+            // `|`, not `||`: both ids are recorded.
+            let dup = m.msgid.as_deref().is_some_and(|id| !ids.insert(id))
+                | m.local_id.is_some_and(|l| !locals.insert(l));
+            keep[i] = !dup;
+        }
+        let mut new: Vec<(usize, &ChatMessage)> = Vec::new();
+        for (from, m) in incoming.iter().enumerate().filter(|(i, _)| keep[*i]) {
+            match self.holds(m).then(|| self.find(m)).flatten() {
+                Some(i) if self.list[i].time == m.time => {
+                    let old = std::mem::replace(&mut self.list[i], m.clone());
+                    self.unindex(&old);
+                    self.index(m);
+                    out.edits.push(Edit::Replaced(i));
+                }
+                Some(i) => {
+                    let old = self.list.remove(i);
+                    self.unindex(&old);
+                    out.edits.push(Edit::Removed(i));
+                    new.push((from, m));
+                }
+                None => {
+                    out.fresh.push(from);
+                    new.push((from, m));
+                }
+            }
+        }
+        if new.is_empty() {
+            return;
+        }
+        // Stable, so equal times keep their order, after the ones already held.
+        new.sort_by_key(|(_, m)| m.time);
+        let start = self.list.partition_point(|x| x.time <= new[0].1.time);
+        let mut tail = self.list.split_off(start).into_iter().peekable();
+        self.list.reserve(new.len() + tail.len());
+        for (from, m) in new {
+            self.list
+                .extend(std::iter::from_fn(|| tail.next_if(|x| x.time <= m.time)));
+            out.edits.push(Edit::Inserted {
+                at: self.list.len(),
+                from,
+            });
+            self.index(m);
+            self.list.push(m.clone());
+        }
+        self.list.extend(tail);
     }
 }
 
@@ -246,7 +335,7 @@ impl<N: Default, B: Default> View<N, B> {
                         n.buffers.push(Buf {
                             key: k,
                             info: buffer.clone(),
-                            msgs: Vec::new(),
+                            msgs: Msgs::default(),
                             members: None,
                             typing: Vec::new(),
                             history_start: false,
@@ -287,7 +376,7 @@ impl<N: Default, B: Default> View<N, B> {
                 let Some(b) = self.buf_mut(network, target) else {
                     return out;
                 };
-                merge(&mut b.msgs, messages, &mut out);
+                b.msgs.merge(messages, &mut out);
                 for &i in &out.fresh {
                     b.typing.retain(|(nick, _)| *nick != messages[i].nick);
                 }
@@ -303,7 +392,7 @@ impl<N: Default, B: Default> View<N, B> {
                 members,
             } => {
                 if let Some(b) = self.buf_mut(network, channel) {
-                    b.members = Some(members.clone());
+                    b.members = Some(std::sync::Arc::clone(members));
                 }
             }
             Event::Typing {
@@ -332,7 +421,7 @@ impl<N: Default, B: Default> View<N, B> {
                 nicks,
             } => {
                 if let Some(b) = self.buf_mut(network, channel) {
-                    b.voice = nicks.clone();
+                    b.voice.clone_from(nicks);
                 }
             }
             Event::Profile {
@@ -363,7 +452,7 @@ impl<N: Default, B: Default> View<N, B> {
                 result: Ok(list),
             } => {
                 if let Some(i) = self.net(network) {
-                    self.nets[i].sounds = list.clone();
+                    self.nets[i].sounds.clone_from(list);
                 }
             }
             _ => {}
@@ -375,27 +464,10 @@ impl<N: Default, B: Default> View<N, B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Crypt, Encryption, MessageKind, SendStatus};
+    use crate::{Encryption, SendStatus};
 
     fn msg(id: &str, time: i64) -> ChatMessage {
-        ChatMessage {
-            msgid: Some(id.into()),
-            local_id: None,
-            time,
-            nick: "a".into(),
-            account: None,
-            kind: MessageKind::Privmsg,
-            text: "hi".into(),
-            reply_to: None,
-            status: SendStatus::Sent,
-            redacted: false,
-            edits: None,
-            edited: false,
-            reactions: vec![],
-            mention: false,
-            own: false,
-            crypt: Crypt::Plain,
-        }
+        crate::store::msg(id, time, "a", "hi")
     }
 
     fn net(state: ConnState) -> Event {
@@ -447,8 +519,8 @@ mod tests {
         assert_eq!(
             a.edits,
             [
-                Edit::Inserted { at: 0, from: 0 },
-                Edit::Inserted { at: 0, from: 1 }
+                Edit::Inserted { at: 0, from: 1 },
+                Edit::Inserted { at: 1, from: 0 }
             ]
         );
         let a = v.apply(&messages("#a", vec![msg("a", 1)]));
@@ -471,6 +543,42 @@ mod tests {
         let b = v.buf("https://n", "#a").unwrap();
         let ids: Vec<_> = b.msgs.iter().map(|m| m.msgid.clone().unwrap()).collect();
         assert_eq!(ids, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn merge_interleaves_a_page_and_dedupes_within_it() {
+        let mut v = View::<(), ()>::default();
+        v.apply(&net(ConnState::Connected));
+        v.apply(&buffer("#a", BufferKind::Channel));
+        v.apply(&messages("#a", vec![msg("b", 20), msg("d", 40)]));
+        let mut later = msg("c", 30);
+        later.text = "second".into();
+        let a = v.apply(&messages(
+            "#a",
+            vec![
+                msg("e", 50),
+                msg("c", 30),
+                msg("a", 10),
+                later,
+                msg("b", 20),
+            ],
+        ));
+        assert_eq!(
+            a.edits,
+            [
+                Edit::Replaced(0),
+                Edit::Inserted { at: 0, from: 2 },
+                Edit::Inserted { at: 2, from: 3 },
+                Edit::Inserted { at: 4, from: 0 },
+            ]
+        );
+        assert_eq!(a.fresh, [0, 2, 3]);
+        let b = v.buf("https://n", "#a").unwrap();
+        let ids: Vec<_> = b.msgs.iter().map(|m| m.msgid.clone().unwrap()).collect();
+        assert_eq!(ids, ["a", "b", "c", "d", "e"]);
+        assert_eq!(b.msgs[2].text, "second");
+        assert_eq!(b.index_of("c"), Some(2));
+        assert_eq!(b.index_of("zz"), None);
     }
 
     #[test]
@@ -500,7 +608,7 @@ mod tests {
         v.apply(&Event::Members {
             network: "https://n".into(),
             channel: "#a".into(),
-            members: vec![],
+            members: Vec::new().into(),
         });
         assert!(v.buf("https://n", "#a").unwrap().members.is_some());
         v.apply(&net(ConnState::Disconnected { error: "x".into() }));

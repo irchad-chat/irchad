@@ -43,7 +43,7 @@ const SILENT_DB: f32 = -100.0;
 pub const CUE_LEN: usize = RATE as usize / 4;
 
 pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// What a source carries; each has its own volume.

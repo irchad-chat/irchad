@@ -165,16 +165,19 @@ impl App {
         if c.attach {
             let (tx, ctx) = (self.files.0.clone(), ui.ctx().clone());
             let (network, target) = (network.clone(), target.clone());
+            let max = self.upload_limit(&network);
             tokio::spawn(async move {
                 if let Some(f) = rfd::AsyncFileDialog::new().pick_file().await {
-                    let _ = tx.send((network, Some(target), f.path().to_owned()));
-                    ctx.request_repaint();
+                    read_picked(tx, ctx, network, Some(target), f.path().to_owned(), max);
                 }
             });
         }
         for p in c.pasted {
             match p {
-                Pasted::File(path) => self.upload_file(&network, Some(target.clone()), path),
+                Pasted::File(path) => {
+                    let ctx = ui.ctx().clone();
+                    self.upload_file(&ctx, &network, Some(target.clone()), path);
+                }
                 Pasted::Image(img) => match png(&img) {
                     Some(bytes) => {
                         let ctx = ui.ctx().clone();
@@ -428,7 +431,7 @@ fn composer(
                     if !q.word.starts_with('@') {
                         return Vec::new();
                     }
-                    let nicks = complete::completable(members, msgs, info, cx.own);
+                    let nicks = complete::completable(members.as_deref(), msgs, info, cx.own);
                     let list = complete::suggest(&nicks, q.word).unwrap_or_default();
                     list.into_iter()
                         .map(|n| {
@@ -481,7 +484,7 @@ fn composer(
             .map_or(end, |r| r.primary.index.into());
         let mut moved = false;
         if let Some(back) = tab {
-            let nicks = complete::completable(&b.members, &b.msgs, &b.info, cx.own);
+            let nicks = complete::completable(b.members.as_deref(), &b.msgs, &b.info, cx.own);
             if let Some(c) = complete::tab(&mut b.ui.draft, cursor, &mut b.ui.tab, &nicks, back) {
                 (cursor, moved, changed) = (c, true, true);
             }
@@ -569,7 +572,7 @@ fn submit(
         // `/gif [search]` opens the GIF tab instead of sending.
         if gifs {
             out.emoji_at = Some((gif_at, true));
-            out.gif_query = q.to_owned();
+            q.clone_into(&mut out.gif_query);
             b.ui.draft.clear();
         } else {
             out.no_gifs = true;

@@ -51,7 +51,7 @@ impl Net {
                         msg.local_id = local.local_id;
                         if local.crypt == Crypt::Encrypted {
                             // The echo is the ciphertext for another device.
-                            msg.text = local.text.clone();
+                            msg.text.clone_from(&local.text);
                             msg.crypt = Crypt::Encrypted;
                         }
                         let key = self.fold(&target);
@@ -182,7 +182,7 @@ impl Net {
         if self.persistent && !rejoin {
             // Always-on: the server's list is the truth, so these were left elsewhere.
             for (key, _) in missing {
-                self.remove_buffer(&key.clone());
+                self.remove_buffer(key);
             }
         } else {
             let names: Vec<String> = missing.into_iter().map(|(_, n)| n.clone()).collect();
@@ -247,244 +247,23 @@ impl Net {
                     self.live(&target, msg);
                 }
             }
-            "TAGMSG" => {
-                let Some(target) = self.buffer_target(&m) else {
-                    return;
-                };
-                if let Some(step) = m.tag("+chad/e2e-verify") {
-                    self.verify_tag(&target, me, step);
-                } else if let (Some((emoji, add)), Some(msgid)) =
-                    (reaction(&m), m.tag("+draft/reply"))
-                {
-                    self.store.react(msgid, &from, truncate(emoji, 64), add);
-                    self.refresh(msgid);
-                } else if let Some(state) = m.tag("+typing").filter(|_| !me) {
-                    let state = match state {
-                        "active" => Typing::Active,
-                        "paused" => Typing::Paused,
-                        _ => Typing::Done,
-                    };
-                    let network = self.id();
-                    self.events.push(Event::Typing {
-                        network,
-                        target,
-                        nick: from,
-                        state,
-                    });
-                }
-            }
+            "TAGMSG" => self.tagmsg(&m, &from, me),
             "REDACT" => {
                 if let Some(msgid) = m.param(1) {
                     self.store.redact(msgid);
                     self.refresh(msgid);
                 }
             }
-            "JOIN" => {
-                let Some(chan) = m.param(0).filter(|c| valid_name(c) && self.is_channel(c)) else {
-                    return;
-                };
-                let key = self.fold(chan);
-                if me {
-                    let new = !self.buffers.contains_key(&key);
-                    if self.who_wanted.remove(&key) {
-                        self.who(chan.to_owned());
-                    }
-                    if (!new || self.add_buffer(chan, BufferKind::Channel))
-                        && self.joined.insert(key.clone())
-                        && self.synced
-                    {
-                        self.fetch_new(&key);
-                        // Who's in voice there; the connect burst covers the rest.
-                        if self.caps.enabled("draft/metadata-2") {
-                            self.out.push(Message::new("METADATA", [chan, "SYNC"]));
-                        }
-                    }
-                } else {
-                    let account = m.param(1).filter(|a| *a != "*").map(str::to_owned);
-                    self.member(&key, &from, |mem| mem.account = account);
-                    // Metadata isn't pushed for people who join after us.
-                    let folded = self.fold(&from);
-                    if self.caps.enabled("draft/metadata-2")
-                        && !self.profiles.contains_key(&folded)
-                        && self.profiles.len() < MAX_MEMBERS
-                    {
-                        self.profiles.insert(folded, Profile::default());
-                        self.out.push(Message::new(
-                            "METADATA",
-                            [from.as_str(), "GET", DISPLAY_NAME_KEY, AVATAR_KEY],
-                        ));
-                    }
-                }
-            }
-            "PART" | "KICK" => {
-                let (Some(chan), Some(who)) = (
-                    m.param(0),
-                    if m.command == "KICK" {
-                        m.param(1)
-                    } else {
-                        Some(from.as_str())
-                    },
-                ) else {
-                    return;
-                };
-                let key = self.fold(chan);
-                if self.cm.eq(who, &self.info.nick) {
-                    self.joined.remove(&key);
-                    self.remove_buffer(&key);
-                } else {
-                    let nick = self.fold(who);
-                    if let Some(b) = self.buffers.get_mut(&key)
-                        && b.members.remove(&nick).is_some()
-                    {
-                        self.emit_members(&key);
-                    }
-                }
-            }
-            "MODE" | "221" => {
-                let (Some(target), Some(modes)) = (m.param(0), m.param(1)) else {
-                    return;
-                };
-
-                if self.cm.eq(target, &self.info.nick) {
-                    let mut add = true;
-                    let was = self.info.oper;
-                    for c in modes.chars() {
-                        match c {
-                            '+' => add = true,
-                            '-' => add = false,
-                            'o' => self.info.oper = add,
-                            _ => {}
-                        }
-                    }
-                    if self.info.oper != was {
-                        self.events.push(Event::Network(self.info.clone()));
-                    }
-                    return;
-                }
-
-                let key = self.fold(target);
-                // Members keep only their highest prefix, so a WHO is simpler than replaying the change.
-                if self.joined.contains(&key)
-                    && self
-                        .buffers
-                        .get(&key)
-                        .is_some_and(|b| !b.members.is_empty())
-                    && self
-                        .isupport
-                        .prefix()
-                        .iter()
-                        .any(|(c, _)| modes.contains(*c))
-                {
-                    self.who(target.to_owned());
-                }
-            }
-            "RENAME" => {
-                let (Some(old), Some(new)) = (
-                    m.param(0),
-                    m.param(1).filter(|c| valid_name(c) && self.is_channel(c)),
-                ) else {
-                    return;
-                };
-                let (ok, nk) = (self.fold(old), self.fold(new));
-                // ergo never renames onto an existing channel; don't merge two buffers.
-                if ok != nk && self.buffers.contains_key(&nk) {
-                    return;
-                }
-                let Some(mut b) = self.buffers.remove(&ok) else {
-                    return;
-                };
-                let from = std::mem::replace(&mut b.name, new.to_owned());
-                self.buffers.insert(nk.clone(), b);
-                self.store.rename_buffer(&ok, &nk, new);
-                if self.joined.remove(&ok) {
-                    self.joined.insert(nk.clone());
-                }
-                if self.who_wanted.remove(&ok) {
-                    self.who_wanted.insert(nk.clone());
-                }
-                self.typing_sent.remove(&ok);
-                // Their calls are in the old room; they republish `chad/voice` when they rejoin.
-                self.voice_of.retain(|_, (_, c)| *c != ok);
-                let network = self.id();
-                self.events.push(Event::BufferRenamed {
-                    network,
-                    from: from.clone(),
-                    to: new.to_owned(),
-                });
-                self.emit_buffer(&nk);
-                self.emit_members(&nk);
-                self.emit_voice_members(&nk);
-                // The LiveKit room is named after the channel.
-                if self
-                    .voice
-                    .as_ref()
-                    .is_some_and(|v| self.fold(&v.channel) == ok)
-                {
-                    self.voice_ended(Some(format!(
-                        "{from} was renamed to {new}. Join voice again."
-                    )));
-                }
-            }
-            "QUIT" => {
-                self.set_voice_of(&from, None);
-                let nick = self.fold(&from);
-                let keys: Vec<String> = self
-                    .buffers
-                    .iter_mut()
-                    .filter_map(|(k, b)| b.members.remove(&nick).map(|_| k.clone()))
-                    .collect();
-                keys.iter().for_each(|k| self.emit_members(k));
-            }
-            "NICK" => {
-                let Some(new) = m.param(0).filter(|n| valid_name(n)) else {
-                    return;
-                };
-                if me {
-                    self.info.nick = new.to_owned();
-                    self.events.push(Event::Network(self.info.clone()));
-                }
-                let (old, newk) = (self.fold(&from), self.fold(new));
-                if let Some(p) = self.profiles.remove(&old) {
-                    self.profiles.insert(newk.clone(), p);
-                    self.emit_profile(new);
-                }
-                if let Some((_, ch)) = self.voice_of.remove(&old) {
-                    self.voice_of
-                        .insert(newk.clone(), (new.to_owned(), ch.clone()));
-                    self.emit_voice_members(&ch);
-                }
-                let keys: Vec<String> = self
-                    .buffers
-                    .iter_mut()
-                    .filter_map(|(k, b)| {
-                        let mut mem = b.members.remove(&old)?;
-                        mem.nick = new.to_owned();
-                        b.members.insert(newk.clone(), mem);
-                        Some(k.clone())
-                    })
-                    .collect();
-                keys.iter().for_each(|k| self.emit_members(k));
-            }
-            "AWAY" => {
-                let away = m.param(0).is_some_and(|r| !r.is_empty());
-                // ergo's auto-away: no device is connected, so any `chad/voice`
-                // they left behind is stale (D16). A device that comes back
-                // and is in a call puts it back.
-                if m.param(0) == Some(ERGO_AUTO_AWAY) {
-                    self.set_voice_of(&from, None);
-                }
-                self.everywhere(&from, |mem| mem.away = away);
-                let key = self.fold(&from);
-                if let Some(b) = self.buffers.get_mut(&key)
-                    && b.kind == BufferKind::Dm
-                {
-                    b.away = away;
-                    self.emit_buffer(&key);
-                }
-            }
+            "JOIN" => self.join(&m, &from, me),
+            "PART" | "KICK" => self.part(&m, &from),
+            "MODE" | "221" => self.mode(&m),
+            "RENAME" => self.rename(&m),
+            "QUIT" => self.quit(&from),
+            "NICK" => self.nick(&m, &from, me),
+            "AWAY" => self.away(&m, &from),
             "ACCOUNT" => {
                 let account = m.param(0).filter(|a| *a != "*").map(str::to_owned);
-                self.everywhere(&from, |mem| mem.account = account.clone());
+                self.everywhere(&from, |mem| mem.account.clone_from(&account));
             }
             "TOPIC" | "332" => {
                 let skip = usize::from(m.command == "332");
@@ -509,20 +288,7 @@ impl Net {
                     self.set_read(&key, read);
                 }
             }
-            "730" | "731" => {
-                let online = m.command == "730";
-                for nick in m.param(1).unwrap_or_default().split(',') {
-                    let key = self.fold(nick.split('!').next().unwrap_or(nick));
-                    if let Some(b) = self.buffers.get_mut(&key)
-                        && b.kind == BufferKind::Dm
-                    {
-                        b.online = Some(online);
-                        b.away &= online;
-                        self.emit_buffer(&key);
-                    }
-                }
-                self.sync_dm_away();
-            }
+            "730" | "731" => self.monitor_reply(&m),
             // Someone's devices changed: fetch them again if we DM them (or it's us).
             "761" | "766" if m.param(2) == Some(DEVICES_KEY) => {
                 if let Some(nick) = m.param(1).filter(|n| valid_name(n) && !self.is_channel(n)) {
@@ -552,64 +318,12 @@ impl Net {
                     && m.param(1)
                         .is_some_and(|t| valid_name(t) && !self.is_channel(t)) =>
             {
-                let value = if m.command == "761" { m.param(4) } else { None };
-                let (Some(nick), Some(key)) = (m.param(1), m.param(2)) else {
-                    return;
-                };
-                let folded = self.fold(nick);
-                if !self.profiles.contains_key(&folded) && self.profiles.len() >= MAX_MEMBERS {
-                    return;
-                }
-                let p = self.profiles.entry(folded).or_default();
-                if key == DISPLAY_NAME_KEY {
-                    p.display_name = value
-                        .map(|v| {
-                            v.chars()
-                                .filter(|c| !c.is_control())
-                                .take(MAX_DISPLAY_NAME)
-                                .collect::<String>()
-                        })
-                        .map(|v| v.trim().to_owned())
-                        .filter(|v| !v.is_empty());
-                } else {
-                    p.avatar = value
-                        .and_then(|v| Url::parse(v).ok())
-                        .filter(|u| matches!(u.scheme(), "https" | "http"));
-                }
-                self.emit_profile(nick);
+                self.profile_metadata(&m)
             }
             "PERSISTENCE" if m.param(0) == Some("STATUS") => {
                 self.persistent = m.param(2) != Some("OFF");
             }
-            "CAP" => {
-                let before: Vec<&str> = WANTED
-                    .iter()
-                    .copied()
-                    .filter(|c| self.caps.enabled(c))
-                    .collect();
-                let out = self.caps.handle(&m);
-                self.out.extend(out);
-                let after: Vec<&str> = WANTED
-                    .iter()
-                    .copied()
-                    .filter(|c| self.caps.enabled(c))
-                    .collect();
-                let diff = |a: &[&str], b: &[&str]| -> Vec<String> {
-                    a.iter()
-                        .filter(|c| !b.contains(c))
-                        .map(|c| (*c).to_owned())
-                        .collect()
-                };
-                let (added, removed) = (diff(&after, &before), diff(&before, &after));
-                if !added.is_empty() || !removed.is_empty() {
-                    let network = self.id();
-                    self.events.push(Event::CapsChanged {
-                        network,
-                        added,
-                        removed,
-                    });
-                }
-            }
+            "CAP" => self.cap(&m),
             "005" => {
                 self.isupport.handle(&m);
                 self.cm = self.isupport.casemapping();
@@ -631,6 +345,112 @@ impl Net {
                     self.error(e);
                 }
             }
+        }
+    }
+
+    /// Reactions, typing and verification steps.
+    pub(super) fn tagmsg(&mut self, m: &Message, from: &str, me: bool) {
+        let Some(target) = self.buffer_target(m) else {
+            return;
+        };
+        if let Some(step) = m.tag("+chad/e2e-verify") {
+            self.verify_tag(&target, me, step);
+        } else if let (Some((emoji, add)), Some(msgid)) = (reaction(m), m.tag("+draft/reply")) {
+            self.store.react(msgid, from, truncate(emoji, 64), add);
+            self.refresh(msgid);
+        } else if let Some(state) = m.tag("+typing").filter(|_| !me) {
+            let state = match state {
+                "active" => Typing::Active,
+                "paused" => Typing::Paused,
+                _ => Typing::Done,
+            };
+            let network = self.id();
+            self.events.push(Event::Typing {
+                network,
+                target,
+                nick: from.to_owned(),
+                state,
+            });
+        }
+    }
+
+    /// `draft/channel-rename`.
+    pub(super) fn rename(&mut self, m: &Message) {
+        let (Some(old), Some(new)) = (
+            m.param(0),
+            m.param(1).filter(|c| valid_name(c) && self.is_channel(c)),
+        ) else {
+            return;
+        };
+        let (ok, nk) = (self.fold(old), self.fold(new));
+        // ergo never renames onto an existing channel; don't merge two buffers.
+        if ok != nk && self.buffers.contains_key(&nk) {
+            return;
+        }
+        let Some(mut b) = self.buffers.remove(&ok) else {
+            return;
+        };
+        let from = std::mem::replace(&mut b.name, new.to_owned());
+        self.buffers.insert(nk.clone(), b);
+        self.store.rename_buffer(&ok, &nk, new);
+        if self.joined.remove(&ok) {
+            self.joined.insert(nk.clone());
+        }
+        if self.who_wanted.remove(&ok) {
+            self.who_wanted.insert(nk.clone());
+        }
+        self.typing_sent.remove(&ok);
+        // Their calls are in the old room; they republish `chad/voice` when they rejoin.
+        self.voice_of.retain(|_, (_, c)| *c != ok);
+        let network = self.id();
+        self.events.push(Event::BufferRenamed {
+            network,
+            from: from.clone(),
+            to: new.to_owned(),
+        });
+        self.emit_buffer(&nk);
+        self.emit_members(&nk);
+        self.emit_voice_members(&nk);
+        // The LiveKit room is named after the channel.
+        if self
+            .voice
+            .as_ref()
+            .is_some_and(|v| self.fold(&v.channel) == ok)
+        {
+            self.voice_ended(Some(format!(
+                "{from} was renamed to {new}. Join voice again."
+            )));
+        }
+    }
+
+    /// CAP NEW/DEL after registration.
+    pub(super) fn cap(&mut self, m: &Message) {
+        let before: Vec<&str> = WANTED
+            .iter()
+            .copied()
+            .filter(|c| self.caps.enabled(c))
+            .collect();
+        let out = self.caps.handle(m);
+        self.out.extend(out);
+        let after: Vec<&str> = WANTED
+            .iter()
+            .copied()
+            .filter(|c| self.caps.enabled(c))
+            .collect();
+        let diff = |a: &[&str], b: &[&str]| -> Vec<String> {
+            a.iter()
+                .filter(|c| !b.contains(c))
+                .map(|c| (*c).to_owned())
+                .collect()
+        };
+        let (added, removed) = (diff(&after, &before), diff(&before, &after));
+        if !added.is_empty() || !removed.is_empty() {
+            let network = self.id();
+            self.events.push(Event::CapsChanged {
+                network,
+                added,
+                removed,
+            });
         }
     }
 
@@ -785,50 +605,71 @@ impl Net {
             return 0;
         };
         let mut messages = Vec::new();
-        let mut touched = Vec::new();
+        let mut others = Vec::new();
         let mut n = 0;
         for item in items.into_iter().take(PAGE as usize * 2) {
             if let Some((target, msg)) = self.chat(&item) {
                 // Copies for other devices still count towards the page.
                 n += 1;
+                // Decrypting saves Olm state, so it stays out of the page's
+                // transaction: rolling that back would lose ratchet steps.
                 messages.extend(self.open(&target, head(&item), msg));
             } else if let Item::Message(m) = item {
-                match m.command.as_str() {
-                    "TAGMSG" => {
-                        if let (Some((e, add)), Some(id), Some(n)) =
-                            (reaction(&m), m.tag("+draft/reply"), m.source_nick())
-                        {
-                            self.store.react(id, n, truncate(e, 64), add);
-                            touched.push(id.to_owned());
-                        }
-                    }
-                    "REDACT" => {
-                        if let Some(id) = m.param(1) {
-                            self.store.redact(id);
-                            touched.push(id.to_owned());
-                        }
-                    }
-                    _ => {}
-                }
+                others.push(m);
             }
         }
-        self.store.batch(|| {
-            for m in messages.iter().filter(|m| m.edits.is_none()) {
-                self.store.insert(key, m);
+        let mut touched = HashSet::new();
+        let began = self.store.begin();
+        for m in &others {
+            match m.command.as_str() {
+                "TAGMSG" => {
+                    if let (Some((e, add)), Some(id), Some(n)) =
+                        (reaction(m), m.tag("+draft/reply"), m.source_nick())
+                    {
+                        self.store.react(id, n, truncate(e, 64), add);
+                        touched.insert(id.to_owned());
+                    }
+                }
+                "REDACT" => {
+                    if let Some(id) = m.param(1) {
+                        self.store.redact(id);
+                        touched.insert(id.to_owned());
+                    }
+                }
+                _ => {}
             }
-        });
+        }
+        for m in messages.iter().filter(|m| m.edits.is_none()) {
+            self.store.insert(key, m);
+        }
         // After the inserts: an edit can follow its message in the same page.
         for m in &messages {
             if self.edit(key, m) {
                 touched.extend(m.edits.clone());
             }
         }
+        self.store.commit(began);
         messages.retain(|m| m.edits.is_none());
+        // What the page changed goes out with it, as stored, in one event.
+        for id in touched {
+            match self.store.get(&id) {
+                Some((k, stored)) if k == key => {
+                    match messages
+                        .iter_mut()
+                        .find(|m| m.msgid.as_deref() == Some(&id))
+                    {
+                        Some(m) => *m = stored,
+                        None => messages.push(stored),
+                    }
+                }
+                Some(_) => self.refresh(&id),
+                None => {}
+            }
+        }
         messages.sort_by_key(|m| m.time);
         if !messages.is_empty() {
             self.emit_messages(&name, messages);
         }
-        touched.iter().for_each(|id| self.refresh(id));
         self.emit_buffer(key);
         n
     }

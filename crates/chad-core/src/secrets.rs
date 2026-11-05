@@ -25,26 +25,18 @@ pub struct MemorySecrets(Mutex<HashMap<String, (String, String)>>);
 
 impl SecretStore for MemorySecrets {
     fn save<'a>(&'a self, origin: &'a str, account: &'a str, password: &'a str) -> Fut<'a, ()> {
-        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut m = crate::lock(&self.0);
         m.insert(origin.into(), (account.into(), password.into()));
         Box::pin(async { Ok(()) })
     }
 
     fn load<'a>(&'a self, origin: &'a str) -> Fut<'a, Option<(String, String)>> {
-        let found = self
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(origin)
-            .cloned();
+        let found = crate::lock(&self.0).get(origin).cloned();
         Box::pin(async { Ok(found) })
     }
 
     fn delete<'a>(&'a self, origin: &'a str) -> Fut<'a, ()> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(origin);
+        crate::lock(&self.0).remove(origin);
         Box::pin(async { Ok(()) })
     }
 }

@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chad_e2ee::{Device, Kind, MAX_DEVICES, Olm, Status, Step, Verification, valid_id};
+use chad_e2ee::{Changes, Device, Kind, MAX_DEVICES, Olm, Status, Step, Verification, valid_id};
 use chad_irc::Message;
 
 use super::{Net, Pending, truncate};
@@ -41,6 +41,8 @@ pub struct E2e {
     waiting: Vec<(String, Message, ChatMessage)>,
     /// Folded nick → a verification in progress with them.
     verifications: HashMap<String, Verification>,
+    /// Changes whose save failed, retried with the next save.
+    unsaved: Option<Changes>,
 }
 
 /// Each device's record is under this plus its ID; `METADATA <nick> LIST` finds them.
@@ -73,13 +75,40 @@ impl Net {
             held: Vec::new(),
             waiting: Vec::new(),
             verifications: HashMap::new(),
+            unsaved: None,
         });
         self.save_e2e();
     }
 
+    /// Changes that fail to save are kept and retried with the next ones, since
+    /// losing a ratchet step makes later messages undecryptable.
     fn save_e2e(&mut self) {
-        if let Some(e) = &mut self.e2e {
-            self.store.save_e2e(e.olm.take_changes(&e.key));
+        let Some(e) = &mut self.e2e else { return };
+        let newer = e.olm.take_changes(&e.key);
+        let failing = e.unsaved.is_some();
+        let mut changes = e.unsaved.take().unwrap_or_default();
+        changes.absorb(newer);
+        if changes.is_empty() {
+            return;
+        }
+        if let Err(err) = self.store.save_e2e(&changes) {
+            tracing::error!("saving E2EE state: {err}");
+            if let Some(e) = &mut self.e2e {
+                e.unsaved = Some(changes);
+            }
+            if !failing {
+                self.error(format!(
+                    "Couldn't save your encryption keys ({err}). Encrypted DMs may break until this is fixed."
+                ));
+            }
+        }
+    }
+
+    /// Reports a failed write to the pin table: trust that didn't stick.
+    pub(super) fn pin_failed(&mut self, r: rusqlite::Result<()>) {
+        if let Err(err) = r {
+            tracing::error!("saving device trust: {err}");
+            self.error(format!("Couldn't save device trust ({err})."));
         }
     }
 
@@ -176,17 +205,21 @@ impl Net {
                 Some(p) if p.device == *d => {}
                 Some(p) => {
                     let same = p.device.same_keys(d);
-                    self.store.put_pin(
+                    let r = self.store.put_pin(
                         &owner,
                         &d.id,
                         record,
                         p.verified && same,
                         p.changed || !same,
                     );
+                    self.pin_failed(r);
                 }
                 // D14: a server churning device IDs can't grow the table forever.
                 None if full => {}
-                None => self.store.put_pin(&owner, &d.id, record, false, false),
+                None => {
+                    let r = self.store.put_pin(&owner, &d.id, record, false, false);
+                    self.pin_failed(r);
+                }
             }
         }
         let devices = devices.into_iter().map(|(d, _)| d).collect();
@@ -408,7 +441,7 @@ impl Net {
         let e = self.e2e.as_mut().expect("only called with e2e on");
         match pin.and_then(|p| e.olm.decrypt(p.device.curve, wire)) {
             Some(text) => {
-                msg.text = truncate(&text, super::MAX_TEXT).to_owned();
+                truncate(&text, super::MAX_TEXT).clone_into(&mut msg.text);
                 msg.crypt = Crypt::Encrypted;
             }
             None => {
@@ -515,8 +548,14 @@ impl Net {
                 self.fetch_devices(nick);
                 Some(request)
             }
-            VerifyStep::Accept => e.verifications.get_mut(&key).and_then(|v| v.accept()),
-            VerifyStep::Cancel => e.verifications.get_mut(&key).map(|v| v.cancel()),
+            VerifyStep::Accept => e
+                .verifications
+                .get_mut(&key)
+                .and_then(chad_e2ee::Verification::accept),
+            VerifyStep::Cancel => e
+                .verifications
+                .get_mut(&key)
+                .map(chad_e2ee::Verification::cancel),
             VerifyStep::Match => {
                 let their = self.their_ed(&key);
                 let e = self.e2e.as_mut().expect("checked");
@@ -619,7 +658,8 @@ impl Net {
         let done = state == VerifyState::Done;
         self.emit_verification(nick, state);
         if let (true, Some(id)) = (done, them) {
-            self.store.trust(&key, Some(&id));
+            let r = self.store.trust(&key, Some(&id));
+            self.pin_failed(r);
             self.emit_buffer(&key);
             self.emit_devices(nick);
         }
