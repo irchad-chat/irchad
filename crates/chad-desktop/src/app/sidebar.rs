@@ -500,18 +500,17 @@ impl App {
             return;
         };
         enum Line<'a> {
-            Gap,
             Header(&'static str, usize),
             Member(&'a Member),
         }
         let mut lines = Vec::with_capacity(members.len() + 4);
         for (away, title) in [(false, "ONLINE"), (true, "AWAY")] {
             let start = lines.len();
-            lines.extend([Line::Gap, Line::Header(title, 0)]);
+            lines.push(Line::Header(title, 0));
             lines.extend(members.iter().filter(|m| m.away == away).map(Line::Member));
-            match lines.len() - start - 2 {
+            match lines.len() - start - 1 {
                 0 => lines.truncate(start),
-                n => lines[start + 1] = Line::Header(title, n),
+                n => lines[start] = Line::Header(title, n),
             }
         }
         let mut dm = None;
@@ -526,11 +525,9 @@ impl App {
                     let size = vec2(ui.available_width(), h);
                     let row = egui::Layout::left_to_right(egui::Align::Center);
                     let m = match line {
-                        Line::Gap => {
-                            ui.allocate_exact_size(size, Sense::hover());
-                            continue;
-                        }
                         Line::Header(title, n) => {
+                            // Bottom-aligned: the small text leaves a gap above it in a full row.
+                            let row = egui::Layout::left_to_right(egui::Align::Max);
                             ui.allocate_ui_with_layout(size, row, |ui| {
                                 ui.label(RichText::new(format!("{title} — {n}")).small().weak());
                             });
