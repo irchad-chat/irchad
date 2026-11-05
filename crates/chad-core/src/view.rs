@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use crate::{
-    BufferInfo, BufferKind, ChatMessage, ConnState, DeviceInfo, Event, Member, NetworkInfo,
+    Block, BufferInfo, BufferKind, ChatMessage, ConnState, DeviceInfo, Event, Member, NetworkInfo,
     SendStatus, Sound, Typing, VoiceState,
 };
 
@@ -58,6 +58,8 @@ pub struct Net<N = (), B = ()> {
     pub devices: HashMap<String, Vec<DeviceInfo>>,
     /// The soundboard, as chadd last listed it.
     pub sounds: Vec<Sound>,
+    /// Blocked people, oldest first: their messages and reactions are hidden.
+    pub blocks: Vec<Block>,
     pub ui: N,
 }
 
@@ -312,6 +314,7 @@ impl<N: Default, B: Default> View<N, B> {
                         profiles: HashMap::new(),
                         devices: HashMap::new(),
                         sounds: Vec::new(),
+                        blocks: Vec::new(),
                         ui: N::default(),
                     });
                 }
@@ -445,6 +448,21 @@ impl<N: Default, B: Default> View<N, B> {
             } => {
                 if let Some(i) = self.net(network) {
                     self.nets[i].devices.insert(key(nick), devices.clone());
+                }
+            }
+            Event::Blocks { network, blocks } => {
+                if let Some(i) = self.net(network) {
+                    let n = &mut self.nets[i];
+                    n.blocks.clone_from(blocks);
+                    // Unblocking brings nothing back: their messages come with the next restart.
+                    for b in &mut n.buffers {
+                        let mut list = b.msgs.to_vec();
+                        list.retain_mut(|m| crate::unblocked(blocks, m));
+                        if list[..] != b.msgs[..] {
+                            b.msgs = Msgs::default();
+                            b.msgs.merge(&list, &mut Applied::default());
+                        }
+                    }
                 }
             }
             Event::Sounds {

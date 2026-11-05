@@ -247,3 +247,14 @@ pub struct Device {
     /// This install.
     pub this: bool,
 }
+
+/// Someone blocked (`Client::blocks`).
+#[derive(uniffi::Record)]
+pub struct Blocked {
+    /// For `Client::unblock`.
+    pub mask: String,
+    /// Who they were when blocked.
+    pub nick: String,
+    /// `None` when blocked by host (a guest).
+    pub account: Option<String>,
+}

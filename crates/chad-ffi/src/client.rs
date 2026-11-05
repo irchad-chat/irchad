@@ -425,6 +425,52 @@ impl Client {
         self.net(network, NetCommand::CloseDm { nick });
     }
 
+    /// Hide everything from `nick` on this device: by `account` when known
+    /// (a message's or member's), else the core finds it or their host.
+    pub fn block(&self, network: String, nick: String, account: Option<String>) {
+        self.net(network, NetCommand::Block { nick, account });
+    }
+
+    /// `mask` from `blocks`.
+    pub fn unblock(&self, network: String, mask: String) {
+        self.net(network, NetCommand::Unblock { mask });
+    }
+
+    /// Who's blocked on `network`, oldest first.
+    pub fn blocks(&self, network: String) -> Vec<Blocked> {
+        let v = self.view();
+        v.net(&network)
+            .map(|i| {
+                v.nets[i]
+                    .blocks
+                    .iter()
+                    .map(|b| Blocked {
+                        mask: b.mask.clone(),
+                        nick: b.nick.clone(),
+                        account: b.mask.strip_prefix("$a:").map(str::to_owned),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A push (one IRC line, as for `read_push`) from someone blocked on
+    /// `network`: don't show it.
+    pub fn push_blocked(&self, network: String, line: String) -> bool {
+        let Ok(m) = chad_irc::Message::parse(&line) else {
+            return false;
+        };
+        let msg = chad_core::ChatMessage {
+            nick: m.source_nick().unwrap_or_default().to_owned(),
+            account: m.tag("account").map(str::to_owned),
+            ..Default::default()
+        };
+        let v = self.view();
+        // shortcut: a cold start may read the push before the block list loads; it shows then.
+        v.net(&network)
+            .is_some_and(|i| v.nets[i].blocks.iter().any(|b| b.hides(&msg)))
+    }
+
     /// Join a channel's voice room, leaving any other call.
     pub fn join_voice(&self, network: String, channel: String) {
         self.net(network, NetCommand::JoinVoice { channel });

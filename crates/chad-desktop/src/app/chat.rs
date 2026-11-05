@@ -698,6 +698,7 @@ fn messages(ui: &mut egui::Ui, cx: &Pane, b: &mut Buffer, mut extras: Extras) ->
                 }
             },
             Action::OpenDm(nick) => out.dm = Some(nick),
+            Action::Block(nick, account) => cx.send(NetCommand::Block { nick, account }),
             Action::PickReaction { msgid, at } => out.pick_reaction = Some((msgid, at)),
         }
     }

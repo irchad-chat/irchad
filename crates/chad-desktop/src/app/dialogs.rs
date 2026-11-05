@@ -410,6 +410,10 @@ impl App {
         ui: &mut egui::Ui,
         section: settings::Section,
     ) {
+        if section == settings::Section::Blocked {
+            self.blocked_page(ui);
+            return;
+        }
         if section != settings::Section::Voice {
             #[cfg(windows)]
             let autostart = self.settings.autostart;
@@ -434,6 +438,48 @@ impl App {
             if (self.settings.audio.mode, self.settings.ptt) != ptt {
                 self.restart_ptt(ctx);
             }
+        }
+    }
+
+    /// Everyone blocked, per network, each with an Unblock button.
+    fn blocked_page(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            RichText::new(
+                "You won't see anything they send. Only on this device; they aren't told.",
+            )
+            .weak(),
+        );
+        ui.add_space(8.0);
+        let mut unblock = None;
+        let many = self.view.nets.len() > 1;
+        if self.view.nets.iter().all(|n| n.blocks.is_empty()) {
+            ui.label("Nobody blocked. Right-click someone's name to block them.");
+        }
+        for n in self.view.nets.iter().filter(|n| !n.blocks.is_empty()) {
+            if many {
+                ui.strong(&n.info.name);
+            }
+            for b in &n.blocks {
+                ui.horizontal(|ui| {
+                    ui.label(&b.nick);
+                    match b.mask.strip_prefix("$a:") {
+                        Some(account) => {
+                            ui.label(RichText::new(format!("account {account}")).weak())
+                        }
+                        None => ui.label(RichText::new(&b.mask).weak()),
+                    };
+                    let right = egui::Layout::right_to_left(egui::Align::Center);
+                    ui.with_layout(right, |ui| {
+                        if ui.button("Unblock").clicked() {
+                            unblock = Some((n.info.network.clone(), b.mask.clone()));
+                        }
+                    });
+                });
+            }
+            ui.add_space(8.0);
+        }
+        if let Some((network, mask)) = unblock {
+            self.send(&network, NetCommand::Unblock { mask });
         }
     }
 

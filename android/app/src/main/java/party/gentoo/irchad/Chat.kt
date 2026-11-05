@@ -313,6 +313,13 @@ private fun ChatScreen(
                                             dialog = "devices"
                                         })
                                     }
+                                    if (buf.dm) {
+                                        DropdownMenuItem(text = { Text("Block") }, onClick = {
+                                            more = false
+                                            c.block(net.network, buf.target, null)
+                                            c.closeDm(net.network, buf.target)
+                                        })
+                                    }
                                     DropdownMenuItem(
                                         text = { Text(if (buf.dm) "Close conversation" else "Leave channel") },
                                         onClick = {
@@ -896,6 +903,12 @@ private fun Log(
                         if (m.own && m.msgid != null && !m.redacted) {
                             DropdownMenuItem(text = { Text("Delete") }, onClick = {
                                 c.redact(net.network, buf.target, m.msgid!!)
+                                menu = null
+                            })
+                        }
+                        if (!m.own) {
+                            DropdownMenuItem(text = { Text("Block ${m.shown}") }, onClick = {
+                                c.block(net.network, m.nick, m.account)
                                 menu = null
                             })
                         }

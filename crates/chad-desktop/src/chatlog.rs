@@ -60,6 +60,8 @@ pub enum Action {
         msgid: String,
     },
     OpenDm(String),
+    /// `(nick, account)`.
+    Block(String, Option<String>),
     /// Open the emoji picker to react to `msgid`, near `at`.
     PickReaction {
         msgid: String,
@@ -559,15 +561,20 @@ fn row_ui(
                     let label = RichText::new(name)
                         .strong()
                         .color(nick_color(&m.nick, dark));
-                    if ui
+                    let r = ui
                         .add(egui::Label::new(label).sense(Sense::click()))
                         .on_hover_ui(|ui| {
                             ui.label(account_tip(&m.nick, name, m.account.as_deref()));
-                        })
-                        .clicked()
-                        && !m.own
-                    {
-                        actions.push(Action::OpenDm(m.nick.clone()));
+                        });
+                    if !m.own {
+                        if r.clicked() {
+                            actions.push(Action::OpenDm(m.nick.clone()));
+                        }
+                        r.context_menu(|ui| {
+                            if ui.button("Block").clicked() {
+                                actions.push(Action::Block(m.nick.clone(), m.account.clone()));
+                            }
+                        });
                     }
                     // Own pending lines have no account until the echo; skip them.
                     if m.account.is_none() && !m.own {

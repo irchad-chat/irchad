@@ -275,6 +275,12 @@ private struct BufferRow: View {
         }
         .contextMenu {
             Button(buf.dm ? "Close conversation" : "Leave channel", systemImage: "xmark", role: .destructive, action: leave)
+            if buf.dm {
+                Button("Block", systemImage: "hand.raised", role: .destructive) {
+                    model.client.block(network: net.network, nick: buf.target, account: nil)
+                    leave()
+                }
+            }
         }
     }
 

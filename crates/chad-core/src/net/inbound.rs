@@ -7,6 +7,9 @@ impl Net {
         match item {
             Item::Message(m) => self.message(m),
             Item::Batch(b) if b.kind() == "draft/multiline" => {
+                if self.blocked(&b.start) {
+                    return;
+                }
                 if let Some((target, msg)) = self.chat_in(&Item::Batch(b)) {
                     self.live(&target, msg);
                 }
@@ -119,6 +122,7 @@ impl Net {
                 }
             }
             Pending::Devices { nick } => self.devices_reply(&nick, flatten(items)),
+            Pending::Block { nick } => self.block_reply(&nick, flatten(items)),
             Pending::Sync => self.synced(),
             Pending::List => {
                 let channels: Vec<String> = flatten(items)
@@ -238,6 +242,11 @@ impl Net {
     pub(super) fn message(&mut self, m: Message) {
         let from = m.source_nick().unwrap_or_default().to_owned();
         let me = self.cm.eq(&from, &self.info.nick);
+        let chat = matches!(m.command.as_str(), "PRIVMSG" | "NOTICE" | "TAGMSG");
+        // Typing, reactions, CTCP and verification included: blocked is silent.
+        if chat && self.blocked(&m) {
+            return;
+        }
         match m.command.as_str() {
             "PRIVMSG" if !me && m.param(1) == Some("\x01VERSION\x01") => {
                 self.ctcp_version(&m, &from);
@@ -611,6 +620,9 @@ impl Net {
             if let Some((target, msg)) = self.chat(&item) {
                 // Copies for other devices still count towards the page.
                 n += 1;
+                if self.blocked(head(&item)) {
+                    continue;
+                }
                 // Decrypting saves Olm state, so it stays out of the page's
                 // transaction: rolling that back would lose ratchet steps.
                 messages.extend(self.open(&target, head(&item), msg));
@@ -620,7 +632,7 @@ impl Net {
         }
         let mut touched = HashSet::new();
         let began = self.store.begin();
-        for m in &others {
+        for m in others.iter().filter(|m| !self.blocked(m)) {
             match m.command.as_str() {
                 "TAGMSG" => {
                     if let (Some((e, add)), Some(id), Some(n)) =

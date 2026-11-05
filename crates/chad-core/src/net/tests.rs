@@ -2,6 +2,7 @@ use super::*;
 use crate::Encryption;
 use crate::store::msg;
 
+mod block;
 mod chat;
 mod e2e;
 mod voice;

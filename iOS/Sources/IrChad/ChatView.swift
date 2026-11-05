@@ -373,6 +373,11 @@ struct MessageRow: View {
                 if let id = m.msgid { model.client.redact(network: network, target: target, msgid: id) }
             }
         }
+        if !m.own {
+            Button("Block \(m.shown)", systemImage: "hand.raised", role: .destructive) {
+                model.client.block(network: network, nick: m.nick, account: m.account)
+            }
+        }
     }
 }
 

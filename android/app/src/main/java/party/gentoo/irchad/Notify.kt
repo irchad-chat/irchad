@@ -156,6 +156,7 @@ class Notifier(private val app: IrChad) {
 
     /** A decrypted push for [network]: one IRC line from ergo. */
     fun pushed(network: String, line: String) {
+        if (app.client.pushBlocked(network, line)) return
         when (val p = readPush(line)) {
             is Push.Message -> if (mode == Background.PUSH && app.settings.notify != NotifyLevel.NEVER) {
                 show(network, p.target, p.from, p.text, p.channel)

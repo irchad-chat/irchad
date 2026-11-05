@@ -196,6 +196,9 @@ fun SettingsDialog(app: IrChad, onDismiss: () -> Unit) {
                     else "Join voice to test your microphone.",
                 )
 
+                Heading("Blocked users")
+                BlockedUsers(app)
+
                 Text(
                     "IrChad ${BuildConfig.VERSION_NAME}",
                     Modifier.padding(top = 16.dp),
@@ -206,6 +209,27 @@ fun SettingsDialog(app: IrChad, onDismiss: () -> Unit) {
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
     )
+}
+
+/** Everyone blocked, on every network, each with an Unblock button. */
+@Composable
+private fun BlockedUsers(app: IrChad) {
+    val tick by app.version.collectAsState()
+    val nets = remember(tick) { app.client.networks().map { it to app.client.blocks(it.network) } }
+    if (nets.all { it.second.isEmpty() }) Hint("Nobody blocked.")
+    for ((net, blocks) in nets) {
+        if (blocks.isNotEmpty() && nets.size > 1) Text(net.name, Modifier.padding(top = 8.dp))
+        for (b in blocks) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(b.nick)
+                    Hint(b.account?.let { "account $it" } ?: b.mask)
+                }
+                TextButton(onClick = { app.client.unblock(net.network, b.mask) }) { Text("Unblock") }
+            }
+        }
+    }
+    Hint("You won't see anything they send. Only on this device; they aren't told.")
 }
 
 @Composable

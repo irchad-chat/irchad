@@ -100,6 +100,27 @@ struct SettingsView: View {
                     Text("Voice changes take effect the next time you join.")
                 }
                 Section {
+                    let blocked = nets.flatMap { n in model.client.blocks(network: n.network).map { (n, $0) } }
+                    if blocked.isEmpty {
+                        Text("Nobody blocked.").foregroundStyle(.secondary)
+                    }
+                    ForEach(blocked, id: \.1.mask) { n, b in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(b.nick)
+                                Text(nets.count > 1 ? "\(b.account.map { "account \($0)" } ?? b.mask) · \(n.name)" : (b.account.map { "account \($0)" } ?? b.mask))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Unblock") { model.client.unblock(network: n.network, mask: b.mask) }
+                        }
+                    }
+                } header: {
+                    Text("Blocked users")
+                } footer: {
+                    Text("You won't see anything they send. Only on this device; they aren't told.")
+                }
+                Section {
                     ForEach(nets, id: \.network) { n in
                         HStack {
                             VStack(alignment: .leading) {

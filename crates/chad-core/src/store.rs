@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension as _, Params, Row, params};
 
 use chad_e2ee::{Changes, Device};
 
-use crate::{BufferKind, ChatMessage, Crypt, MessageKind, Reaction, SendStatus};
+use crate::{Block, BufferKind, ChatMessage, Crypt, MessageKind, Reaction, SendStatus};
 
 /// Messages kept per buffer between runs.
 const KEEP: u32 = 2000;
@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS e2e_pins (
     nick TEXT NOT NULL, id TEXT NOT NULL, record TEXT NOT NULL,
     verified INTEGER NOT NULL DEFAULT 0, changed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (nick, id));
+CREATE TABLE IF NOT EXISTS blocks (mask TEXT PRIMARY KEY, nick TEXT NOT NULL);
 ";
 
 /// Run in order on older files; `PRAGMA user_version` counts how many have.
@@ -144,6 +145,41 @@ impl Store {
         ok(
             "delete meta",
             self.exec("DELETE FROM meta WHERE key = ?1", [key])
+                .map(drop),
+        );
+    }
+
+    pub fn blocks(&self) -> Vec<Block> {
+        let read = || {
+            let mut st = self
+                .db
+                .prepare("SELECT mask, nick FROM blocks ORDER BY rowid")?;
+            st.query_map([], |r| {
+                Ok(Block {
+                    mask: r.get(0)?,
+                    nick: r.get(1)?,
+                })
+            })?
+            .collect()
+        };
+        ok("read blocks", read())
+    }
+
+    pub fn put_block(&self, b: &Block) {
+        ok(
+            "write block",
+            self.exec(
+                "INSERT OR REPLACE INTO blocks VALUES (?1, ?2)",
+                [&b.mask, &b.nick],
+            )
+            .map(drop),
+        );
+    }
+
+    pub fn remove_block(&self, mask: &str) {
+        ok(
+            "delete block",
+            self.exec("DELETE FROM blocks WHERE mask = ?1", [mask])
                 .map(drop),
         );
     }

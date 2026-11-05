@@ -97,9 +97,12 @@ fn settings() {
     s.shot("settings_mocha");
     s.click("Latte");
     s.shot("settings_latte");
-    for page in ["Chat", "Voice", "General"] {
+    for page in ["Chat", "Voice", "General", "Blocked Users"] {
         s.click(page);
-        s.shot(&format!("settings_{}", page.to_lowercase()));
+        s.shot(&format!(
+            "settings_{}",
+            page.to_lowercase().replace(' ', "_")
+        ));
     }
 }
 

@@ -277,6 +277,16 @@ pub enum NetCommand {
     RemoveDevice {
         id: String,
     },
+    /// Hide everything from someone, on this device only: by account, else by
+    /// host. `account` is what the UI knows of them; without it we ask (WHOX).
+    Block {
+        nick: String,
+        account: Option<String>,
+    },
+    /// `Block::mask` from `Event::Blocks`.
+    Unblock {
+        mask: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -425,6 +435,50 @@ pub enum Event {
         nick: String,
         state: VerifyState,
     },
+    /// The network's whole block list, at startup and after every change.
+    Blocks {
+        network: String,
+        blocks: Vec<Block>,
+    },
+}
+
+/// Someone blocked: nothing from them is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    /// `$a:<account>` (ASCII lowercase), or `*!*@<host>` for someone without one.
+    pub mask: String,
+    /// Who they were when blocked, to show in the list.
+    pub nick: String,
+}
+
+impl Block {
+    /// `m` is theirs. Messages carry no host, so a host block goes by the
+    /// nick they had when blocked.
+    pub fn hides(&self, m: &ChatMessage) -> bool {
+        !m.own
+            && match (self.mask.strip_prefix("$a:"), &m.account) {
+                (Some(a), Some(ma)) => ma.eq_ignore_ascii_case(a),
+                (None, None) => m.nick.eq_ignore_ascii_case(&self.nick),
+                _ => false,
+            }
+    }
+}
+
+/// False if `m` is from someone in `blocks`; otherwise drops their reactions.
+pub fn unblocked(blocks: &[Block], m: &mut ChatMessage) -> bool {
+    if blocks.is_empty() {
+        return true;
+    }
+    if blocks.iter().any(|b| b.hides(m)) {
+        return false;
+    }
+    // shortcut: reactions carry only a nick, so this goes by the nick they had when blocked.
+    for r in &mut m.reactions {
+        r.nicks
+            .retain(|n| !blocks.iter().any(|b| b.nick.eq_ignore_ascii_case(n)));
+    }
+    m.reactions.retain(|r| !r.nicks.is_empty());
+    true
 }
 
 /// Where ergo sends our pushes (`draft/webpush`): the push service's URL and

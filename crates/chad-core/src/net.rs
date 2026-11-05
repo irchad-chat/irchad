@@ -14,10 +14,11 @@ use chad_irc::label::Labels;
 use crate::store::{Store, StoredBuffer};
 use crate::view::Profile;
 use crate::{
-    BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind, NetCommand,
-    NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, time,
+    Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind,
+    NetCommand, NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, time,
 };
 
+mod block;
 mod command;
 mod e2e;
 mod inbound;
@@ -80,6 +81,10 @@ enum Pending {
     List,
     Who {
         channel: String,
+    },
+    /// WHOX for someone to block, whose account we didn't know.
+    Block {
+        nick: String,
     },
 }
 
@@ -178,12 +183,13 @@ pub struct Net {
     /// Failed REGISTERs on this connection, and when to try again.
     push_tries: u32,
     push_retry: Option<Instant>,
+    /// Nothing from these is shown; kept in the store.
+    blocks: Vec<Block>,
 }
 
 impl Net {
     pub fn new(store: Store, info: NetworkInfo) -> Self {
         Self {
-            store,
             info,
             caps: Negotiator::new(),
             isupport: Isupport::new(),
@@ -218,6 +224,8 @@ impl Net {
             push_registered: false,
             push_tries: 0,
             push_retry: None,
+            blocks: store.blocks(),
+            store,
         }
     }
 
@@ -240,6 +248,8 @@ impl Net {
 
     /// Shows the cached buffers and scrollback before any connection.
     pub fn load_cache(&mut self) {
+        // First, so the view hides cached messages from blocked people.
+        self.emit_blocks();
         for StoredBuffer {
             key,
             name,
@@ -550,6 +560,8 @@ impl Net {
             _ => false,
         });
         failed.into_iter().for_each(|e| self.error(e));
+        // Cached before the block, or refreshed by someone else's reaction.
+        messages.retain_mut(|m| crate::unblocked(&self.blocks, m));
         if messages.is_empty() {
             return;
         }

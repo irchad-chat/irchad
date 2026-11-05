@@ -250,7 +250,7 @@ impl Settings {
                     ui.checkbox(&mut self.autostart, "Auto-start with Windows");
                     ui.end_row();
                 }
-                Section::Voice => {}
+                Section::Voice | Section::Blocked => {}
             });
         (*self != before && !dragging) || released
     }
@@ -264,6 +264,7 @@ pub enum Section {
     Chat,
     Voice,
     General,
+    Blocked,
     #[cfg(windows)]
     Windows,
 }
@@ -274,6 +275,7 @@ impl Section {
         Section::Chat,
         Section::Voice,
         Section::General,
+        Section::Blocked,
         #[cfg(windows)]
         Section::Windows,
     ];
@@ -284,6 +286,7 @@ impl Section {
             Section::Chat => "Chat",
             Section::Voice => "Voice",
             Section::General => "General",
+            Section::Blocked => "Blocked Users",
             #[cfg(windows)]
             Section::Windows => "Windows",
         }

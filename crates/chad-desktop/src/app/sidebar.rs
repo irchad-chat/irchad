@@ -262,6 +262,7 @@ impl App {
         let mut pick = None;
         let mut part = None;
         let mut close = None;
+        let mut block: Option<(String, Option<String>)> = None;
         let mut join_voice = None;
         let mut watch = None;
         egui::ScrollArea::vertical()
@@ -353,6 +354,9 @@ impl App {
                                 if ui.button("Close conversation").clicked() {
                                     close = Some(b.info.target.clone());
                                 }
+                                if ui.button("Block").clicked() {
+                                    block = Some((b.info.target.clone(), None));
+                                }
                             }
                         });
                         if resp.clicked() {
@@ -435,6 +439,17 @@ impl App {
         if let Some(nick) = close {
             self.send(&network, NetCommand::CloseDm { nick });
         }
+        // Blocking from the DM list closes the conversation too.
+        if let Some((nick, account)) = block {
+            self.send(
+                &network,
+                NetCommand::Block {
+                    nick: nick.clone(),
+                    account,
+                },
+            );
+            self.send(&network, NetCommand::CloseDm { nick });
+        }
         if let Some(channel) = join_voice {
             self.send(&network, NetCommand::JoinVoice { channel });
         }
@@ -514,6 +529,7 @@ impl App {
             }
         }
         let mut dm = None;
+        let mut block = None;
         let h = ui.spacing().interact_size.y;
         // Only the rows in view are laid out: a channel can have thousands.
         egui::ScrollArea::vertical().auto_shrink(false).show_rows(
@@ -559,12 +575,22 @@ impl App {
                                 })
                         })
                         .inner;
-                    if r.clicked() && m.nick != own {
-                        dm = Some(m.nick.clone());
+                    if m.nick != own {
+                        if r.clicked() {
+                            dm = Some(m.nick.clone());
+                        }
+                        r.context_menu(|ui| {
+                            if ui.button("Block").clicked() {
+                                block = Some((m.nick.clone(), m.account.clone()));
+                            }
+                        });
                     }
                 }
             },
         );
+        if let Some((nick, account)) = block {
+            self.send(&network, NetCommand::Block { nick, account });
+        }
         if let Some(nick) = dm {
             self.send(&network, NetCommand::OpenDm { nick: nick.clone() });
             select(&mut self.view.nets[ni], &key(&nick));

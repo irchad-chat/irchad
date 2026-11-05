@@ -212,6 +212,14 @@ impl App {
                 }
             }
             // Held in the view, nothing more to do.
+            // The view dropped their messages: lay the logs out again.
+            Event::Blocks { network, .. } => {
+                if let Some(ni) = self.net_idx(&network) {
+                    for b in &mut self.view.nets[ni].buffers {
+                        b.ui.log = Default::default();
+                    }
+                }
+            }
             Event::HistoryStart { .. }
             | Event::Members { .. }
             | Event::Typing { .. }
