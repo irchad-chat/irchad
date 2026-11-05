@@ -172,6 +172,8 @@ private struct MessageList: View {
     @State private var jump: String?
 
     var body: some View {
+        // Own messages change nothing in `buf`, so depend on the core directly.
+        let _ = model.tick
         let msgs = model.client.messages(network: net.network, target: buf.target)
         let connected = net.status == nil
         let byId = Dictionary(msgs.compactMap { m in m.msgid.map { ($0, m) } }, uniquingKeysWith: { a, _ in a })

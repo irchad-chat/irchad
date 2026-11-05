@@ -145,6 +145,8 @@ private struct NetworkHeader: View {
     let onChannel: () -> Void
     let onDm: () -> Void
     let onProfile: () -> Void
+    @State private var leaving = false
+    @State private var signingUp = false
 
     var body: some View {
         HStack {
@@ -162,11 +164,74 @@ private struct NetworkHeader: View {
                 Button("Join a channel", systemImage: "number", action: onChannel)
                 Button("Message someone", systemImage: "person", action: onDm)
                 Button("Your profile", systemImage: "person.crop.circle", action: onProfile)
+                if net.guest {
+                    Button("Create an account…", systemImage: "person.badge.plus") { signingUp = true }
+                }
+                Button("Leave network…", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                    leaving = true
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
             .accessibilityLabel("\(net.name) options")
         }
+        .confirmationDialog("Leave \(net.name)?", isPresented: $leaving, titleVisibility: .visible) {
+            Button("Leave network", role: .destructive) { model.client.remove(network: net.network) }
+        } message: {
+            Text("This device forgets the network, its messages and your password. Your account stays.")
+        }
+        .sheet(isPresented: $signingUp) { SignUpView(net: net) }
+    }
+}
+
+/// A guest makes an account on `net`, keeping their channels. A failure
+/// comes back as a toast; an email code is asked for in the chat's banner.
+private struct SignUpView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let net: Network
+    @State private var account = ""
+    @State private var password = ""
+    @State private var email = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Username", text: $account)
+                        .textContentType(.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("Password", text: $password)
+                        .textContentType(.newPassword)
+                    TextField("Email (if the network asks for one)", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                } footer: {
+                    Text("Keep your name, catch up on what's said while you're away, and use voice and encrypted DMs. You'll reconnect for a moment; your channels come with you.")
+                }
+            }
+            .navigationTitle("Create an account")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Sign up") {
+                        let e = email.trimmingCharacters(in: .whitespaces)
+                        model.client.signUp(
+                            network: net.network,
+                            account: account.trimmingCharacters(in: .whitespaces),
+                            password: password,
+                            email: e.isEmpty ? nil : e
+                        )
+                        dismiss()
+                    }
+                    .disabled(account.trimmingCharacters(in: .whitespaces).isEmpty || password.isEmpty)
+                }
+            }
+        }
+        .onAppear { account = net.nick }
     }
 }
 

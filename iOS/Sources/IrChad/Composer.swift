@@ -15,6 +15,8 @@ struct Composer: View {
     @State private var photos: [PhotosPickerItem] = []
     @State private var photoPicker = false
     @FocusState private var focused: Bool
+    /// When the last message went: focus lost just after is the field's doing, not the user's.
+    @State private var sentAt = Date.distantPast
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,6 +73,10 @@ struct Composer: View {
             }
         }
         .onChange(of: replyTo?.key) { _, k in if k != nil { focused = true } }
+        // A hardware Return ends editing some time after `send()`; take focus back.
+        .onChange(of: focused) { _, f in
+            if !f, Date().timeIntervalSince(sentAt) < 0.5 { focused = true }
+        }
         .sheet(isPresented: $picker) {
             EmojiGifPicker(network: net.network, gifs: net.gifs, onEmoji: { draft += $0 }, onGif: { url in
                 // Posted as a plain link: every client can open it, and IrChad shows it inline.
@@ -114,6 +120,9 @@ struct Composer: View {
         draft = ""
         replyTo = nil
         editing = nil
+        // Keep the field focused for the next message (the button takes focus).
+        sentAt = Date()
+        focused = true
     }
 
     private func uploadPhotos(_ items: [PhotosPickerItem]) async {

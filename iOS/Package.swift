@@ -23,7 +23,10 @@ let package = Package(
                 "chad_ffiFFI",
                 .product(name: "LiveKit", package: "client-sdk-swift"),
             ],
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            // LiveKit's @objc extensions are ObjC categories nothing links
+            // to by symbol; without -ObjC they're dropped (Room addDelegate: crash).
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-ObjC"])]
         ),
         // chad-ffi's C header; build-rust.sh puts libchad_ffi.a in rust/.
         .target(

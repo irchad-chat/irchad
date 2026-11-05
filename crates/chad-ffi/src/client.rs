@@ -386,6 +386,25 @@ impl Client {
         self.net(network, NetCommand::LeaveVoice);
     }
 
+    /// A guest makes an account and carries on as it; a failure comes as `notice`.
+    pub fn sign_up(
+        &self,
+        network: String,
+        account: String,
+        password: String,
+        email: Option<String>,
+    ) {
+        let email = email.filter(|e| !e.trim().is_empty());
+        self.net(
+            network,
+            NetCommand::Register {
+                account,
+                password,
+                email,
+            },
+        );
+    }
+
     pub fn verify(&self, network: String, code: String) {
         self.net(network, NetCommand::Verify { code });
     }
