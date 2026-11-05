@@ -43,6 +43,9 @@ impl Client {
         let view = Arc::new(Mutex::new(View::default()));
         let v = view.clone();
         let c = core.clone();
+        let notify_all = Arc::new(AtomicBool::new(false));
+        let all = notify_all.clone();
+        let l = listener.clone();
         rt.spawn(async move {
             while let Some(ev) = events.recv().await {
                 let applied = v.lock().unwrap_or_else(|e| e.into_inner()).apply(&ev);
@@ -58,6 +61,7 @@ impl Client {
                             &target,
                             &messages,
                             &applied.fresh,
+                            all.load(Ordering::Relaxed),
                         );
                         for (from, text, channel) in notes {
                             listener.notify(network.clone(), target.clone(), from, text, channel);
@@ -178,7 +182,9 @@ impl Client {
         Arc::new(Self {
             core,
             view,
-            _rt: rt,
+            listener: l,
+            notify_all,
+            rt,
         })
     }
 
@@ -206,6 +212,42 @@ impl Client {
     pub fn join_guest(&self, invite: String, nick: String) {
         let auth = Auth::Guest { nick };
         self.core.send(Command::Join { invite, auth });
+    }
+
+    /// `Listener::notify` for every message (true), or only DMs and mentions.
+    pub fn notify_all(&self, on: bool) {
+        self.notify_all.store(on, Ordering::Relaxed);
+    }
+
+    /// Fetch the network's icon (`Network.icon`), at most 1 MiB:
+    /// `Listener::media` with that URL. Decoding is the UI's job (D14).
+    pub fn icon(&self, network: String) {
+        let url = {
+            let v = self.view();
+            v.net(&network).and_then(|i| v.nets[i].info.icon.clone())
+        };
+        let Some(url) = url else { return };
+        let listener = self.listener.clone();
+        self.rt.spawn(async move {
+            let bytes = chad_core::fetch_icon(&url).await.ok();
+            listener.media(network, url.to_string(), bytes);
+        });
+    }
+
+    /// The `@` list in `target` for `query` (what follows the `@`): nicks
+    /// starting with it, then ones containing it, recent speakers first.
+    pub fn nicks(&self, network: String, target: String, query: String) -> Vec<String> {
+        let v = self.view();
+        let (Some(ni), Some(b)) = (v.net(&network), v.buf(&network, &target)) else {
+            return Vec::new();
+        };
+        let own = &v.nets[ni].info.nick;
+        let cands = chad_core::complete::completable(&b.members, &b.msgs, &b.info, own);
+        chad_core::complete::suggest(&cands, &format!("@{query}"))
+            .unwrap_or_default()
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
     }
 
     /// Forget a network: disconnect, delete its cache and password.

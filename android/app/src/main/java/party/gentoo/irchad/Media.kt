@@ -187,6 +187,14 @@ class Media(private val app: IrChad) {
         }
     }
 
+    /** The network's icon (`Network.icon`), always fetched, like desktop's. */
+    fun icon(network: String, url: String): Img = synchronized(images) {
+        images.get("$network $url") ?: Img.Loading.also {
+            images.put("$network $url", it)
+            app.client.icon(network)
+        }
+    }
+
     /** `null` when it isn't loaded and `ask` is off. */
     fun preview(network: String, url: String, ask: Boolean): Prev? = synchronized(previews) {
         previews.get("$network $url") ?: if (!ask) null else Prev.Loading.also {
@@ -403,7 +411,8 @@ private fun LinkPreviewCard(app: IrChad, network: String, url: String) {
 
 /**
  * Emoji, and GIFs when `provider` is set (the network has search). Emoji
- * stay open for more; a GIF closes it.
+ * stay open for more; a GIF closes it. `gifQuery` opens on the GIFs, already
+ * searching (desktop's `/gif`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -414,8 +423,9 @@ fun Picker(
     onEmoji: (String) -> Unit,
     onGif: (String) -> Unit,
     onDismiss: () -> Unit,
+    gifQuery: String? = null,
 ) {
-    var tab by rememberSaveable { mutableStateOf(0) }
+    var tab by rememberSaveable { mutableStateOf(if (gifQuery != null) 1 else 0) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding().fillMaxWidth().height(480.dp)) {
             if (provider != null) {
@@ -424,7 +434,7 @@ fun Picker(
                     Tab(tab == 1, { tab = 1 }, text = { Text("GIFs") })
                 }
             }
-            if (tab == 1 && provider != null) GifTab(app, network, provider, onGif) else EmojiTab(onEmoji)
+            if (tab == 1 && provider != null) GifTab(app, network, provider, gifQuery.orEmpty(), onGif) else EmojiTab(onEmoji)
         }
     }
 }
@@ -448,8 +458,8 @@ private fun ColumnScope.EmojiTab(onEmoji: (String) -> Unit) {
 }
 
 @Composable
-private fun ColumnScope.GifTab(app: IrChad, network: String, provider: String, onGif: (String) -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
+private fun ColumnScope.GifTab(app: IrChad, network: String, provider: String, initial: String, onGif: (String) -> Unit) {
+    var query by rememberSaveable { mutableStateOf(initial) }
     val gifs = remember { mutableStateListOf<party.gentoo.irchad.core.Gif>() }
     var next by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }

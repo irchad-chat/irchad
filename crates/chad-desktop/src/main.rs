@@ -4,7 +4,6 @@
 mod app;
 mod catppuccin;
 mod chatlog;
-mod complete;
 mod emoji;
 mod gifs;
 mod icons;

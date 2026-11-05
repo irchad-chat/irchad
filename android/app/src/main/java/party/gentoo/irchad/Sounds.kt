@@ -7,8 +7,6 @@ import android.media.MediaCodec
 import android.media.MediaDataSource
 import android.media.MediaExtractor
 import android.media.MediaFormat
-import io.livekit.android.audio.MixerAudioBufferCallback
-import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +36,6 @@ class Sounds(private val app: IrChad) {
     /** The clip to play once its bytes arrive. */
     private var wanted: Pair<String, String>? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    val mixer = Mixer()
 
     fun open(network: String) {
         board.value = Board(network, null, null)
@@ -79,14 +76,14 @@ class Sounds(private val app: IrChad) {
     }
 
     private fun start(pcm: Pcm) {
-        mixer.clip = Playing(pcm)
-        local(pcm)
+        app.calls.mic.clip = Playing(pcm)
+        local(pcm, app.settings.soundboardVolume)
     }
 
     private var player: AudioTrack? = null
 
     /** The player hears it as a call sound, so the echo canceller keeps it off the mic. */
-    private fun local(pcm: Pcm) {
+    private fun local(pcm: Pcm, volume: Float) {
         player?.release()
         val bytes = pcm.samples.size * 2
         val t = AudioTrack.Builder()
@@ -101,14 +98,16 @@ class Sounds(private val app: IrChad) {
             .setTransferMode(AudioTrack.MODE_STATIC)
             .setBufferSizeInBytes(maxOf(bytes, 2))
             .build()
-        t.write(pcm.samples, 0, pcm.samples.size)
+        // AudioTrack's own volume can't go over 100%.
+        val out = if (volume == 1f) pcm.samples
+        else ShortArray(pcm.samples.size) { (pcm.samples[it] * volume).coerceIn(-32768f, 32767f).toInt().toShort() }
+        t.write(out, 0, out.size)
         t.play()
         player = t
     }
 
     /** Out of a call: stop and forget what's playing. */
     fun stop() {
-        mixer.clip = null
         player?.release()
         player = null
         board.value = null
@@ -123,35 +122,6 @@ class Playing(val pcm: Pcm) {
     var rate = 48_000
     var samples = resample(pcm, rate)
     var pos = 0
-}
-
-/** Adds the playing clip to what the mic captured (D48). Called on the audio thread. */
-class Mixer : MixerAudioBufferCallback() {
-    @Volatile var clip: Playing? = null
-
-    override fun onBufferRequest(
-        originalBuffer: ByteBuffer, audioFormat: Int, channelCount: Int, sampleRate: Int,
-        bytesRead: Int, captureTimeNs: Long,
-    ): BufferResponse? {
-        val c = clip ?: return null
-        if (c.rate != sampleRate) {
-            c.pos = (c.pos.toLong() * sampleRate / c.rate).toInt()
-            c.samples = resample(c.pcm, sampleRate)
-            c.rate = sampleRate
-        }
-        val float = audioFormat == AudioFormat.ENCODING_PCM_FLOAT
-        if (!float && audioFormat != AudioFormat.ENCODING_PCM_16BIT) return null
-        val frames = bytesRead / ((if (float) 4 else 2) * maxOf(1, channelCount))
-        val out = ByteBuffer.allocateDirect(bytesRead).order(ByteOrder.nativeOrder())
-        for (i in 0 until frames) {
-            val s = c.samples.getOrElse(c.pos + i) { 0 }
-            repeat(channelCount) { if (float) out.putFloat(s / 32768f) else out.putShort(s) }
-        }
-        c.pos += frames
-        if (c.pos >= c.samples.size) clip = null
-        out.rewind()
-        return BufferResponse(out)
-    }
 }
 
 /** Linear, which is plenty for a soundboard. */

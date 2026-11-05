@@ -46,7 +46,14 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
 - [ ] CI: add the Android SDK, NDK and cargo-ndk to the CI image (D32). Tags build a signed APK and attach it to the Gitea release with Obtainium-friendly asset names (D40).
   The CI image has JDK 21, the SDK and the NDK (no cargo-ndk, see `build-rust.sh`). `ci.yaml`'s `android` job builds a debug APK. `release.yml` builds `irchad-android-arm64.apk`, signed with the `ANDROID_KEYSTORE` secrets.
   The APK's version comes from `Cargo.toml` (`versionCode` = major·10⁶ + minor·10³ + patch). Open until the secrets are in and a tag has produced an APK that installs.
-- [ ] Edit your own messages from the composer, as on desktop (D51). Android already shows "(edited)"; chad-ffi has `edit` now (Phase 8), so only the Compose UI is left.
+- [x] Edit your own messages from the composer, as on desktop (D51). Android already shows "(edited)"; chad-ffi has `edit` now (Phase 8), so only the Compose UI is left.
+  "Edit" in a message's long-press menu puts its text in the composer under "Editing your message". Not checked on the emulator.
+- [x] Desktop parity (2026-11-05), besides sharing a screen from the phone. None of it checked on the emulator or a phone yet.
+  Chat: tapping a reaction takes yours back, a reply's parent that isn't loaded is fetched (`loadAround`) and scrolled to, typing notices go out, `:shortcode:` turns into emoji, `@` lists nicks (desktop's `complete` and `replace_shortcodes` moved to chad-core, so both share them), and `/gif` opens the GIF search. Avatars show people's pictures, and network chips show the network's icon (`Client::icon`).
+  The top bar's ⋮ leaves a channel, closes a DM, or lists their encrypted-DM devices. Your row at the top of the drawer opens Online/Away, "Edit profile…" (display name, picture, your devices with Remove), and "Leave network…".
+  Settings: "Notify me about" (every message, mentions and DMs, or nothing; `Client::notify_all`, and pushes only ever bring DMs and mentions), away after idle minutes (since the last touch), and desktop's voice settings (D61).
+  Voice panel: connection quality, a speaker route picker, hold-to-talk with push to talk, and holding someone's chip for their voice and screen-share volume.
+  Desktop-only on purpose: the quick switcher (the drawer does it), text size (the system's font scale does it), panes, stage layout, tray, autostart, the update check, and picking a microphone (Android picks it with the route).
 
 ## Done when
 - The phone joins via an invite link, receives push while backgrounded, talks in voice with desktop users, and watches a desktop screen share.

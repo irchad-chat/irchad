@@ -36,10 +36,11 @@ data class Shared(val text: String, val uris: List<Uri>)
 private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /**
- * Uploads each file to `target`, whose link the core then posts. Reads at
- * most the network's limit, so a huge file is refused, not loaded.
+ * Uploads each file to `target`, whose link the core then posts, or with a
+ * `null` target makes it our avatar. Reads at most the network's limit, so a
+ * huge file is refused, not loaded.
  */
-fun upload(app: IrChad, ctx: Context, net: Network, target: String, uris: List<Uri>) {
+fun upload(app: IrChad, ctx: Context, net: Network, target: String?, uris: List<Uri>) {
     val limit = net.uploads
     if (limit == null) {
         app.notices.tryEmit("${net.name} doesn't take uploads.")
@@ -64,7 +65,8 @@ fun upload(app: IrChad, ctx: Context, net: Network, target: String, uris: List<U
                 b == null -> app.notices.tryEmit("$name is too big for ${net.name} (${limit / 1_000_000u} MB at most).")
                 else -> withContext(Dispatchers.Main) {
                     app.notices.tryEmit("Uploading $name…")
-                    app.client.upload(net.network, target, name, b)
+                    if (target == null) app.client.uploadAvatar(net.network, name, b)
+                    else app.client.upload(net.network, target, name, b)
                 }
             }
         }

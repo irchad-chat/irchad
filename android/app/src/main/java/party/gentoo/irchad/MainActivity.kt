@@ -64,6 +64,12 @@ class MainActivity : ComponentActivity() {
         (application as IrChad).notifier.resumes++
     }
 
+    /** Any touch: not idle, so not away by itself (desktop's idle timer). */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        (application as IrChad).touched()
+    }
+
     override fun onStop() {
         super.onStop()
         (application as IrChad).notifier.foreground(false)

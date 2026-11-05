@@ -1,6 +1,20 @@
 package party.gentoo.irchad
 
 import android.Manifest
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.ui.unit.Dp
+import io.livekit.android.room.participant.ConnectionQuality
+import party.gentoo.irchad.core.Device
+import party.gentoo.irchad.core.Reaction
+import party.gentoo.irchad.core.replaceShortcodes
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
@@ -10,7 +24,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledIconToggleButton
@@ -66,6 +79,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import party.gentoo.irchad.core.Sas
 import party.gentoo.irchad.core.SasStep
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -211,8 +225,9 @@ private fun ChatScreen(
     var members by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<String?>(null) }
     val joinVoice = rememberVoiceJoin(app)
-    // The message being answered, in the buffer on screen.
+    // The message being answered, or edited, in the buffer on screen.
     var replyTo by remember(net.network, buf?.target) { mutableStateOf<Message?>(null) }
+    var editing by remember(net.network, buf?.target) { mutableStateOf<Message?>(null) }
 
     BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
 
@@ -221,7 +236,7 @@ private fun ChatScreen(
         drawerContent = {
             ModalDrawerSheet {
                 Drawer(
-                    nets, net, buffers, buf?.target,
+                    app, tick, nets, net, buffers, buf?.target,
                     onNet = { current = it },
                     onBuffer = {
                         selected[net.network] = it
@@ -284,6 +299,27 @@ private fun ChatScreen(
                         if (buf != null && !buf.dm) {
                             IconButton(onClick = { members = true }) { Icon(Icons.Default.Person, "Members") }
                         }
+                        if (buf != null) {
+                            var more by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { more = true }) { Icon(Icons.Default.MoreVert, "More") }
+                                DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                                    if (buf.dm && buf.encryption != Lock.NONE && buf.encryption != Lock.OFF) {
+                                        DropdownMenuItem(text = { Text("Devices") }, onClick = {
+                                            more = false
+                                            dialog = "devices"
+                                        })
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text(if (buf.dm) "Close conversation" else "Leave channel") },
+                                        onClick = {
+                                            more = false
+                                            if (buf.dm) c.closeDm(net.network, buf.target) else c.part(net.network, buf.target)
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     },
                 )
             },
@@ -301,10 +337,19 @@ private fun ChatScreen(
                         Text("No channels yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    Log(app, tick, net, buf, Modifier.weight(1f), onReply = { replyTo = it })
+                    Log(
+                        app, tick, net, buf, Modifier.weight(1f),
+                        onReply = { editing = null; replyTo = it },
+                        onEdit = { replyTo = null; editing = it },
+                    )
                 }
                 call?.let { VoicePanel(app, nets, it) }
-                if (buf != null) Composer(app, net, buf, replyTo) { replyTo = null }
+                if (buf != null) {
+                    Composer(app, tick, net, buf, replyTo, editing) {
+                        replyTo = null
+                        editing = null
+                    }
+                }
             }
         }
     }
@@ -344,7 +389,7 @@ private fun ChatScreen(
                                 .padding(horizontal = 24.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Avatar(m.nick)
+                            Avatar(app, net.network, m.nick, remember(tick, m.nick) { c.profile(net.network, m.nick).avatar })
                             Spacer(Modifier.width(12.dp))
                             if (m.oper) {
                                 Icon(Icons.Default.Build, "IRC operator", Modifier.size(16.dp))
@@ -366,32 +411,179 @@ private fun ChatScreen(
         }
     }
 
-    if (dialog == "settings") SettingsDialog(app) { dialog = null } else dialog?.let { kind ->
-        var name by remember { mutableStateOf(if (kind == "channel") "#" else "") }
-        AlertDialog(
-            onDismissRequest = { dialog = null },
-            title = { Text(if (kind == "channel") "Join a channel" else "Message someone") },
-            text = {
+    when (dialog) {
+        "settings" -> SettingsDialog(app) { dialog = null }
+        "status" -> StatusDialog(app, net, onProfile = { dialog = "profile" }, onLeave = { dialog = "leave" }) { dialog = null }
+        "profile" -> ProfileDialog(app, tick, net) { dialog = null }
+        "leave" -> LeaveDialog(app, net) { dialog = null }
+        "devices" -> buf?.let { DevicesDialog(app, tick, net, it.target) { dialog = null } } ?: run { dialog = null }
+        "channel", "dm" -> AddDialog(app, net, dialog!!, onOpen = { selected[net.network] = it }) { dialog = null }
+    }
+}
+
+/** Join a channel, or open a DM. */
+@Composable
+private fun AddDialog(app: IrChad, net: Network, kind: String, onOpen: (String) -> Unit, onDismiss: () -> Unit) {
+    val c = app.client
+    var name by remember { mutableStateOf(if (kind == "channel") "#" else "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (kind == "channel") "Join a channel" else "Message someone") },
+        text = {
+            OutlinedTextField(
+                name, { name = it }, singleLine = true,
+                label = { Text(if (kind == "channel") "Channel" else "Nickname") },
+            )
+        },
+        confirmButton = {
+            TextButton(enabled = name.trim().length > 1 || kind == "dm" && name.isNotBlank(), onClick = {
+                val n = name.trim()
+                if (kind == "channel") c.joinChannel(net.network, n) else c.openDm(net.network, n)
+                onOpen(n)
+                onDismiss()
+            }) { Text(if (kind == "channel") "Join" else "Open") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Online or away, and the way to the profile and to leaving, like desktop's status menu. */
+@Composable
+private fun StatusDialog(app: IrChad, net: Network, onProfile: () -> Unit, onLeave: () -> Unit, onDismiss: () -> Unit) {
+    val s = app.settings
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your status and profile") },
+        text = {
+            Column {
+                for ((away, label) in listOf(false to "Online", true to "Away")) {
+                    Choice(label, s.away == away) {
+                        s.away = away
+                        app.checkAway()
+                    }
+                }
+                if (!s.away && app.away) Hint("You're away because you haven't used IrChad for a while.")
+                if (!net.guest) TextButton(onClick = onProfile) { Text("Edit profile…") }
+                TextButton(onClick = onLeave) { Text("Leave ${net.name}…", color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Display name, picture, and this account's devices with encrypted DMs. */
+@Composable
+private fun ProfileDialog(app: IrChad, tick: Long, net: Network, onDismiss: () -> Unit) {
+    val c = app.client
+    val ctx = LocalContext.current
+    val me = remember(tick) { c.profile(net.network, net.nick) }
+    var name by remember { mutableStateOf(me.displayName.orEmpty()) }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) upload(app, ctx, net, null, listOf(uri))
+    }
+    LaunchedEffect(net.network) { c.fetchDevices(net.network, net.nick) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your profile on ${net.name}") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(app, net.network, net.nick, me.avatar, 64.dp)
+                    Column(Modifier.padding(start = 8.dp)) {
+                        if (net.uploads != null) TextButton(onClick = { pick.launch("image/*") }) { Text("Choose a picture…") }
+                        if (me.avatar != null) TextButton(onClick = { c.clearAvatar(net.network) }) { Text("Remove picture") }
+                    }
+                }
                 OutlinedTextField(
-                    name, { name = it }, singleLine = true,
-                    label = { Text(if (kind == "channel") "Channel" else "Nickname") },
+                    name, { name = it.take(64) }, singleLine = true,
+                    label = { Text("Display name") }, placeholder = { Text(net.nick) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
-            },
-            confirmButton = {
-                TextButton(enabled = name.trim().length > 1 || kind == "dm" && name.isNotBlank(), onClick = {
-                    val n = name.trim()
-                    if (kind == "channel") c.joinChannel(net.network, n) else c.openDm(net.network, n)
-                    selected[net.network] = n
-                    dialog = null
-                }) { Text(if (kind == "channel") "Join" else "Open") }
-            },
-            dismissButton = { TextButton(onClick = { dialog = null }) { Text("Cancel") } },
+                Hint("People still see that you're ${net.nick}.")
+                val devices = remember(tick) { c.devices(net.network, net.nick) }
+                if (devices.isNotEmpty()) {
+                    Text("Devices with encrypted DMs", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
+                    Devices(devices) { c.removeDevice(net.network, it) }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                c.setDisplayName(net.network, name.trim())
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Someone's devices with encrypted DMs, to compare fingerprints by eye. */
+@Composable
+private fun DevicesDialog(app: IrChad, tick: Long, net: Network, nick: String, onDismiss: () -> Unit) {
+    val c = app.client
+    LaunchedEffect(net.network, nick) { c.fetchDevices(net.network, nick) }
+    val devices = remember(tick, nick) { c.devices(net.network, nick) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("$nick's devices") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (devices.isEmpty()) Hint("None yet.") else Devices(devices, null)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+/** Each device's name, whether it's verified, and its fingerprint; [onRemove] adds Remove (not on this one). */
+@Composable
+private fun Devices(devices: List<Device>, onRemove: ((String) -> Unit)?) {
+    for (d in devices) {
+        Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (d.`this`) "This device" else d.id, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (d.verified) Icon(Icons.Default.CheckCircle, "Verified", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            if (onRemove != null && !d.`this`) TextButton(onClick = { onRemove(d.id) }) { Text("Remove") }
+        }
+        Text(
+            d.fingerprint, fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
+/** Forget the network here, as on desktop; the account stays. */
+@Composable
+private fun LeaveDialog(app: IrChad, net: Network, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Leave ${net.name}?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("IrChad forgets this network and your saved password for it.")
+                Text("This device's encryption keys go too, so it can't read encrypted DMs again.")
+                Text("Your account stays, so you can join again later.")
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    app.client.remove(net.network)
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+            ) { Text("Leave") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 @Composable
 private fun Drawer(
+    app: IrChad,
+    tick: Long,
     nets: List<Network>,
     net: Network,
     buffers: List<Buffer>,
@@ -409,6 +601,7 @@ private fun Drawer(
             FilterChip(
                 selected = n.network == net.network,
                 onClick = { onNet(n.network) },
+                leadingIcon = n.icon?.let { url -> { NetworkIcon(app, n.network, url) } },
                 label = {
                     Text(n.name)
                     if (n.mentions > 0u) {
@@ -425,6 +618,17 @@ private fun Drawer(
             IconButton(onClick = { onDialog("settings") }) { Icon(Icons.Default.Settings, "Settings") }
         }
     }
+    // Your status and profile, as in desktop's sidebar.
+    val me = remember(tick, net.network) { app.client.profile(net.network, net.nick) }
+    val shown = me.displayName?.takeIf { it.isNotBlank() && it != net.nick }?.let { "$it (${net.nick})" } ?: net.nick
+    ListItem(
+        headlineContent = { Text(shown, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        supportingContent = { Text(if (app.away) "Away" else "Online") },
+        leadingContent = { Avatar(app, net.network, net.nick, me.avatar) },
+        modifier = Modifier
+            .clickable(onClickLabel = "Your status and profile") { onDialog("status") }
+            .padding(horizontal = 12.dp),
+    )
     HorizontalDivider()
     LazyColumn(Modifier.padding(horizontal = 12.dp)) {
         for ((title, dm) in listOf("Channels" to false, "Direct messages" to true)) {
@@ -573,7 +777,10 @@ private fun StatusBanner(app: IrChad, net: Network) {
 }
 
 @Composable
-private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Modifier, onReply: (Message) -> Unit) {
+private fun Log(
+    app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Modifier,
+    onReply: (Message) -> Unit, onEdit: (Message) -> Unit,
+) {
     val c = app.client
     val msgs = remember(tick, net.network, buf.target) { c.messages(net.network, buf.target) }
     val connected = net.status == null
@@ -603,6 +810,13 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
     // Where each msgid is in `rev`, for reply quotes.
     val at = remember(msgs) { rev.withIndex().filter { it.value.msgid != null }.associate { it.value.msgid!! to it.index } }
     val scope = rememberCoroutineScope()
+    // A reply's parent being loaded (`loadAround`), to scroll to once it's in.
+    var jump by remember(net.network, buf.target) { mutableStateOf<String?>(null) }
+    LaunchedEffect(at, jump) {
+        val i = jump?.let { at[it] } ?: return@LaunchedEffect
+        jump = null
+        list.animateScrollToItem(i)
+    }
     Box(modifier.fillMaxWidth()) {
         LazyColumn(state = list, reverseLayout = true, modifier = Modifier.fillMaxSize()) {
             items(rev.size, key = { rev[it].key }) { i ->
@@ -613,8 +827,23 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
                     prev.action || m.action || m.replyTo != null
                 Box {
                     MessageRow(
-                        app, net.network, m, head, buf.dm, parent, onLong = { menu = m },
-                        onParent = { at[m.replyTo]?.let { scope.launch { list.animateScrollToItem(it) } } },
+                        app, net.network, net.nick, m, head, buf.dm, parent, onLong = { menu = m },
+                        onParent = {
+                            val id = m.replyTo
+                            val i = id?.let { at[it] }
+                            when {
+                                i != null -> scope.launch { list.animateScrollToItem(i) }
+                                id != null && connected -> {
+                                    jump = id
+                                    c.loadAround(net.network, buf.target, id)
+                                }
+                            }
+                        },
+                        onReact = { r ->
+                            val id = m.msgid ?: return@MessageRow
+                            if (r.nicks.any { it.equals(net.nick, true) }) c.unreact(net.network, buf.target, id, r.emoji)
+                            else c.react(net.network, buf.target, id, r.emoji)
+                        },
                     )
                     DropdownMenu(expanded = menu?.key == m.key, onDismissRequest = { menu = null }) {
                         if (m.msgid != null && !m.redacted) {
@@ -638,6 +867,12 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
                         if (!m.redacted && m.text.isNotEmpty()) {
                             DropdownMenuItem(text = { Text("Copy text") }, onClick = {
                                 clipboard.setText(androidx.compose.ui.text.AnnotatedString(m.text))
+                                menu = null
+                            })
+                        }
+                        if (m.own && m.msgid != null && !m.redacted && !m.undecryptable && !m.notice) {
+                            DropdownMenuItem(text = { Text("Edit") }, onClick = {
+                                onEdit(m)
                                 menu = null
                             })
                         }
@@ -679,8 +914,8 @@ private fun Log(app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Mo
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MessageRow(
-    app: IrChad, network: String, m: Message, head: Boolean, dm: Boolean, parent: Message?,
-    onLong: () -> Unit, onParent: () -> Unit,
+    app: IrChad, network: String, own: String, m: Message, head: Boolean, dm: Boolean, parent: Message?,
+    onLong: () -> Unit, onParent: () -> Unit, onReact: (Reaction) -> Unit,
 ) {
     val time = remember(m.time) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(m.time)) }
     val bar = if (m.mention && !dm) MaterialTheme.colorScheme.primary else Color.Transparent
@@ -693,7 +928,7 @@ private fun MessageRow(
     ) {
         Box(Modifier.width(3.dp).size(3.dp, 20.dp).background(bar))
         Spacer(Modifier.width(9.dp))
-        if (head) Avatar(m.nick) else Spacer(Modifier.width(36.dp))
+        if (head) Avatar(app, network, m.nick, m.avatar) else Spacer(Modifier.width(36.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             if (m.replyTo != null) {
@@ -703,8 +938,7 @@ private fun MessageRow(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    // shortcut: only jumps to a parent that's loaded; desktop's LoadAround isn't in chad-ffi.
-                    modifier = Modifier.clickable(enabled = parent != null, onClick = onParent),
+                    modifier = Modifier.clickable(onClickLabel = "Jump to the message", onClick = onParent),
                 )
             }
             if (head) {
@@ -737,12 +971,21 @@ private fun MessageRow(
             if (m.reactions.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
                     for (r in m.reactions) {
+                        val mine = r.nicks.any { it.equals(own, true) }
                         Text(
                             "${r.emoji} ${r.nicks.size}",
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .background(
+                                    if (mine) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+                                )
+                                .clickable(
+                                    enabled = m.msgid != null,
+                                    onClickLabel = if (mine) "Take back ${r.emoji}" else "React ${r.emoji}",
+                                ) { onReact(r) }
+                                .semantics { contentDescription = "${r.emoji} from ${r.nicks.joinToString(", ")}" }
                                 .padding(horizontal = 8.dp, vertical = 2.dp),
                         )
                     }
@@ -752,16 +995,34 @@ private fun MessageRow(
     }
 }
 
+/** Their picture once it's loaded (when images load by themselves), or their initial. */
 @Composable
-private fun Avatar(nick: String) {
+private fun Avatar(app: IrChad, network: String, nick: String, url: String?, size: Dp = 36.dp) {
+    val tick by app.media.tick.collectAsState()
+    val auto = app.media.auto
+    val img = url?.let { remember(tick, network, it, auto) { app.media.image(network, it, auto) } }
+    if (url != null && img is Media.Img.Ready) {
+        RemoteImage(app, network, url, size, size, Modifier.size(size).clip(CircleShape), fill = true, ask = true)
+        return
+    }
     Box(
         Modifier
-            .size(36.dp)
+            .size(size)
             .clip(CircleShape)
             .background(nickColor(nick).copy(alpha = 0.25f)),
         contentAlignment = Alignment.Center,
     ) {
         Text(nick.take(1).uppercase(), fontWeight = FontWeight.Bold, color = nickColor(nick))
+    }
+}
+
+/** A network's icon in its chip, once it's loaded. */
+@Composable
+private fun NetworkIcon(app: IrChad, network: String, url: String) {
+    val tick by app.media.tick.collectAsState()
+    val img = remember(tick, network, url) { app.media.icon(network, url) }
+    if (img is Media.Img.Ready) {
+        RemoteImage(app, network, url, 18.dp, 18.dp, Modifier.size(18.dp), fill = true, ask = true)
     }
 }
 
@@ -804,27 +1065,44 @@ private fun rgb(c: UInt) = Color(0xFF000000.toInt() or c.toInt())
 private fun Color.luminance(): Float = 0.2126f * red + 0.7152f * green + 0.0722f * blue
 
 @Composable
-private fun Composer(app: IrChad, net: Network, buf: Buffer, replyTo: Message?, onReplied: () -> Unit) {
+private fun Composer(
+    app: IrChad, tick: Long, net: Network, buf: Buffer, replyTo: Message?, editing: Message?, onDone: () -> Unit,
+) {
+    val c = app.client
     var draft by rememberSaveable(net.network, buf.target, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
+    }
+    // Editing starts from the message's text, without its formatting (like desktop).
+    LaunchedEffect(editing?.key) {
+        editing?.let { draft = TextFieldValue(it.text, TextRange(it.text.length)) }
     }
     val ctx = LocalContext.current
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) upload(app, ctx, net, buf.target, uris)
     }
-    if (replyTo != null) {
+    val banner = when {
+        editing != null -> "Editing your message"
+        replyTo != null -> "Replying to ${replyTo.shown}: ${replyTo.text}"
+        else -> null
+    }
+    if (banner != null) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Row(Modifier.fillMaxWidth().padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Replying to ${replyTo.shown}: ${replyTo.text}",
+                    banner,
                     style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onReplied) { Icon(Icons.Default.Close, "Don't reply") }
+                IconButton(onClick = {
+                    if (editing != null) draft = TextFieldValue()
+                    onDone()
+                }) { Icon(Icons.Default.Close, if (editing != null) "Cancel edit" else "Cancel reply") }
             }
         }
     }
     var picker by remember { mutableStateOf(false) }
+    // What `/gif` asked to search for; `null` opens on emoji.
+    var gifQuery by remember { mutableStateOf<String?>(null) }
     if (picker) {
         Picker(
             app, net.network, net.gifs,
@@ -835,12 +1113,73 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer, replyTo: Message?, 
             },
             // Posted as a plain link: every client can open it, and IrChad shows it inline.
             onGif = {
-                app.client.send(net.network, buf.target, it, null)
+                c.send(net.network, buf.target, it, null)
                 picker = false
             },
             onDismiss = { picker = false },
+            gifQuery = gifQuery,
         )
     }
+
+    // The `@` list: the word before the cursor, while it starts with `@`.
+    val cursor = draft.selection.min
+    val wordStart = draft.text.lastIndexOfAny(charArrayOf(' ', '\n', '\t'), (cursor - 1).coerceAtLeast(0))
+        .let { if (cursor == 0) 0 else it + 1 }
+    val word = draft.text.substring(wordStart.coerceAtMost(cursor), cursor)
+    val nicks = remember(tick, net.network, buf.target, word) {
+        if (word.startsWith("@")) c.nicks(net.network, buf.target, word.drop(1)) else emptyList()
+    }
+    if (nicks.isNotEmpty()) {
+        LazyRow(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(nicks) { n ->
+                SuggestionChip(onClick = {
+                    // What IRC clients highlight on: `nick: ` to start a message, `nick ` elsewhere.
+                    val put = if (wordStart == 0) "$n: " else "$n "
+                    val t = draft.text
+                    draft = TextFieldValue(t.substring(0, wordStart) + put + t.substring(cursor), TextRange(wordStart + put.length))
+                }, label = { Text(n) })
+            }
+        }
+    }
+
+    fun change(v: TextFieldValue) {
+        var next = v
+        if (v.text != draft.text) {
+            // `:shortcode:` turns into its emoji as it's typed, like desktop.
+            val at = v.text.codePointCount(0, v.selection.min.coerceIn(0, v.text.length))
+            replaceShortcodes(v.text, at.toUInt())?.let { r ->
+                val i = r.text.offsetByCodePoints(0, r.cursor.toInt().coerceAtMost(r.text.codePointCount(0, r.text.length)))
+                next = TextFieldValue(r.text, TextRange(i))
+            }
+            c.typing(net.network, buf.target, next.text.isNotBlank())
+        }
+        draft = next
+    }
+
+    fun submit() {
+        val text = draft.text.trimEnd()
+        gifCommand(text)?.let { q ->
+            if (net.gifs != null) {
+                gifQuery = q
+                picker = true
+            } else {
+                app.notices.tryEmit("This network doesn't have GIFs.")
+            }
+            draft = TextFieldValue()
+            return
+        }
+        if (text.isBlank()) return
+        val id = editing?.msgid
+        if (id != null) c.edit(net.network, buf.target, id, text)
+        else c.send(net.network, buf.target, text, replyTo?.msgid)
+        draft = TextFieldValue()
+        c.typing(net.network, buf.target, false)
+        onDone()
+    }
+
     Row(
         Modifier
             .fillMaxWidth()
@@ -848,12 +1187,15 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer, replyTo: Message?, 
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (net.uploads != null) {
+        if (net.uploads != null && editing == null) {
             IconButton(onClick = { attach.launch("*/*") }) { Icon(Icons.Default.Add, "Attach files") }
         }
-        IconButton(onClick = { picker = true }) { Icon(Icons.Default.Face, "Emoji and GIFs") }
+        IconButton(onClick = {
+            gifQuery = null
+            picker = true
+        }) { Icon(Icons.Default.Face, "Emoji and GIFs") }
         TextField(
-            draft, { draft = it },
+            draft, ::change,
             placeholder = { Text("Message ${buf.target}") },
             maxLines = 5,
             shape = RoundedCornerShape(24.dp),
@@ -863,15 +1205,17 @@ private fun Composer(app: IrChad, net: Network, buf: Buffer, replyTo: Message?, 
             ),
             modifier = Modifier.weight(1f),
         )
-        IconButton(
-            enabled = draft.text.isNotBlank(),
-            onClick = {
-                app.client.send(net.network, buf.target, draft.text.trimEnd(), replyTo?.msgid)
-                draft = TextFieldValue()
-                onReplied()
-            },
-        ) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
+        IconButton(enabled = draft.text.isNotBlank(), onClick = ::submit) {
+            Icon(if (editing != null) Icons.Default.Check else Icons.AutoMirrored.Filled.Send, if (editing != null) "Save" else "Send")
+        }
     }
+}
+
+/** Desktop's `/gif [search]`: the search, or `null` when it's not that. */
+internal fun gifCommand(text: String): String? {
+    val t = text.trim()
+    val cmd = t.substringBefore(' ').substringBefore('\t')
+    return if (cmd.equals("/gif", ignoreCase = true)) t.drop(cmd.length).trim() else null
 }
 
 /** Joins voice once the mic (and headset, notification) permissions are in. */
@@ -922,13 +1266,42 @@ private fun VoicePanel(app: IrChad, nets: List<Network>, call: CallState) {
                         style = MaterialTheme.typography.titleSmall,
                         color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
                     )
+                    val quality = when (call.quality) {
+                        ConnectionQuality.EXCELLENT -> "Excellent connection"
+                        ConnectionQuality.GOOD -> "Good connection"
+                        ConnectionQuality.POOR, ConnectionQuality.LOST -> "Poor connection"
+                        else -> null
+                    }.takeIf { ok }
                     Text(
-                        "${net.voice} · ${net.name}",
+                        listOfNotNull(net.voice, net.name, quality).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (call.quality == ConnectionQuality.POOR || call.quality == ConnectionQuality.LOST)
+                            MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                if (call.outputs.size > 1) {
+                    var routes by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { routes = true }) {
+                            Icon(painterResource(R.drawable.ic_speaker), "Speakers: ${call.output?.name ?: "default"}")
+                        }
+                        DropdownMenu(expanded = routes, onDismissRequest = { routes = false }) {
+                            for (d in call.outputs) {
+                                DropdownMenuItem(
+                                    text = { Text(d.name) },
+                                    leadingIcon = if (d == call.output) {
+                                        { Icon(Icons.Default.Check, "In use") }
+                                    } else null,
+                                    onClick = {
+                                        calls.output(d)
+                                        routes = false
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
                 FilledIconToggleButton(checked = call.muted, onCheckedChange = { calls.setMuted(it) }) {
                     Icon(
@@ -950,27 +1323,104 @@ private fun VoicePanel(app: IrChad, nets: List<Network>, call: CallState) {
                     ),
                 ) { Icon(painterResource(R.drawable.ic_call_end), "Leave voice") }
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(call.people) { p ->
-                    val watchable = p.sharing && !p.local
-                    AssistChip(
-                        onClick = { if (watchable) calls.watch(p.identity) },
-                        label = { Text(p.identity) },
-                        leadingIcon = if (p.muted) {
-                            { Icon(painterResource(R.drawable.ic_mic_off), "Muted", Modifier.size(16.dp)) }
-                        } else null,
-                        trailingIcon = if (p.sharing) {
-                            { Icon(painterResource(R.drawable.ic_screen), if (watchable) "Watch their screen" else "Sharing", Modifier.size(16.dp)) }
-                        } else null,
-                        border = BorderStroke(
-                            if (p.speaking) 2.dp else 1.dp,
-                            if (p.speaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                        ),
+            if (app.settings.pushToTalk && call.connected && !call.muted && !call.deafened) {
+                var down by remember { mutableStateOf(false) }
+                Surface(
+                    color = if (down) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = if (down) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer,
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .semantics { contentDescription = "Push to talk: hold to talk" }
+                        .pointerInput(Unit) {
+                            detectTapGestures(onPress = {
+                                down = true
+                                calls.mic.held = true
+                                try {
+                                    tryAwaitRelease()
+                                } finally {
+                                    calls.mic.held = false
+                                    down = false
+                                }
+                            })
+                        },
+                ) {
+                    Text(
+                        if (down) "Talking…" else "Hold to talk",
+                        Modifier.padding(vertical = 12.dp),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                 }
             }
+            var volumeOf by remember { mutableStateOf<Person?>(null) }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(call.people) { p -> PersonChip(p, onWatch = { calls.watch(p.identity) }, onVolume = { volumeOf = p }) }
+            }
+            volumeOf?.let { p -> VolumeDialog(app, p) { volumeOf = null } }
         }
     }
+}
+
+/**
+ * Someone in the call: tap to watch their share, hold for their volume.
+ * A chip can't take a long press, so this draws its own.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PersonChip(p: Person, onWatch: () -> Unit, onVolume: () -> Unit) {
+    val watchable = p.sharing && !p.local
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(
+            if (p.speaking) 2.dp else 1.dp,
+            if (p.speaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        ),
+        modifier = Modifier.combinedClickable(
+            enabled = !p.local,
+            onClickLabel = if (watchable) "Watch their screen" else null,
+            onClick = { if (watchable) onWatch() else onVolume() },
+            onLongClickLabel = "Volume",
+            onLongClick = onVolume,
+        ),
+    ) {
+        Row(Modifier.height(32.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (p.muted) Icon(painterResource(R.drawable.ic_mic_off), "Muted", Modifier.size(16.dp).padding(end = 4.dp))
+            Text(p.identity, style = MaterialTheme.typography.labelLarge)
+            if (p.sharing) {
+                Icon(
+                    painterResource(R.drawable.ic_screen), if (watchable) "Watch their screen" else "Sharing",
+                    Modifier.padding(start = 4.dp).size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** How loud someone, and their screen share, are for us. */
+@Composable
+private fun VolumeDialog(app: IrChad, p: Person, onDismiss: () -> Unit) {
+    var voice by remember(p.identity) { mutableStateOf(app.settings.volume(p.identity, false)) }
+    var screen by remember(p.identity) { mutableStateOf(app.settings.volume(p.identity, true)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(p.identity) },
+        text = {
+            Column {
+                Percent("Volume", voice) {
+                    voice = it
+                    app.calls.setVolume(p.identity, false, it)
+                }
+                if (p.sharing) {
+                    Percent("Screen share volume", screen) {
+                        screen = it
+                        app.calls.setVolume(p.identity, true, it)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }
 
 /** The soundboard's buttons (D37): a clip goes out to everyone in the call. */

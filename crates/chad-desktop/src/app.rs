@@ -9,9 +9,8 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use chad_core::{
-    Auth, Blob, BufferInfo, BufferKind, ChatMessage, Command, ConnState, Core, Crypt, DeviceInfo,
-    Encryption, Event, Member, MessageKind, NetCommand, Typing, VerifyState, VerifyStep,
-    VoiceState, invite,
+    Auth, Blob, BufferKind, ChatMessage, Command, ConnState, Core, Crypt, DeviceInfo, Encryption,
+    Event, Member, MessageKind, NetCommand, Typing, VerifyState, VerifyStep, VoiceState, invite,
 };
 use chad_media::{InputMode, Voice};
 use egui::{
@@ -30,7 +29,8 @@ use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, Layout, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
 use crate::voice;
-use crate::{complete, emoji, gifs, update};
+use crate::{emoji, gifs, update};
+use chad_core::complete;
 use chad_core::format;
 
 mod chat;
@@ -260,22 +260,6 @@ pub(crate) fn footer(ui: &mut egui::Ui, primary: &str, enabled: bool, busy: bool
         (go, cancel)
     })
     .inner
-}
-
-fn completable(
-    members: &Option<Vec<Member>>,
-    msgs: &[ChatMessage],
-    info: &BufferInfo,
-    own: &str,
-) -> Vec<String> {
-    let recent = msgs.iter().rev().map(|m| m.nick.as_str());
-    match members {
-        Some(ms) => complete::candidates(ms.iter().map(|m| m.nick.as_str()), recent, own),
-        None if info.kind == BufferKind::Dm => {
-            complete::candidates([info.target.as_str()], recent, own)
-        }
-        None => Vec::new(),
-    }
 }
 
 fn state_text(state: &ConnState) -> Option<(String, bool)> {

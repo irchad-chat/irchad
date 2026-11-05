@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 
+use crate::{BufferInfo, BufferKind, ChatMessage, Member};
+
 /// Most suggestions to show in the `@` list.
 const MAX_SUGGESTIONS: usize = 50;
 /// How far back the log is searched for recent speakers.
@@ -36,6 +38,22 @@ pub fn candidates<'a>(
         }
     }
     out
+}
+
+/// What can be completed in a buffer: its members, or the other side of a DM
+/// before the member list is in, recent speakers first.
+pub fn completable(
+    members: &Option<Vec<Member>>,
+    msgs: &[ChatMessage],
+    info: &BufferInfo,
+    own: &str,
+) -> Vec<String> {
+    let recent = msgs.iter().rev().map(|m| m.nick.as_str());
+    match members {
+        Some(ms) => candidates(ms.iter().map(|m| m.nick.as_str()), recent, own),
+        None if info.kind == BufferKind::Dm => candidates([info.target.as_str()], recent, own),
+        None => Vec::new(),
+    }
 }
 
 /// The `@` list for `word` (which includes the `@`): nicks starting with the

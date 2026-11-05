@@ -428,7 +428,7 @@ fn composer(
                     if !q.word.starts_with('@') {
                         return Vec::new();
                     }
-                    let nicks = completable(members, msgs, info, cx.own);
+                    let nicks = complete::completable(members, msgs, info, cx.own);
                     let list = complete::suggest(&nicks, q.word).unwrap_or_default();
                     list.into_iter()
                         .map(|n| {
@@ -481,12 +481,12 @@ fn composer(
             .map_or(end, |r| r.primary.index.into());
         let mut moved = false;
         if let Some(back) = tab {
-            let nicks = completable(&b.members, &b.msgs, &b.info, cx.own);
+            let nicks = complete::completable(&b.members, &b.msgs, &b.info, cx.own);
             if let Some(c) = complete::tab(&mut b.ui.draft, cursor, &mut b.ui.tab, &nicks, back) {
                 (cursor, moved, changed) = (c, true, true);
             }
         }
-        if changed && emoji::replace_shortcodes(&mut b.ui.draft, &mut cursor) {
+        if changed && chad_core::emoji::replace_shortcodes(&mut b.ui.draft, &mut cursor) {
             moved = true;
         }
         if moved {

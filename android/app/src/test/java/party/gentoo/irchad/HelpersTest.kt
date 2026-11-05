@@ -32,4 +32,21 @@ class HelpersTest {
         assertTrue(isImage(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0)))
         assertFalse(isImage("<svg".toByteArray()))
     }
+
+    @Test
+    fun gifCommand() {
+        assertEquals("cats", gifCommand("/gif cats"))
+        assertEquals("cute cats", gifCommand(" /GIF  cute cats "))
+        assertEquals("", gifCommand("/gif"))
+        assertNull(gifCommand("/gifs cats"))
+        assertNull(gifCommand("a /gif"))
+    }
+
+    @Test
+    fun levels() {
+        assertEquals(SILENT_DB, dbfs(ShortArray(480), 480))
+        assertEquals(SILENT_DB, dbfs(ShortArray(0), 0))
+        assertEquals(0f, dbfs(ShortArray(480) { -32768 }, 480), 0.01f)
+        assertEquals(-6.02f, dbfs(ShortArray(480) { 16384 }, 480), 0.01f)
+    }
 }

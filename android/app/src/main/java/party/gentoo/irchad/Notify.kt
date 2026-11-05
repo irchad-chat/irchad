@@ -157,15 +157,17 @@ class Notifier(private val app: IrChad) {
     /** A decrypted push for [network]: one IRC line from ergo. */
     fun pushed(network: String, line: String) {
         when (val p = readPush(line)) {
-            is Push.Message -> if (mode == Background.PUSH) show(network, p.target, p.from, p.text, p.channel)
+            is Push.Message -> if (mode == Background.PUSH && app.settings.notify != NotifyLevel.NEVER) {
+                show(network, p.target, p.from, p.text, p.channel)
+            }
             is Push.Read -> dismiss(network, p.target)
             null -> {}
         }
     }
 
-    /** A DM or mention on the live connection. */
+    /** A DM or mention (any message, with "Every message") on the live connection. */
     fun live(network: String, target: String, from: String, text: String, channel: Boolean) {
-        if (mode == Background.SOCKET) show(network, target, from, text, channel)
+        if (mode == Background.SOCKET && app.settings.notify != NotifyLevel.NEVER) show(network, target, from, text, channel)
     }
 
     fun dismiss(network: String, target: String) = nm.cancel(tag(network, target), ID)

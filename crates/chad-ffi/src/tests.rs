@@ -83,6 +83,17 @@ fn finds_emoji() {
     assert!(emojis("zzzzqqq".into()).is_empty());
 }
 
+#[test]
+fn shortcodes_and_denoiser() {
+    let r = replace_shortcodes("hi :smile: x".into(), 10).unwrap();
+    assert_eq!((r.text.as_str(), r.cursor), ("hi 😄 x", 4));
+    assert!(replace_shortcodes("12:30".into(), 0).is_none());
+
+    let d = Denoiser::new();
+    assert_eq!(d.process(vec![1, 2, 3]), vec![1, 2, 3]);
+    assert_eq!(d.process(vec![0; 960]).len(), 960);
+}
+
 struct Nop;
 impl Listener for Nop {
     fn changed(&self) {}

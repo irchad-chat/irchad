@@ -6,8 +6,10 @@
 //! as the server spells it, compared under the network's casemapping.
 
 mod chadd;
+pub mod complete;
 mod conn;
 mod discovery;
+pub mod emoji;
 pub mod format;
 pub mod invite;
 mod manager;

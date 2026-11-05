@@ -2,9 +2,15 @@ package party.gentoo.irchad
 
 import android.app.Application
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import party.gentoo.irchad.core.Client
@@ -90,7 +96,54 @@ class IrChad : Application() {
                 override fun sound(network: String, file: String, bytes: ByteArray?) =
                     sounds.gotBytes(network, file, bytes)
             },
-        ).also { notifier.started() }
+        ).also {
+            notifier.started()
+            it.notifyAll(settings.notify == NotifyLevel.ALL)
+            main.postDelayed(awayTick, AWAY_TICK_MS)
+        }
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+    @Volatile private var lastTouch = SystemClock.elapsedRealtime()
+    /** What we show as: away by choice or by being idle. */
+    var away by mutableStateOf(false)
+        private set
+    /** Whether each connected network was told we're away (main thread). */
+    private val awaySent = HashMap<String, Boolean>()
+    private val awayTick = object : Runnable {
+        override fun run() {
+            checkAway()
+            main.postDelayed(this, AWAY_TICK_MS)
+        }
+    }
+
+    fun touched() {
+        lastTouch = SystemClock.elapsedRealtime()
+        if (awaySent.containsValue(true)) checkAway()
+    }
+
+    /**
+     * Away by choice, or after [Settings.awayAfter] minutes without a touch,
+     * on every connected network, like desktop. A network that reconnects
+     * starts out back, so it's told again.
+     */
+    fun checkAway() {
+        val s = settings
+        val idle = SystemClock.elapsedRealtime() - lastTouch
+        val away = s.away || (s.awayAfter > 0 && idle >= s.awayAfter * 60_000L)
+        this.away = away
+        val nets = client.networks()
+        awaySent.keys.retainAll(nets.filter { it.status == null }.map { it.network }.toSet())
+        for (n in nets) {
+            if (n.status != null || (awaySent[n.network] ?: false) == away) continue
+            awaySent[n.network] = away
+            client.setAway(n.network, if (away) AWAY else null)
+        }
+    }
+
+    private companion object {
+        const val AWAY = "Away"
+        const val AWAY_TICK_MS = 15_000L
     }
 }
 

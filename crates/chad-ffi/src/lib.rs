@@ -7,7 +7,7 @@
 //! [`Voice`], and the core only decides when to join and leave.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use chad_core::format;
@@ -169,8 +169,11 @@ pub fn parse_invite(invite: String) -> Option<InviteInfo> {
 pub struct Client {
     core: Core,
     view: Arc<Mutex<View>>,
+    listener: Arc<dyn Listener>,
+    /// `Listener::notify` for every message, not only DMs and mentions.
+    notify_all: Arc<AtomicBool>,
     // Dropping it stops the core.
-    _rt: tokio::runtime::Runtime,
+    rt: tokio::runtime::Runtime,
 }
 
 fn status(s: &ConnState) -> (Option<String>, bool, bool) {
@@ -208,13 +211,15 @@ fn trust_android_roots(data_dir: &str) {
     }
 }
 
-/// `(from, text, channel)` for each fresh DM or mention in `messages`.
+/// `(from, text, channel)` for each fresh DM or mention in `messages`
+/// (every message with `all`).
 fn notes(
     v: &View,
     network: &str,
     target: &str,
     messages: &[chad_core::ChatMessage],
     fresh: &[usize],
+    all: bool,
 ) -> Vec<(String, String, bool)> {
     let (Some(ni), Some(b)) = (v.net(network), v.buf(network, target)) else {
         return Vec::new();
@@ -223,7 +228,7 @@ fn notes(
     fresh
         .iter()
         .filter_map(|&i| messages.get(i))
-        .filter(|m| m.mention && chad_core::view::notifiable(m))
+        .filter(|m| (all || m.mention) && chad_core::view::notifiable(m))
         .map(|m| {
             let from = snippet(v.nets[ni].shown(&m.nick), 64);
             (from, snippet(&format::strip(&m.text), 200), channel)
@@ -248,6 +253,59 @@ pub fn emojis(query: String) -> Vec<String> {
         .filter(|e| q.is_empty() || e.name().contains(&q) || e.shortcodes().any(|s| s.contains(&q)))
         .map(|e| e.as_str().to_owned())
         .collect()
+}
+
+/// A composer's text after `:shortcode:` replacement, and where its cursor
+/// (in chars, Unicode scalar values) went.
+#[derive(uniffi::Record)]
+pub struct Shortcoded {
+    pub text: String,
+    pub cursor: u32,
+}
+
+/// `None` when `text` has no complete `:shortcode:`.
+#[uniffi::export]
+pub fn replace_shortcodes(text: String, cursor: u32) -> Option<Shortcoded> {
+    let (mut text, mut cursor) = (text, cursor as usize);
+    chad_core::emoji::replace_shortcodes(&mut text, &mut cursor).then(|| Shortcoded {
+        text,
+        cursor: u32::try_from(cursor).unwrap_or(u32::MAX),
+    })
+}
+
+/// RNNoise for the mic, desktop's "Extra noise suppression".
+#[derive(uniffi::Object)]
+pub struct Denoiser(Mutex<Box<nnnoiseless::DenoiseState<'static>>>);
+
+#[uniffi::export]
+impl Denoiser {
+    #[uniffi::constructor]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self(Mutex::new(nnnoiseless::DenoiseState::new())))
+    }
+
+    /// One 10 ms frame at 48 kHz: 480 mono samples, 16-bit little-endian.
+    /// Anything else comes back as it was.
+    pub fn process(&self, pcm: Vec<u8>) -> Vec<u8> {
+        const N: usize = nnnoiseless::DenoiseState::FRAME_SIZE;
+        if pcm.len() != N * 2 {
+            return pcm;
+        }
+        let input: Vec<f32> = pcm
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&b| f32::from(i16::from_le_bytes(b)))
+            .collect();
+        let mut out = [0f32; N];
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .process_frame(&mut out, &input);
+        out.iter()
+            .flat_map(|&f| (f.clamp(-32768.0, 32767.0) as i16).to_le_bytes())
+            .collect()
+    }
 }
 
 /// The links among `spans`, in order, the same way desktop sorts them.
