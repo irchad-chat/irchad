@@ -8,6 +8,11 @@ pub mod idle;
 mod idle_linux;
 #[cfg(windows)]
 mod idle_windows;
+pub mod presence;
+#[cfg(target_os = "linux")]
+mod presence_linux;
+#[cfg(windows)]
+mod presence_windows;
 pub mod ptt;
 #[cfg(target_os = "linux")]
 mod ptt_linux;

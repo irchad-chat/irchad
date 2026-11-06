@@ -109,8 +109,10 @@ pub struct App {
     away_sent: bool,
     /// Rich Presence listener, while `share_activity` is on.
     rpc: Option<platform::rpc::Rpc>,
-    /// Discord's game list, id → name, from a chadd that serves it.
-    games: Option<HashMap<String, String>>,
+    /// Running programs and media players, while sharing either.
+    poll: Option<platform::presence::Poll>,
+    /// Discord's game list, from a chadd that serves it; the poller reads it too.
+    games: tokio::sync::watch::Sender<Option<std::sync::Arc<crate::presence::Games>>>,
     /// When we last asked for it; it's asked again later if that failed.
     games_asked: Option<Instant>,
     /// The `chad/activity` we last sent everywhere (`None`: we leave it alone),
@@ -394,7 +396,8 @@ impl App {
             }),
             away_sent: false,
             rpc: None,
-            games: None,
+            poll: None,
+            games: tokio::sync::watch::Sender::new(None),
             games_asked: None,
             activity_sent: (None, None),
             new_version: None,

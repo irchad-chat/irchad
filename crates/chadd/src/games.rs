@@ -10,7 +10,11 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use chad_proto::{MAX_GAMES_BYTES, chadd::Game, one_line};
+use chad_proto::{
+    MAX_GAMES_BYTES,
+    chadd::{Game, executable},
+    one_line,
+};
 use serde::Deserialize;
 
 use crate::api::{self, fail};
@@ -24,6 +28,7 @@ const RETRY: Duration = Duration::from_secs(60 * 60);
 const MAX_BYTES: usize = 64 << 20;
 const MAX_GAMES: usize = 200_000;
 const MAX_NAME: usize = 100;
+const MAX_EXECUTABLES: usize = 16;
 
 /// The trimmed list as JSON, ready to serve.
 #[derive(Default)]
@@ -60,7 +65,8 @@ async fn download(http: &reqwest::Client) -> anyhow::Result<Bytes> {
     Ok(fit(games)?.into())
 }
 
-/// The list as JSON, cut down until clients will take it.
+/// The list as JSON, cut down until clients will take it: executables go
+/// first (spotting games), then whole games (naming them). About 2 MB in 2026.
 fn fit(mut games: Vec<Game>) -> serde_json::Result<Vec<u8>> {
     loop {
         let json = serde_json::to_vec(&games)?;
@@ -71,16 +77,23 @@ fn fit(mut games: Vec<Game>) -> serde_json::Result<Vec<u8>> {
             bytes = json.len(),
             "discord games: list too big, cutting it"
         );
-        games.truncate(games.len() * 9 / 10);
+        if games.iter().any(|g| !g.executables.is_empty()) {
+            games.iter_mut().for_each(|g| g.executables.clear());
+        } else {
+            games.truncate(games.len() * 9 / 10);
+        }
     }
 }
 
-/// Keeps `id` and `name` of each well-formed entry.
+/// Keeps `id`, `name` and the Windows and Linux non-launcher executables of
+/// each well-formed entry.
 fn trim(body: &[u8]) -> anyhow::Result<Vec<Game>> {
     #[derive(Deserialize)]
     struct Raw {
         id: serde_json::Value,
         name: serde_json::Value,
+        #[serde(default)]
+        executables: serde_json::Value,
     }
     let raw: Vec<Raw> = serde_json::from_slice(body)?;
     Ok(raw
@@ -91,9 +104,20 @@ fn trim(body: &[u8]) -> anyhow::Result<Vec<Game>> {
             let ok = (1..=20).contains(&id.len())
                 && id.bytes().all(|b| b.is_ascii_digit())
                 && !name.is_empty();
+            let executables = r
+                .executables
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|e| matches!(e["os"].as_str(), Some("win32" | "linux")))
+                .filter(|e| e["is_launcher"] != true)
+                .filter_map(|e| executable(e["name"].as_str()?))
+                .take(MAX_EXECUTABLES)
+                .collect();
             ok.then(|| Game {
                 id: id.to_owned(),
                 name,
+                executables,
             })
         })
         .take(MAX_GAMES)
@@ -121,7 +145,11 @@ mod tests {
     #[test]
     fn keeps_only_sane_entries() {
         let body = br#"[
-            {"id": "123", "name": " Celeste ", "executables": [{"name": "celeste.exe", "os": "win32"}]},
+            {"id": "123", "name": " Celeste ", "executables": [
+                {"name": "Celeste.exe", "os": "win32"},
+                {"name": "celeste.app", "os": "darwin"},
+                {"name": "launcher.exe", "os": "win32", "is_launcher": true}
+            ]},
             {"id": 5, "name": "numeric id"},
             {"id": "12a", "name": "bad id"},
             {"id": "9", "name": "\u0007"},
@@ -133,11 +161,13 @@ mod tests {
             [
                 Game {
                     id: "123".into(),
-                    name: "Celeste".into()
+                    name: "Celeste".into(),
+                    executables: vec!["celeste.exe".into()],
                 },
                 Game {
                     id: "10".into(),
-                    name: "Tabhere".into()
+                    name: "Tabhere".into(),
+                    executables: Vec::new(),
                 },
             ]
         );
@@ -147,14 +177,24 @@ mod tests {
     #[test]
     fn fits_the_client_cap() {
         let name = "x".repeat(MAX_NAME);
-        let games: Vec<Game> = (0..MAX_GAMES_BYTES / MAX_NAME + 10)
-            .map(|i| Game {
-                id: i.to_string(),
-                name: name.clone(),
-            })
+        let game = |i: usize, executables: Vec<String>| Game {
+            id: i.to_string(),
+            name: name.clone(),
+            executables,
+        };
+        let too_many: Vec<Game> = (0..MAX_GAMES_BYTES / MAX_NAME + 10)
+            .map(|i| game(i, Vec::new()))
             .collect();
-        let json = fit(games).unwrap();
+        let json = fit(too_many).unwrap();
         assert!(json.len() <= MAX_GAMES_BYTES);
         assert!(serde_json::from_slice::<Vec<Game>>(&json).unwrap().len() > 1000);
+
+        // Executables push it over: they go, every game stays.
+        let n = MAX_GAMES_BYTES / (MAX_NAME + 40);
+        let exes = vec!["x".repeat(100); 4];
+        let games: Vec<Game> = (0..n).map(|i| game(i, exes.clone())).collect();
+        let kept: Vec<Game> = serde_json::from_slice(&fit(games).unwrap()).unwrap();
+        assert_eq!(kept.len(), n);
+        assert!(kept.iter().all(|g| g.executables.is_empty()));
     }
 }

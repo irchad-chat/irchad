@@ -9,6 +9,7 @@ mod gifs;
 mod icons;
 mod media;
 mod platform;
+mod presence;
 mod screen;
 mod settings;
 #[cfg(all(test, target_os = "linux"))]

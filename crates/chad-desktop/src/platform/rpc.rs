@@ -3,7 +3,6 @@
 //! Opt-in (`Settings::share_activity`). Protocol as in arRPC: frames are
 //! `u32 LE opcode, u32 LE length, JSON`. The socket or pipe itself is per OS.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -51,14 +50,14 @@ impl Activity {
 
     /// One line for `chad/activity`, naming the game from Discord's list when
     /// we have it.
-    pub fn text(&self, games: Option<&HashMap<String, String>>) -> String {
+    pub fn text(&self, games: Option<&crate::presence::Games>) -> String {
         let verb = match self.kind {
             2 => "Listening to",
             3 => "Watching",
             5 => "Competing in",
             _ => "Playing",
         };
-        let name = games.and_then(|g| g.get(&self.app));
+        let name = games.and_then(|g| g.name(&self.app));
         let line = match (name, &self.details) {
             (Some(n), Some(d)) => format!("{verb} {n}: {d}"),
             (Some(n), None) => format!("{verb} {n}"),
@@ -307,7 +306,11 @@ pub(super) mod tests {
         assert_eq!(read(&mut game).await.1["nonce"], "n1");
         let a = rx.borrow_and_update().clone().unwrap();
         assert_eq!(a.text(None), "Playing Chapter 3");
-        let games = HashMap::from([("123".to_owned(), "Celeste".to_owned())]);
+        let games = crate::presence::Games::new(vec![chad_core::Game {
+            id: "123".into(),
+            name: "Celeste".into(),
+            executables: Vec::new(),
+        }]);
         assert_eq!(a.text(Some(&games)), "Playing Celeste: Chapter 3");
 
         write(&mut game, CLOSE, &json!({})).await.unwrap();

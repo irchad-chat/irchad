@@ -242,6 +242,9 @@ pub async fn games(api: &Url, session: &str) -> Result<Vec<Game>, Error> {
     games.retain(|g| (1..=20).contains(&g.id.len()) && g.id.bytes().all(|b| b.is_ascii_digit()));
     for g in &mut games {
         g.name = chad_proto::one_line(&g.name, 100);
+        g.executables.truncate(16);
+        g.executables
+            .retain_mut(|e| chadd::executable(e).map(|n| *e = n).is_some());
     }
     Ok(games)
 }

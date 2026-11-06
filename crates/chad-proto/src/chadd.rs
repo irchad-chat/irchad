@@ -127,6 +127,40 @@ pub struct Sound {
 pub struct Game {
     pub id: String,
     pub name: String,
+    /// Lowercase `/`-separated path suffixes of its Windows and Linux
+    /// executables, e.g. `game/darksoulsiii.exe`; a running one means it's played.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub executables: Vec<String>,
+}
+
+/// A [`Game::executables`] entry as it should be: lowercase, `/`-separated,
+/// no empty parts or `..`, at most 100 bytes. `None` if it can't be, and for
+/// Discord's `>` entries, which also need the program's arguments to match
+/// (`>hl2.exe` is every Source game) and so can't be told apart by name.
+pub fn executable(raw: &str) -> Option<String> {
+    if raw.starts_with('>') {
+        return None;
+    }
+    let e = raw.replace('\\', "/").to_lowercase();
+    let ok = (1..=100).contains(&e.len())
+        && !e.chars().any(char::is_control)
+        && e.split('/').all(|p| !p.is_empty() && p != "..");
+    ok.then_some(e)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn executables_are_normalized() {
+        use super::executable;
+        assert_eq!(
+            executable("Game\\DarkSoulsIII.exe").unwrap(),
+            "game/darksoulsiii.exe"
+        );
+        for bad in ["", "/abs.exe", "a//b", "../x", "a\u{7}", ">hl2.exe"] {
+            assert_eq!(executable(bad), None, "{bad}");
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

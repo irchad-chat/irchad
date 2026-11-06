@@ -46,8 +46,11 @@ pub struct Settings {
     pub tray_on_close: bool,
     /// Start at sign-in (Windows).
     pub autostart: bool,
-    /// Listen for games' Discord Rich Presence and show it as `chad/activity`.
+    /// Share the game we're playing as `chad/activity`: its Discord Rich
+    /// Presence, or its executable seen running.
     pub share_activity: bool,
+    /// Share what a media player (MPRIS) is playing as `chad/activity` (Linux).
+    pub share_music: bool,
 }
 
 impl Default for Settings {
@@ -72,6 +75,7 @@ impl Default for Settings {
             tray_on_close: true,
             autostart: false,
             share_activity: false,
+            share_music: false,
         }
     }
 }
@@ -235,10 +239,21 @@ impl Settings {
                     ui.label("Activity");
                     ui.checkbox(&mut self.share_activity, "Share what I'm playing")
                         .on_hover_text(
-                            "Games that support Discord Rich Presence report to IrChad. \
-                             While Discord is running, they report to Discord instead.",
+                            "Games Discord knows are spotted while they run, and games \
+                             with Discord Rich Presence report details to IrChad. While \
+                             Discord is running, those report to Discord instead.",
                         );
                     ui.end_row();
+
+                    #[cfg(target_os = "linux")]
+                    {
+                        ui.label("");
+                        ui.checkbox(&mut self.share_music, "Share what I'm listening to")
+                            .on_hover_text(
+                                "The song any media player is playing, browsers included.",
+                            );
+                        ui.end_row();
+                    }
 
                     ui.label("Updates");
                     ui.checkbox(&mut self.check_updates, "Tell me when a new version is out");

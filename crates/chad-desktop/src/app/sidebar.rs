@@ -253,6 +253,12 @@ impl App {
         })
         .response
         .tip("Your status and profile");
+        // What everyone sees as our activity (settings → General → Activity).
+        if let Some(a) = self.activity_sent.0.as_deref().filter(|a| !a.is_empty()) {
+            let line = format!("{} {a}", crate::presence::icon(a));
+            ui.add(egui::Label::new(RichText::new(line).small().weak()).truncate())
+                .on_hover_text(a);
+        }
         ui.separator();
     }
 
@@ -576,7 +582,7 @@ impl App {
                                 .get(&key(&m.nick))
                                 .and_then(|p| p.activity.as_deref());
                             if let Some(a) = activity {
-                                ui.label(RichText::new(icons::GAME_CONTROLLER).weak())
+                                ui.label(RichText::new(crate::presence::icon(a)).weak())
                                     .on_hover_text(a);
                             }
                             ui.add(egui::Label::new(t).sense(Sense::click()).truncate())

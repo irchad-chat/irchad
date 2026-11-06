@@ -180,7 +180,10 @@ impl App {
             }
             Event::Sounds { result: Err(e), .. } => tracing::info!("soundboard: {e}"),
             Event::Games { result, .. } => match result {
-                Ok(list) => self.games = Some(list.into_iter().map(|g| (g.id, g.name)).collect()),
+                Ok(list) => {
+                    let games = crate::presence::Games::new(list);
+                    self.games.send_replace(Some(std::sync::Arc::new(games)));
+                }
                 Err(e) => tracing::info!("game list: {e}"),
             },
             Event::Sound {
@@ -447,8 +450,9 @@ impl App {
         }
     }
 
-    /// Starts or stops the Rich Presence listener with the setting, and sends
-    /// what it hears to every network, at most every `ACTIVITY_EVERY`.
+    /// Starts or stops the Rich Presence listener and the poller with the
+    /// settings, and sends the best line to every network, at most every
+    /// `ACTIVITY_EVERY`.
     fn activity(&mut self, ctx: &egui::Context) {
         const ACTIVITY_EVERY: Duration = Duration::from_secs(15);
         // chadd has no list for a while after it starts, or when Discord fails it.
@@ -459,9 +463,18 @@ impl App {
                 platform::rpc::Rpc::start(move || ctx.request_repaint())
             });
         }
+        let looks_for = (self.settings.share_activity, self.settings.share_music);
+        if self.poll.as_ref().map(|p| p.looks_for) != Some(looks_for).filter(|l| l.0 || l.1) {
+            self.poll = (looks_for.0 || looks_for.1).then(|| {
+                let ctx = ctx.clone();
+                platform::presence::Poll::start(self.games.subscribe(), looks_for, move || {
+                    ctx.request_repaint()
+                })
+            });
+        }
         let current = self.rpc.as_ref().and_then(|r| r.rx.borrow().clone());
         let games_due = self.games_asked.is_none_or(|t| t.elapsed() >= GAMES_RETRY);
-        if current.is_some() && self.games.is_none() && games_due {
+        if self.rpc.is_some() && self.games.borrow().is_none() && games_due {
             let net =
                 self.view.nets.iter().find(|n| {
                     n.info.games && matches!(n.info.state, chad_core::ConnState::Connected)
@@ -473,10 +486,14 @@ impl App {
             }
         }
         // Sharing off: `None`, so this client leaves `chad/activity` to other devices.
-        let text = self.rpc.as_ref().map(|_| {
-            current
-                .map(|a| a.text(self.games.as_ref()))
-                .unwrap_or_default()
+        let text = self.poll.as_ref().map(|p| {
+            let seen = p.rx.borrow();
+            let games = self.games.borrow();
+            crate::presence::line(
+                current.map(|a| a.text(games.as_deref())),
+                seen.game.as_deref(),
+                seen.music.as_deref(),
+            )
         });
         if text == self.activity_sent.0 {
             return;
