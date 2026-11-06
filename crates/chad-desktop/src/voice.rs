@@ -4,12 +4,14 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use chad_core::{MediaEvent, Sound, VoiceState};
+use chad_core::view::key;
+use chad_core::{MediaEvent, Member, Sound, VoiceState};
 use chad_media::{AudioSettings, InputMode, Quality, Voice};
 use egui::{Color32, RichText, Sense, vec2};
 use tokio::sync::mpsc;
 
-use crate::chatlog;
+use crate::chatlog::{self, Profile, shown};
+use crate::media::Media;
 use crate::icons::{self, Tip};
 use crate::platform::ptt::{Ptt, PttBind, PttStatus, keymap};
 use crate::settings::{self, Settings};
@@ -17,6 +19,9 @@ use crate::settings::{self, Settings};
 const SPEAKING: Color32 = Color32::from_rgb(35, 165, 90);
 pub const ONLINE: Color32 = SPEAKING;
 pub const AWAY: Color32 = Color32::from_rgb(240, 178, 50);
+/// A voice member's avatar, and the speaking ring drawn inside its edge.
+const AVATAR: f32 = 24.0;
+const RING: f32 = 2.0;
 const DANGER: Color32 = Color32::from_rgb(218, 55, 60);
 
 /// The core decides when to join and leave; this connects.
@@ -262,42 +267,58 @@ fn soundboard(
 /// call the live list (speaking, muted, sharing) replaces the metadata one.
 /// Volume changes land in `volumes` and `screen_volumes`, which persist with
 /// the settings. Returns whose screen share was clicked, to watch.
+#[allow(clippy::too_many_arguments)]
 pub fn members(
     ui: &mut egui::Ui,
     voice: &Voice,
     in_call: bool,
     nicks: &[String],
+    roster: &[Member],
+    profiles: &HashMap<String, Profile>,
+    media: &mut Media,
+    auto: bool,
     volumes: &mut HashMap<String, f32>,
     screen_volumes: &mut HashMap<String, f32>,
 ) -> Option<String> {
     let mut watch = None;
     let dark = ui.visuals().dark_mode;
-    let row = |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool| {
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
-            if speaking {
-                ui.painter().circle_filled(r.center(), 4.0, SPEAKING);
-            } else {
-                ui.painter()
-                    .circle_stroke(r.center(), 4.0, (1.0, ui.visuals().weak_text_color()));
-            }
-            let mut text = RichText::new(nick)
-                .small()
-                .color(chatlog::nick_color(nick, dark));
-            if muted {
-                text = RichText::new(format!("{nick} {}", icons::MICROPHONE_SLASH))
-                    .small()
-                    .weak();
-            }
-            ui.add(egui::Label::new(text).sense(Sense::click()).truncate())
-        })
-        .inner
+    // LiveKit identities are accounts; profiles are keyed by nick.
+    // shortcut: ASCII-only account match, falls back to the account itself.
+    let nick_of = |id: &'_ str| -> String {
+        roster
+            .iter()
+            .find(|m| m.account.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(id)))
+            .map_or_else(|| id.to_owned(), |m| m.nick.clone())
+    };
+    let mut row = |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool| {
+        let name = shown(profiles, nick).to_owned();
+        let avatar = profiles.get(&key(nick)).and_then(|p| p.avatar.clone());
+        let r = ui
+            .horizontal(|ui| {
+                ui.add_space(16.0);
+                let (r, _) = ui.allocate_exact_size(vec2(AVATAR, AVATAR), Sense::hover());
+                media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
+                if speaking {
+                    let radius = (AVATAR - RING) / 2.0;
+                    ui.painter().circle_stroke(r.center(), radius, (RING, SPEAKING));
+                }
+                let color = chatlog::nick_color(nick, dark);
+                let text = if muted {
+                    RichText::new(format!("{name} {}", icons::MICROPHONE_SLASH)).weak()
+                } else if speaking {
+                    RichText::new(&name).color(color).strong()
+                } else {
+                    RichText::new(&name).color(color.gamma_multiply(0.7))
+                };
+                ui.add(egui::Label::new(text).sense(Sense::click()).truncate())
+            })
+            .inner;
+        (r, name)
     };
     match voice.call().filter(|_| in_call) {
         Some(call) => {
             for p in &call.participants {
-                let r = row(ui, &p.identity, p.speaking, p.muted);
+                let (r, name) = row(ui, &nick_of(&p.identity), p.speaking, p.muted);
                 if p.sharing {
                     let live = egui::Button::new(
                         RichText::new("LIVE").small().strong().color(Color32::WHITE),
@@ -322,7 +343,7 @@ pub fn members(
                 }
                 r.context_menu(|ui| {
                     let mut v = voice.volume(&p.identity);
-                    let l = ui.label(format!("{} volume", p.identity));
+                    let l = ui.label(format!("{name} volume"));
                     if volume_slider(ui, &mut v).labelled_by(l.id).changed() {
                         voice.set_volume(&p.identity, v);
                         volumes.insert(p.identity.clone(), v);

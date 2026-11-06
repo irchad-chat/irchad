@@ -115,7 +115,7 @@ impl App {
         }
 
         let close = egui::Panel::top("topic")
-            .show(ui, |ui| header(ui, &cx, b, devices, tile, closable))
+            .show(ui, |ui| header(ui, &cx, b, profiles, devices, tile, closable))
             .inner;
         let c = egui::Panel::bottom("composer")
             .show(ui, |ui| composer(ui, &cx, b, media, &opts))
@@ -202,11 +202,31 @@ fn header(
     ui: &mut egui::Ui,
     cx: &Pane,
     b: &Buffer,
+    profiles: &HashMap<String, chatlog::Profile>,
     devices: &HashMap<String, Vec<DeviceInfo>>,
     tile: Option<usize>,
     closable: bool,
 ) -> bool {
     let target = cx.target;
+    let dm = b.info.kind == BufferKind::Dm;
+    let title = if dm {
+        chatlog::shown(profiles, target)
+    } else {
+        target
+    };
+    // Display names aren't unique, so a DM's title names who it really is.
+    let who = dm.then(|| {
+        let account = b
+            .msgs
+            .iter()
+            .rev()
+            .filter(|m| m.nick.eq_ignore_ascii_case(target))
+            .find_map(|m| m.account.as_deref());
+        match account {
+            Some(a) => format!("Account: {a}"),
+            None => format!("Nick: {target}"),
+        }
+    });
     let mut close = false;
     if closable {
         // A child, so it doesn't push the topic row down.
@@ -227,15 +247,23 @@ fn header(
         match tile {
             Some(i) => {
                 let id = egui::Id::unique(("pane-drag", cx.network, &b.key));
-                ui.dnd_drag_source(id, PaneDrag(i), |ui| ui.heading(target))
-                    .response
-                    .on_hover_text("Drag onto another pane to swap them");
+                let r = ui
+                    .dnd_drag_source(id, PaneDrag(i), |ui| ui.heading(title))
+                    .response;
+                let drag = "Drag onto another pane to swap them";
+                match &who {
+                    Some(who) => r.on_hover_text(format!("{who}\n{drag}")),
+                    None => r.on_hover_text(drag),
+                };
             }
             None => {
-                ui.heading(target);
+                let r = ui.heading(title);
+                if let Some(who) = &who {
+                    r.on_hover_text(who);
+                }
             }
         }
-        if b.info.kind == BufferKind::Dm {
+        if dm {
             let status = match (b.info.online, b.info.away) {
                 (Some(true), false) => "online",
                 (Some(true), true) => "away",

@@ -292,10 +292,14 @@ impl App {
                             }
                         });
                     });
-                    let n = &self.view.nets[ni];
+                    let n = &mut self.view.nets[ni];
                     for b in n.buffers.iter().filter(|b| b.info.kind == kind) {
                         let selected = n.ui.selected.as_deref() == Some(&b.key);
-                        let mut text = RichText::new(&b.info.target);
+                        let name = match kind {
+                            BufferKind::Dm => chatlog::shown(&n.profiles, &b.info.target),
+                            BufferKind::Channel => &b.info.target,
+                        };
+                        let mut text = RichText::new(name);
                         if b.info.unread > 0 || selected {
                             text = text.strong().color(ui.visuals().strong_text_color());
                         } else {
@@ -310,7 +314,12 @@ impl App {
                                 _ => ("○", ui.visuals().weak_text_color(), "Offline"),
                             };
                             atoms.push_left(RichText::new(dot).color(color));
-                            tip = Some(t);
+                            // Display names aren't unique; the nick is.
+                            tip = Some(if name == b.info.target {
+                                t.to_owned()
+                            } else {
+                                format!("{t} · {}", b.info.target)
+                            });
                         }
                         let mut resp = ui
                             .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
@@ -341,8 +350,11 @@ impl App {
                                 resp.rect.right_center() - vec2(right, 0.0),
                                 vec2(26.0, 22.0),
                             );
-                            let join =
-                                egui::Button::new(RichText::new(icons::SPEAKER_HIGH).size(16.0));
+                            let mut icon = RichText::new(icons::SPEAKER_HIGH).size(16.0);
+                            if !b.voice.is_empty() {
+                                icon = icon.color(voice::ONLINE);
+                            }
+                            let join = egui::Button::new(icon);
                             if ui.put(at, join).tip("Join voice").clicked() {
                                 join_voice = Some(b.info.target.clone());
                             }
@@ -376,6 +388,10 @@ impl App {
                                 &self.voice,
                                 live,
                                 &b.voice,
+                                b.members.as_deref().unwrap_or_default(),
+                                &n.profiles,
+                                &mut n.ui.media,
+                                self.settings.load_media,
                                 &mut self.settings.volumes,
                                 &mut self.settings.screen_volumes,
                             )
