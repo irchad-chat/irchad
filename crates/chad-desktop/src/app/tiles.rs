@@ -178,14 +178,14 @@ impl App {
                 {
                     focus = Some(p);
                 }
-                // A narrow pane drops the member list rather than crushing the chat.
-                let fit = (self.view.nets[ni].buffers[bi].info.kind == BufferKind::Channel)
-                    .then(|| self.members_width(&pane, ni, bi))
-                    .filter(|fit| rect.width() - fit >= MIN_CHAT_W);
-                if let Some(fit) = fit {
+                // Shown or hidden only by the header's toggle; names truncate when it's narrow.
+                let b = &self.view.nets[ni].buffers[bi];
+                if !b.ui.hide_members && b.info.kind == BufferKind::Channel {
+                    let fit = self.members_width(&pane, ni, bi);
                     egui::Panel::right(egui::Id::unique(("members", net, k)))
-                        .default_size(200.0)
-                        .size_range(fit..=360.0)
+                        .resizable(true)
+                        .default_size(fit)
+                        .size_range(LIST_MIN_W..=(rect.width() / 2.0).max(LIST_MIN_W))
                         .show(&mut pane, |ui| self.members(ui, ni, bi));
                 }
                 if self.chat(&mut pane, ni, bi, active, (n > 1).then_some(i), chats > 1) {

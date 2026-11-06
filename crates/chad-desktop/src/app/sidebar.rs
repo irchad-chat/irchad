@@ -221,38 +221,43 @@ impl App {
         } else {
             ("●", voice::ONLINE)
         };
+        let name = RichText::new(if shown == own {
+            own.clone()
+        } else {
+            format!("{shown} ({own})")
+        })
+        .small();
         let status = egui::Atoms::new((
             RichText::new(dot).color(color).small(),
-            RichText::new(if shown == own {
-                own.clone()
-            } else {
-                format!("{shown} ({own})")
-            })
-            .small(),
+            egui::AtomExt::atom_shrink(name, true),
         ));
-        ui.menu_button(status, |ui| {
-            ui.radio_value(&mut self.settings.away, false, "Online");
-            ui.radio_value(&mut self.settings.away, true, "Away");
-            ui.separator();
-            if ui
-                .button(format!("{} Edit profile…", icons::USER_CIRCLE))
-                .clicked()
-            {
-                let name = self.view.nets[ni]
-                    .profiles
-                    .get(&key(&own))
-                    .and_then(|p| p.display_name.clone())
-                    .unwrap_or_default();
-                self.profile = Some(ProfileDialog {
-                    network: network.clone(),
-                    name,
-                });
-                self.send(&network, NetCommand::Devices { nick: own.clone() });
-                ui.close();
-            }
-        })
-        .response
-        .tip("Your status and profile");
+        // Truncate the name rather than hold the channel list open.
+        ui.scope(|ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+            ui.menu_button(status, |ui| {
+                ui.radio_value(&mut self.settings.away, false, "Online");
+                ui.radio_value(&mut self.settings.away, true, "Away");
+                ui.separator();
+                if ui
+                    .button(format!("{} Edit profile…", icons::USER_CIRCLE))
+                    .clicked()
+                {
+                    let name = self.view.nets[ni]
+                        .profiles
+                        .get(&key(&own))
+                        .and_then(|p| p.display_name.clone())
+                        .unwrap_or_default();
+                    self.profile = Some(ProfileDialog {
+                        network: network.clone(),
+                        name,
+                    });
+                    self.send(&network, NetCommand::Devices { nick: own.clone() });
+                    ui.close();
+                }
+            })
+            .response
+            .tip("Your status and profile");
+        });
         // What everyone sees as our activity (settings → General → Activity).
         if let Some(a) = self.activity_sent.0.as_deref().filter(|a| !a.is_empty()) {
             let line = format!("{} {a}", crate::presence::icon(a));
@@ -305,7 +310,8 @@ impl App {
                         } else {
                             text = text.color(ui.visuals().weak_text_color());
                         }
-                        let mut atoms = egui::Atoms::new(text);
+                        // The name truncates, not the DM dot pushed in front of it.
+                        let mut atoms = egui::Atoms::new(egui::AtomExt::atom_shrink(text, true));
                         let mut tip = None;
                         if kind == BufferKind::Dm {
                             let (dot, color, t) = match (b.info.online, b.info.away) {
@@ -325,6 +331,7 @@ impl App {
                             .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
                                 ui.add(
                                     egui::Button::selectable(selected, atoms)
+                                        .truncate()
                                         .min_size(vec2(0.0, 24.0)),
                                 )
                             })
@@ -477,9 +484,10 @@ impl App {
         }
     }
 
-    /// The member list's narrowest width: its widest name beside an avatar,
+    /// The member list's starting width: its widest name beside an avatar,
     /// plus the panel's margins, the scroll bar and a little air. Capped,
     /// since display names can be long; past that they (and activities) truncate.
+    /// Dragging its edge overrides it.
     pub(super) fn members_width(&self, ui: &egui::Ui, ni: usize, bi: usize) -> f32 {
         let profiles = &self.view.nets[ni].profiles;
         let b = &self.view.nets[ni].buffers[bi];

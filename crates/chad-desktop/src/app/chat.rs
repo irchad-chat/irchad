@@ -114,9 +114,13 @@ impl App {
             });
         }
 
-        let close = egui::Panel::top("topic")
-            .show(ui, |ui| header(ui, &cx, b, profiles, devices, tile, closable))
+        let members = (b.info.kind == BufferKind::Channel).then_some(!b.ui.hide_members);
+        let (close, toggle) = egui::Panel::top("topic")
+            .show(ui, |ui| {
+                header(ui, &cx, b, profiles, devices, tile, closable, members)
+            })
             .inner;
+        b.ui.hide_members ^= toggle;
         let c = egui::Panel::bottom("composer")
             .show(ui, |ui| composer(ui, &cx, b, media, &opts))
             .inner;
@@ -197,7 +201,9 @@ impl App {
     }
 }
 
-/// Title, DM status and encryption, topic. Returns whether close was clicked.
+/// Title, DM status and encryption, topic. `members`: a channel's member
+/// list is shown. Returns whether close, and the member list toggle, were clicked.
+#[allow(clippy::too_many_arguments)]
 fn header(
     ui: &mut egui::Ui,
     cx: &Pane,
@@ -206,7 +212,8 @@ fn header(
     devices: &HashMap<String, Vec<DeviceInfo>>,
     tile: Option<usize>,
     closable: bool,
-) -> bool {
+    members: Option<bool>,
+) -> (bool, bool) {
     let target = cx.target;
     let dm = b.info.kind == BufferKind::Dm;
     let title = if dm {
@@ -227,22 +234,35 @@ fn header(
             None => format!("Nick: {target}"),
         }
     });
-    let mut close = false;
-    if closable {
+    let (mut close, mut toggle) = (false, false);
+    let buttons = usize::from(closable) + usize::from(members.is_some());
+    let reserve = 28.0 * buttons as f32;
+    if buttons > 0 {
         // A child, so it doesn't push the topic row down.
         let at = egui::Rect::from_min_size(
-            ui.max_rect().right_top() - vec2(24.0, 0.0),
-            vec2(24.0, 24.0),
+            ui.max_rect().right_top() - vec2(reserve, 0.0),
+            vec2(reserve, 24.0),
         );
-        close = ui
-            .new_child(egui::UiBuilder::new().max_rect(at))
-            .button(icons::X)
-            .tip("Close pane")
-            .clicked();
+        let mut row = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(at)
+                .layout(egui::Layout::right_to_left(egui::Align::Min)),
+        );
+        if closable {
+            close = row.button(icons::X).tip("Close pane").clicked();
+        }
+        if let Some(show) = members {
+            let tip = if show {
+                "Hide member list"
+            } else {
+                "Show member list"
+            };
+            toggle = row.selectable_label(show, icons::USERS).tip(tip).clicked();
+        }
     }
     ui.horizontal(|ui| {
-        if closable {
-            ui.set_max_width(ui.available_width() - 28.0);
+        if buttons > 0 {
+            ui.set_max_width(ui.available_width() - reserve);
         }
         match tile {
             Some(i) => {
@@ -321,7 +341,7 @@ fn header(
             }
         });
     }
-    close
+    (close, toggle)
 }
 
 /// Typing line, uploads, attachments, reply/edit bars and the message field.

@@ -267,6 +267,12 @@ fn live_panes() {
     s.click("#dev");
     s.settle(1);
     s.shot("panes_two");
+    // Each pane toggles its own member list; this hides the first's.
+    s.click("Hide member list");
+    s.settle(1);
+    s.shot("panes_no_members");
+    s.click("Show member list");
+    s.settle(1);
     s.harness
         .key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::ArrowLeft);
     s.settle(1);

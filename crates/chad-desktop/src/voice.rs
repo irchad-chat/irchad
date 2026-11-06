@@ -11,8 +11,8 @@ use egui::{Color32, RichText, Sense, vec2};
 use tokio::sync::mpsc;
 
 use crate::chatlog::{self, Profile, shown};
-use crate::media::Media;
 use crate::icons::{self, Tip};
+use crate::media::Media;
 use crate::platform::ptt::{Ptt, PttBind, PttStatus, keymap};
 use crate::settings::{self, Settings};
 
@@ -287,7 +287,11 @@ pub fn members(
     let nick_of = |id: &'_ str| -> String {
         roster
             .iter()
-            .find(|m| m.account.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(id)))
+            .find(|m| {
+                m.account
+                    .as_deref()
+                    .is_some_and(|a| a.eq_ignore_ascii_case(id))
+            })
             .map_or_else(|| id.to_owned(), |m| m.nick.clone())
     };
     let mut row = |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool| {
@@ -300,7 +304,8 @@ pub fn members(
                 media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
                 if speaking {
                     let radius = (AVATAR - RING) / 2.0;
-                    ui.painter().circle_stroke(r.center(), radius, (RING, SPEAKING));
+                    ui.painter()
+                        .circle_stroke(r.center(), radius, (RING, SPEAKING));
                 }
                 let color = chatlog::nick_color(nick, dark);
                 let text = if muted {

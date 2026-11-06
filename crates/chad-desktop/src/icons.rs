@@ -34,6 +34,7 @@ pub const SPEAKER_HIGH: &str = "\u{E44A}";
 pub const SQUARES_FOUR: &str = "\u{E464}";
 pub const TRASH: &str = "\u{E4A6}";
 pub const USER_CIRCLE: &str = "\u{E4C4}";
+pub const USERS: &str = "\u{E4D6}";
 pub const WARNING: &str = "\u{E4E0}";
 pub const CROWN: &str = "\u{E616}";
 pub const X: &str = "\u{E4F6}";

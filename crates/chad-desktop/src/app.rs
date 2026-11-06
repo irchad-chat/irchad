@@ -184,6 +184,8 @@ enum Icon {
 struct BufUi {
     log: ChatLog,
     members_asked: bool,
+    /// This pane's member list is toggled off.
+    hide_members: bool,
     /// The member panel's width, for the member list (by address) and
     /// profile count it was measured against.
     members_width: std::cell::Cell<Option<(usize, usize, f32)>>,
@@ -257,10 +259,8 @@ enum JoinMode {
 
 use chad_core::view::key;
 
-/// The nicks a buffer's composer completes: the channel's members, or the
-/// other side of a DM.
-/// Narrowest a chat column gets before its pane hides the member list.
-const MIN_CHAT_W: f32 = 360.0;
+/// Narrowest the channel and member lists resize to; past that, names truncate.
+const LIST_MIN_W: f32 = 120.0;
 
 /// A dialog's button row: right-aligned, the primary action accent-filled and
 /// rightmost. Returns (primary clicked, cancel clicked).
@@ -900,7 +900,7 @@ impl eframe::App for App {
         if let Some(ni) = ni {
             egui::Panel::left("channels")
                 .default_size(240.0)
-                .size_range(160.0..=400.0)
+                .size_range(LIST_MIN_W..=400.0)
                 .show(ui, |ui| self.channels(ui, ni));
         }
         // Read again: the popped-out window may have just moved the share back.
