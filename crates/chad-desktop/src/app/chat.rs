@@ -263,6 +263,10 @@ fn header(
     ui.horizontal(|ui| {
         if buttons > 0 {
             ui.set_max_width(ui.available_width() - reserve);
+            // Title, status and Verify don't shrink; cut them off before the buttons.
+            let mut clip = ui.clip_rect();
+            clip.max.x = clip.max.x.min(ui.max_rect().right());
+            ui.set_clip_rect(clip);
         }
         match tile {
             Some(i) => {
