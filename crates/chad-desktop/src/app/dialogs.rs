@@ -77,7 +77,7 @@ impl App {
                         }
                         if j.mode == JoinMode::Register {
                             let l = ui.label("Email");
-                            ui.add_enabled(!busy, field(&mut j.email).hint_text("optional"))
+                            ui.add_enabled(!busy, field(&mut j.email).hint_text("if the network asks for one"))
                                 .labelled_by(l.id);
                             ui.end_row();
                         }
@@ -175,7 +175,7 @@ impl App {
                             .labelled_by(l.id);
                         ui.end_row();
                         let l = ui.label("Email");
-                        ui.add_enabled(!s.busy, field(&mut s.email).hint_text("optional"))
+                        ui.add_enabled(!s.busy, field(&mut s.email).hint_text("if the network asks for one"))
                             .labelled_by(l.id);
                         ui.end_row();
                     });
