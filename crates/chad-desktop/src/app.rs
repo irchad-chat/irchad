@@ -579,7 +579,7 @@ impl App {
         ui.vertical_centered(|ui| {
             ui.add_space(ui.available_height() / 3.0);
             ui.heading("Welcome to IrChad");
-            ui.label("Paste an invite link to get started.");
+            ui.label("Paste a server URL to get started.");
             ui.add_space(12.0);
             if ui
                 .button(RichText::new("Join a network").size(18.0))

@@ -29,13 +29,13 @@ struct JoinView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Invite link", text: $link)
+                    TextField("Server URL", text: $link)
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 } footer: {
-                    Text("Paste the invite link someone sent you.")
+                    Text("Paste the server URL someone sent you.")
                 }
                 Section {
                     Picker("How", selection: $mode) {

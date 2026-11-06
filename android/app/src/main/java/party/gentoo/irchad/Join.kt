@@ -99,13 +99,13 @@ fun JoinScreen(
             Spacer(Modifier.size(24.dp))
             Text("Join a network", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "Paste the invite link someone sent you.",
+                "Paste the server URL someone sent you.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             OutlinedTextField(
                 link, { link = it },
-                label = { Text("Invite link") },
+                label = { Text("Server URL") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 modifier = Modifier.fillMaxWidth(),

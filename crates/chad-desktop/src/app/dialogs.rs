@@ -42,11 +42,11 @@ impl App {
                 ui.set_width(360.0);
                 ui.heading("Join a network");
                 ui.add_space(8.0);
-                let l = ui.label("Invite link");
+                let l = ui.label("Server URL");
                 ui.add_enabled(
                     !busy,
                     egui::TextEdit::singleline(&mut j.invite)
-                        .hint_text("https://chat.example.com/invite")
+                        .hint_text("chat.example.com")
                         .desired_width(f32::INFINITY),
                 )
                 .labelled_by(l.id);

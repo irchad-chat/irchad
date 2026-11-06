@@ -13,7 +13,7 @@ pub struct Invite {
 
 pub fn parse(input: &str) -> Result<Invite, String> {
     let input = input.trim();
-    let bad = || format!("“{input}” isn't an invite link or a server address");
+    let bad = || format!("“{input}” isn't a server URL");
     let url = if input.contains("://") {
         Url::parse(input).map_err(|_| bad())?
     } else {
