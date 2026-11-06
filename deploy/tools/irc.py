@@ -2,12 +2,15 @@
 
 import base64
 import socket
+import ssl
 import time
 
 
 class Irc:
-    def __init__(self, host="127.0.0.1", port=6667, verbose=False):
+    def __init__(self, host="127.0.0.1", port=6667, verbose=False, tls=False):
         self.sock = socket.create_connection((host, port), timeout=10)
+        if tls:
+            self.sock = ssl.create_default_context().wrap_socket(self.sock, server_hostname=host)
         self.buf = b""
         self.verbose = verbose
         self.log = []  # every line received, in order

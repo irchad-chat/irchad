@@ -192,3 +192,10 @@ jobs:
           curl -fsS -X PATCH -H "Authorization: token ${{ github.token }}" -H "Content-Type: application/json" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}" \
             -d '{"draft":false}'
+      # CHADSTER_PASSWORD: SASL password of the `chadster` account on irchad.chat.
+      # Best effort: a failed announcement doesn't fail a published release.
+      - name: Announce in #chad
+        continue-on-error: true
+        env:
+          CHADSTER_PASSWORD: ${{ secrets.CHADSTER_PASSWORD }}
+        run: python3 deploy/tools/announce.py ${{ needs.release.outputs.version }} "${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.release.outputs.version }}"
