@@ -464,12 +464,17 @@ impl App {
             });
         }
         let looks_for = (self.settings.share_activity, self.settings.share_music);
-        if self.poll.as_ref().map(|p| p.looks_for) != Some(looks_for).filter(|l| l.0 || l.1) {
+        let players = &self.settings.music_players;
+        let want = Some((looks_for, players)).filter(|(l, _)| l.0 || l.1);
+        if self.poll.as_ref().map(|p| (p.looks_for, &p.players)) != want {
             self.poll = (looks_for.0 || looks_for.1).then(|| {
                 let ctx = ctx.clone();
-                platform::presence::Poll::start(self.games.subscribe(), looks_for, move || {
-                    ctx.request_repaint()
-                })
+                platform::presence::Poll::start(
+                    self.games.subscribe(),
+                    looks_for,
+                    players.clone(),
+                    move || ctx.request_repaint(),
+                )
             });
         }
         let current = self.rpc.as_ref().and_then(|r| r.rx.borrow().clone());

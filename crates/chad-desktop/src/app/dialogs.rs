@@ -423,7 +423,12 @@ impl App {
         if section != settings::Section::Voice {
             #[cfg(windows)]
             let autostart = self.settings.autostart;
-            if self.settings.ui(ui, section) {
+            let players = self
+                .poll
+                .as_ref()
+                .map(|p| p.rx.borrow().players.clone())
+                .unwrap_or_default();
+            if self.settings.ui(ui, section, &players) {
                 self.settings.apply(ctx);
                 #[cfg(windows)]
                 if self.settings.autostart != autostart {

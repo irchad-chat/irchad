@@ -461,9 +461,9 @@ impl App {
         }
     }
 
-    /// The member list's narrowest width: its widest row, plus the panel's
-    /// margins, the scroll bar and a little air. Capped, since display names
-    /// can be long; past that they truncate.
+    /// The member list's narrowest width: its widest name beside an avatar,
+    /// plus the panel's margins, the scroll bar and a little air. Capped,
+    /// since display names can be long; past that they (and activities) truncate.
     pub(super) fn members_width(&self, ui: &egui::Ui, ni: usize, bi: usize) -> f32 {
         let profiles = &self.view.nets[ni].profiles;
         let b = &self.view.nets[ni].buffers[bi];
@@ -491,19 +491,7 @@ impl App {
             .iter()
             .map(|m| {
                 let name = chatlog::shown(profiles, &m.nick);
-                let mut icon = if m.oper {
-                    format!("{} ", icons::CROWN)
-                } else {
-                    String::new()
-                };
-                if profiles
-                    .get(&chad_core::view::key(&m.nick))
-                    .is_some_and(|p| p.activity.is_some())
-                {
-                    icon.push_str(icons::GAME_CONTROLLER);
-                    icon.push(' ');
-                }
-                width(format!("{icon}{}{name}", m.prefix), &body)
+                ROW_TEXT_X + width(format!("{}{name}", badges(m)), &body)
             })
             .chain([
                 width(format!("ONLINE — {}", members.len() - away), &small),
@@ -512,17 +500,19 @@ impl App {
             .fold(0.0, f32::max);
         let s = &ui.style().spacing.scroll;
         let bar = s.bar_width + s.bar_inner_margin + s.bar_outer_margin;
-        let w = (widest + 16.0 + bar + 12.0).clamp(100.0, 360.0);
+        // Never so narrow that an activity line is all ellipsis.
+        let w = (widest + 16.0 + bar + 12.0).clamp(180.0, 360.0);
         b.ui.members_width.set(Some((key.0, key.1, w)));
         w
     }
 
     pub(super) fn members(&mut self, ui: &mut egui::Ui, ni: usize, bi: usize) {
-        let dark = ui.visuals().dark_mode;
-        let network = self.view.nets[ni].info.network.clone();
-        let own = self.view.nets[ni].info.nick.clone();
-        let profiles = &self.view.nets[ni].profiles;
-        let Some(members) = &self.view.nets[ni].buffers[bi].members else {
+        let auto = self.settings.load_media;
+        let n = &mut self.view.nets[ni];
+        let network = n.info.network.clone();
+        let own = n.info.nick.clone();
+        let (profiles, media) = (&n.profiles, &mut n.ui.media);
+        let Some(members) = &n.buffers[bi].members else {
             ui.add_space(8.0);
             ui.spinner();
             return;
@@ -543,19 +533,17 @@ impl App {
         }
         let mut dm = None;
         let mut block = None;
-        let h = ui.spacing().interact_size.y;
         // Only the rows in view are laid out: a channel can have thousands.
         egui::ScrollArea::vertical().auto_shrink(false).show_rows(
             ui,
-            h,
+            ROW_H,
             lines.len(),
             |ui, range| {
                 for line in &lines[range] {
-                    let size = vec2(ui.available_width(), h);
-                    let row = egui::Layout::left_to_right(egui::Align::Center);
                     let m = match line {
                         Line::Header(title, n) => {
                             // Bottom-aligned: the small text leaves a gap above it in a full row.
+                            let size = vec2(ui.available_width(), ROW_H);
                             let row = egui::Layout::left_to_right(egui::Align::Max);
                             ui.allocate_ui_with_layout(size, row, |ui| {
                                 ui.label(RichText::new(format!("{title} — {n}")).small().weak());
@@ -564,37 +552,26 @@ impl App {
                         }
                         Line::Member(m) => m,
                     };
-                    let name = chatlog::shown(profiles, &m.nick);
-                    let mut t = RichText::new(format!("{}{name}", m.prefix))
-                        .color(chatlog::nick_color(&m.nick, dark));
-                    if m.away {
-                        t = t.weak();
-                    }
-                    let r = ui
-                        .allocate_ui_with_layout(size, row, |ui| {
-                            if m.oper {
-                                ui.label(icons::CROWN).on_hover_text("IRC operator");
-                            }
-                            if m.account.is_none() {
-                                chatlog::guest_badge(ui);
-                            }
-                            let activity = profiles
-                                .get(&key(&m.nick))
-                                .and_then(|p| p.activity.as_deref());
-                            if let Some(a) = activity {
-                                ui.label(RichText::new(crate::presence::icon(a)).weak())
-                                    .on_hover_text(a);
-                            }
-                            ui.add(egui::Label::new(t).sense(Sense::click()).truncate())
-                                .on_hover_ui(|ui| {
-                                    ui.label(chatlog::account_tip(
-                                        &m.nick,
-                                        name,
-                                        m.account.as_deref(),
-                                    ));
-                                })
-                        })
-                        .inner;
+                    let profile = profiles.get(&key(&m.nick));
+                    let r = member_row(
+                        ui,
+                        media,
+                        auto,
+                        m,
+                        profile,
+                        chatlog::shown(profiles, &m.nick),
+                    );
+                    let r = r.on_hover_ui(|ui| {
+                        profile_card(
+                            ui,
+                            media,
+                            auto,
+                            m,
+                            profile,
+                            chatlog::shown(profiles, &m.nick),
+                            m.nick != own,
+                        );
+                    });
                     if m.nick != own {
                         if r.clicked() {
                             dm = Some(m.nick.clone());
@@ -615,5 +592,219 @@ impl App {
             self.send(&network, NetCommand::OpenDm { nick: nick.clone() });
             select(&mut self.view.nets[ni], &key(&nick));
         }
+    }
+}
+
+const ROW_H: f32 = 44.0;
+const ROW_AVATAR: f32 = 32.0;
+/// Where a member row's text starts: past the padding, avatar and a gap.
+const ROW_TEXT_X: f32 = 6.0 + ROW_AVATAR + 10.0;
+
+/// Icons after a member's name: IRC operator, guest.
+fn badges(m: &Member) -> String {
+    let mut s = String::new();
+    if m.oper {
+        s.push_str(icons::CROWN);
+        s.push(' ');
+    }
+    if m.account.is_none() {
+        s.push_str(icons::GHOST);
+        s.push(' ');
+    }
+    s
+}
+
+/// Channel roles from mode prefixes (`~&@%+`), highest first.
+fn roles(prefix: &str) -> Vec<&'static str> {
+    prefix
+        .chars()
+        .filter_map(|c| match c {
+            '~' => Some("Owner"),
+            '&' => Some("Admin"),
+            '@' => Some("Operator"),
+            '%' => Some("Half-op"),
+            '+' => Some("Voice"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An avatar with its online/away dot on the lower right.
+fn avatar_with_status(
+    ui: &egui::Ui,
+    media: &mut Media,
+    auto: bool,
+    rect: egui::Rect,
+    name: &str,
+    profile: Option<&chatlog::Profile>,
+    away: bool,
+) {
+    media.avatar(
+        ui,
+        rect,
+        name,
+        profile.and_then(|p| p.avatar.as_ref()),
+        auto,
+    );
+    let r = rect.width() * 0.16;
+    let c = rect.right_bottom() - vec2(r, r) * 0.9;
+    let dot = if away {
+        Color32::from_rgb(0xf0, 0xb2, 0x32)
+    } else {
+        Color32::from_rgb(0x23, 0xa5, 0x5a)
+    };
+    let p = ui.painter();
+    p.circle_filled(c, r + 2.0, ui.visuals().panel_fill);
+    p.circle_filled(c, r, dot);
+}
+
+/// One member, Discord style: avatar, display name, and their activity under it.
+fn member_row(
+    ui: &mut egui::Ui,
+    media: &mut Media,
+    auto: bool,
+    m: &Member,
+    profile: Option<&chatlog::Profile>,
+    name: &str,
+) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+    if !ui.is_rect_visible(rect) {
+        return r;
+    }
+    let v = ui.visuals();
+    if r.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), v.widgets.hovered.weak_bg_fill);
+    }
+    let at = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 6.0 + ROW_AVATAR / 2.0, rect.center().y),
+        vec2(ROW_AVATAR, ROW_AVATAR),
+    );
+    avatar_with_status(ui, media, auto, at, name, profile, m.away);
+
+    let x = rect.left() + ROW_TEXT_X;
+    let room = (rect.right() - 4.0 - x).max(0.0);
+    let line = |text: RichText, style: egui::TextStyle, room: f32| {
+        egui::WidgetText::from(text).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            room,
+            style,
+        )
+    };
+    let mut color = chatlog::nick_color(&m.nick, v.dark_mode);
+    if m.away {
+        color = color.gamma_multiply(0.55);
+    }
+    let marks = line(RichText::new(badges(m)).weak(), egui::TextStyle::Body, room);
+    let title = line(
+        RichText::new(name).color(color),
+        egui::TextStyle::Body,
+        (room - marks.size().x).max(0.0),
+    );
+    let sub = profile.and_then(|p| p.activity.as_deref()).map(|a| {
+        let t = format!("{} {a}", crate::presence::icon(a));
+        line(
+            RichText::new(t).small().weak(),
+            egui::TextStyle::Small,
+            room,
+        )
+    });
+    let high = title.size().y + sub.as_ref().map_or(0.0, |s| s.size().y + 1.0);
+    let top = rect.center().y - high / 2.0;
+    let p = ui.painter();
+    let fg = v.text_color();
+    p.galley(egui::pos2(x + title.size().x, top), marks, fg);
+    let below = top + title.size().y + 1.0;
+    p.galley(egui::pos2(x, top), title, fg);
+    if let Some(sub) = sub {
+        p.galley(egui::pos2(x, below), sub, fg);
+    }
+    r
+}
+
+/// What hovering a member shows: a bigger avatar, names, and what we know.
+fn profile_card(
+    ui: &mut egui::Ui,
+    media: &mut Media,
+    auto: bool,
+    m: &Member,
+    profile: Option<&chatlog::Profile>,
+    name: &str,
+    other: bool,
+) {
+    ui.set_min_width(240.0);
+    ui.horizontal(|ui| {
+        let (at, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+        avatar_with_status(ui, media, auto, at, name, profile, m.away);
+        ui.vertical(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(name)
+                    .heading()
+                    .strong()
+                    .color(chatlog::nick_color(&m.nick, ui.visuals().dark_mode)),
+            );
+            if name != m.nick {
+                ui.label(RichText::new(&m.nick).weak());
+            }
+        });
+    });
+    if let Some(a) = profile.and_then(|p| p.activity.as_deref()) {
+        ui.add_space(4.0);
+        ui.label(format!("{} {a}", crate::presence::icon(a)));
+    }
+    ui.separator();
+    egui::Grid::new("profile_card")
+        .num_columns(2)
+        .spacing(vec2(12.0, 4.0))
+        .show(ui, |ui| {
+            let row = |ui: &mut egui::Ui, k: &str, v: RichText| {
+                ui.label(RichText::new(k).small().weak());
+                ui.label(v);
+                ui.end_row();
+            };
+            row(
+                ui,
+                "Status",
+                RichText::new(if m.away { "Away" } else { "Online" }),
+            );
+            match &m.account {
+                Some(a) => row(ui, "Account", RichText::new(a)),
+                None => row(
+                    ui,
+                    "Account",
+                    RichText::new(format!("{} Guest (not logged in)", icons::GHOST)).weak(),
+                ),
+            }
+            let roles = roles(&m.prefix);
+            if !roles.is_empty() {
+                row(ui, "Channel role", RichText::new(roles.join(", ")));
+            }
+            if m.oper {
+                row(
+                    ui,
+                    "Network",
+                    RichText::new(format!("{} IRC operator", icons::CROWN)),
+                );
+            }
+        });
+    if other {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new("Click to message · right-click to block")
+                .small()
+                .weak(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn roles_follow_prefixes() {
+        assert_eq!(super::roles("~@+"), ["Owner", "Operator", "Voice"]);
+        assert!(super::roles("").is_empty());
     }
 }

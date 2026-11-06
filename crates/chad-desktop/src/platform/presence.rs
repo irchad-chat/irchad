@@ -18,6 +18,8 @@ pub struct Seen {
     pub game: Option<String>,
     /// "Title by Artist" from a playing media player.
     pub music: Option<String>,
+    /// Every media player seen, by id, to pick from in settings.
+    pub players: Vec<String>,
 }
 
 /// Polling; dropping it stops.
@@ -25,6 +27,8 @@ pub struct Poll {
     pub rx: watch::Receiver<Seen>,
     /// What it was started to look for: (games, music).
     pub looks_for: (bool, bool),
+    /// The media players it shares from.
+    pub players: Vec<String>,
     task: JoinHandle<()>,
 }
 
@@ -39,9 +43,11 @@ impl Poll {
     pub fn start(
         games: watch::Receiver<Option<Arc<Games>>>,
         looks_for: (bool, bool),
+        players: Vec<String>,
         wake: impl Fn() + Send + 'static,
     ) -> Self {
         let (tx, rx) = watch::channel(Seen::default());
+        let allowed = players.clone();
         let task = tokio::spawn(async move {
             let mut media = Media::new();
             loop {
@@ -54,15 +60,18 @@ impl Poll {
                     .unwrap_or_default(),
                     None => None,
                 };
-                let music = if looks_for.1 {
-                    tokio::time::timeout(Duration::from_secs(5), media.now_playing())
+                let (players, music) = if looks_for.1 {
+                    tokio::time::timeout(Duration::from_secs(5), media.now_playing(&allowed))
                         .await
-                        .ok()
-                        .flatten()
+                        .unwrap_or_default()
                 } else {
-                    None
+                    Default::default()
                 };
-                let seen = Seen { game, music };
+                let seen = Seen {
+                    game,
+                    music,
+                    players,
+                };
                 let changed = tx.send_if_modified(|cur| {
                     let changed = *cur != seen;
                     if changed {
@@ -79,6 +88,7 @@ impl Poll {
         Self {
             rx,
             looks_for,
+            players,
             task,
         }
     }
@@ -106,8 +116,8 @@ impl Media {
     }
 
     #[allow(clippy::unused_async)]
-    async fn now_playing(&mut self) -> Option<String> {
-        None
+    async fn now_playing(&mut self, _allowed: &[String]) -> (Vec<String>, Option<String>) {
+        Default::default()
     }
 }
 

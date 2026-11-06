@@ -51,6 +51,9 @@ pub struct Settings {
     pub share_activity: bool,
     /// Share what a media player (MPRIS) is playing as `chad/activity` (Linux).
     pub share_music: bool,
+    /// MPRIS players (by bus name, e.g. `spotify`) whose songs `share_music`
+    /// shares. Opt-in per player, so a browser tab's title never leaks by surprise.
+    pub music_players: Vec<String>,
 }
 
 impl Default for Settings {
@@ -76,6 +79,7 @@ impl Default for Settings {
             autostart: false,
             share_activity: false,
             share_music: false,
+            music_players: Vec::new(),
         }
     }
 }
@@ -154,7 +158,8 @@ impl Settings {
 
     /// One section's rows, all but [`Section::Voice`] (see `voice::settings`).
     /// Returns true when something changed.
-    pub fn ui(&mut self, ui: &mut egui::Ui, section: Section) -> bool {
+    /// `players`: media players seen running, to choose which may share.
+    pub fn ui(&mut self, ui: &mut egui::Ui, section: Section, players: &[String]) -> bool {
         let before = self.clone();
         let (mut dragging, mut released) = (false, false);
         egui::Grid::new("settings")
@@ -249,10 +254,13 @@ impl Settings {
                     {
                         ui.label("");
                         ui.checkbox(&mut self.share_music, "Share what I'm listening to")
-                            .on_hover_text(
-                                "The song any media player is playing, browsers included.",
-                            );
+                            .on_hover_text("The song playing in the media players you pick below.");
                         ui.end_row();
+                        if self.share_music {
+                            ui.label("");
+                            ui.vertical(|ui| music_players(ui, &mut self.music_players, players));
+                            ui.end_row();
+                        }
                     }
 
                     ui.label("Updates");
@@ -315,6 +323,33 @@ impl Section {
             Section::Blocked => "Blocked Users",
             #[cfg(windows)]
             Section::Windows => "Windows",
+        }
+    }
+}
+
+/// A checkbox per media player, running or picked before: only those ticked share.
+#[cfg(target_os = "linux")]
+fn music_players(ui: &mut egui::Ui, picked: &mut Vec<String>, seen: &[String]) {
+    ui.weak("Share from these players only:");
+    let mut all: Vec<String> = seen.iter().chain(picked.iter()).cloned().collect();
+    all.sort();
+    all.dedup();
+    if all.is_empty() {
+        ui.weak("No media players running. Start one to pick it here.");
+    }
+    for p in all {
+        let mut on = picked.contains(&p);
+        let label = if seen.contains(&p) {
+            p.clone()
+        } else {
+            format!("{p} (not running)")
+        };
+        if ui.checkbox(&mut on, label).changed() {
+            if on {
+                picked.push(p);
+            } else {
+                picked.retain(|x| *x != p);
+            }
         }
     }
 }

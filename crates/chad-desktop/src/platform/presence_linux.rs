@@ -12,6 +12,9 @@ const MAX_PROCESSES: usize = 4096;
 const MAX_CMDLINE: u64 = 4096;
 /// Per player call, so one that hangs doesn't hide the others.
 const PLAYER_WAIT: Duration = Duration::from_secs(1);
+/// Players listed for the settings page; other programs pick how many there are.
+const MAX_PLAYERS: usize = 32;
+const PREFIX: &str = "org.mpris.MediaPlayer2.";
 
 /// Each of our processes' executable, and its first argument when that looks
 /// like a Windows program (Wine and Proton games run as `wine64-preloader`).
@@ -56,31 +59,49 @@ impl Media {
         Self(None)
     }
 
-    /// The first MPRIS player that's playing, as "Title by Artist".
-    pub async fn now_playing(&mut self) -> Option<String> {
+    /// Every MPRIS player's id (see [`player_id`]), and the first one in
+    /// `allowed` that's playing, as "Title by Artist". Others aren't asked.
+    pub async fn now_playing(&mut self, allowed: &[String]) -> (Vec<String>, Option<String>) {
         if self.0.is_none() {
             self.0 = zbus::Connection::session().await.ok();
         }
-        let conn = self.0.as_ref()?;
+        let Some(conn) = self.0.as_ref() else {
+            return Default::default();
+        };
         let names = match zbus::fdo::DBusProxy::new(conn).await {
             Ok(dbus) => dbus.list_names().await,
             Err(e) => Err(e.into()),
         };
         let Ok(names) = names else {
             self.0 = None; // reconnect next time
-            return None;
+            return Default::default();
         };
-        for name in names
-            .iter()
-            .filter(|n| n.starts_with("org.mpris.MediaPlayer2."))
-        {
-            let found = tokio::time::timeout(PLAYER_WAIT, playing(conn, name.as_str())).await;
-            if let Ok(Some(t)) = found {
-                return Some(t);
+        let mut players: Vec<String> = Vec::new();
+        let mut track = None;
+        for name in &names {
+            let Some(id) = player_id(name.as_str()) else {
+                continue;
+            };
+            if !players.iter().any(|p| p == id) && players.len() < MAX_PLAYERS {
+                players.push(id.to_owned());
+            }
+            if track.is_none() && allowed.iter().any(|a| a == id) {
+                let found = tokio::time::timeout(PLAYER_WAIT, playing(conn, name.as_str())).await;
+                track = found.ok().flatten();
             }
         }
-        None
+        players.sort();
+        (players, track)
     }
+}
+
+/// A player's bus name without its per-instance suffix, so the choice sticks
+/// across restarts: `org.mpris.MediaPlayer2.firefox.instance_1_23` is `firefox`.
+fn player_id(bus: &str) -> Option<&str> {
+    bus.strip_prefix(PREFIX)?
+        .split('.')
+        .next()
+        .filter(|id| !id.is_empty())
 }
 
 /// `name`'s track, if it's playing one.
@@ -116,6 +137,18 @@ async fn player<'a>(conn: &zbus::Connection, name: &'a str) -> zbus::Result<zbus
 #[cfg(test)]
 mod tests {
     #[test]
+    fn player_ids() {
+        use super::player_id;
+        assert_eq!(player_id("org.mpris.MediaPlayer2.spotify"), Some("spotify"));
+        assert_eq!(
+            player_id("org.mpris.MediaPlayer2.firefox.instance_1_23"),
+            Some("firefox")
+        );
+        assert_eq!(player_id("org.mpris.MediaPlayer2."), None);
+        assert_eq!(player_id("org.freedesktop.Notifications"), None);
+    }
+
+    #[test]
     fn sees_ourselves() {
         let me = std::env::current_exe().unwrap();
         assert!(super::programs().iter().any(|p| *p == me.to_string_lossy()));
@@ -128,6 +161,9 @@ mod live {
     #[tokio::test]
     #[ignore = "needs a session bus"]
     async fn prints_now_playing() {
-        println!("now playing: {:?}", super::Media::new().now_playing().await);
+        println!(
+            "now playing: {:?}",
+            super::Media::new().now_playing(&[]).await
+        );
     }
 }
