@@ -46,6 +46,8 @@ pub struct Settings {
     pub tray_on_close: bool,
     /// Start at sign-in (Windows).
     pub autostart: bool,
+    /// Listen for games' Discord Rich Presence and show it as `chad/activity`.
+    pub share_activity: bool,
 }
 
 impl Default for Settings {
@@ -69,6 +71,7 @@ impl Default for Settings {
             stage: Layout::default(),
             tray_on_close: true,
             autostart: false,
+            share_activity: false,
         }
     }
 }
@@ -227,6 +230,14 @@ impl Settings {
                             .labelled_by(l.id);
                         ui.label("idle minutes (0: never)");
                     });
+                    ui.end_row();
+
+                    ui.label("Activity");
+                    ui.checkbox(&mut self.share_activity, "Share what I'm playing")
+                        .on_hover_text(
+                            "Games that support Discord Rich Presence report to IrChad. \
+                             While Discord is running, they report to Discord instead.",
+                        );
                     ui.end_row();
 
                     ui.label("Updates");

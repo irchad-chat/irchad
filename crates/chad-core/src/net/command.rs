@@ -93,6 +93,23 @@ impl Net {
                     result: Err("You're offline right now.".into()),
                 });
             }
+            NetCommand::Games => {
+                let network = self.id();
+                self.events.push(Event::Games {
+                    network,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
+            NetCommand::SetActivity { text } => {
+                let text = text.map(|t| one_line(&t, MAX_ACTIVITY));
+                match (&text, &self.activity) {
+                    (Some(new), old) if old.as_ref() != Some(new) => self.publish_activity(new),
+                    // Stops managing it: take down what we put up.
+                    (None, Some(old)) if !old.is_empty() => self.publish_activity(""),
+                    _ => {}
+                }
+                self.activity = text;
+            }
             NetCommand::Sounds => {
                 let network = self.id();
                 self.events.push(Event::Sounds {

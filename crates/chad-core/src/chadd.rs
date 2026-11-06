@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chad_proto::chadd::{
-    self, ApiError, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse, PreviewRequest,
-    Sound, UploadResponse, VoiceTokenRequest, VoiceTokenResponse,
+    self, ApiError, Game, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse,
+    PreviewRequest, Sound, UploadResponse, VoiceTokenRequest, VoiceTokenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
@@ -224,6 +224,26 @@ pub async fn sounds(api: &Url, session: &str) -> Result<Vec<Sound>, Error> {
             .collect();
     }
     Ok(sounds)
+}
+
+/// Discord's game list; ids and names checked (D14).
+pub async fn games(api: &Url, session: &str) -> Result<Vec<Game>, Error> {
+    let mut games: Vec<Game> = parse(
+        &request(
+            api,
+            chadd::GAMES,
+            Some(session),
+            Body::Json(b"{}".to_vec()),
+            chad_proto::MAX_GAMES_BYTES,
+        )
+        .await?,
+    )?;
+    games.truncate(200_000);
+    games.retain(|g| (1..=20).contains(&g.id.len()) && g.id.bytes().all(|b| b.is_ascii_digit()));
+    for g in &mut games {
+        g.name = chad_proto::one_line(&g.name, 100);
+    }
+    Ok(games)
 }
 
 /// One soundboard clip's bytes.

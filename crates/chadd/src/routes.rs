@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, cache, fetch, files, gifs, sounds};
+use crate::{api, cache, fetch, files, games, gifs, sounds};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -32,6 +32,10 @@ pub struct AppState {
     pub fetcher: reqwest::Client,
     /// What `fetcher` got, shared by everyone who asks.
     pub cache: cache::Cache,
+    /// Discord's game list, if `discord_games` is on and it has downloaded.
+    pub games: games::Games,
+    /// Game list downloads, per account: it's 1.5 MB each.
+    pub games_throttle: api::Throttle,
 }
 
 impl AppState {
@@ -55,6 +59,8 @@ impl AppState {
             gifs: api::Throttle::new(60),
             fetcher: fetch::client()?,
             cache,
+            games: games::Games::default(),
+            games_throttle: api::Throttle::new(5),
         })
     }
 }
@@ -85,6 +91,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/gifs", post(gifs::search))
         .route("/api/sounds", post(sounds::list))
         .route("/api/sound", post(sounds::get))
+        .route("/api/games", post(games::list))
         .merge(files)
         .with_state(state)
 }

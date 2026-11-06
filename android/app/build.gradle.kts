@@ -32,6 +32,7 @@ android {
 
     // full: sideloaded/Obtainium APK. play: Play Store bundle, without the
     // specialUse "Stay connected" service Play reviews strictly (src/play).
+    // play is a separate app (its own ID and upload key), so both can be installed.
     flavorDimensions += "store"
     productFlavors {
         create("full") {
@@ -40,6 +41,7 @@ android {
         }
         create("play") {
             dimension = "store"
+            applicationId = "chat.irchad.IrChad"
             buildConfigField("boolean", "STAY_CONNECTED", "false")
         }
     }

@@ -36,6 +36,9 @@ pub struct Chadd {
     /// Set when chadd searches GIFs for its users (`POST <api>/gifs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gifs: Option<Gifs>,
+    /// Set when chadd serves Discord's game list (`POST <api>/games`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub games: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -11,3 +11,4 @@ These are not scheduled. Move an item into a phase only when the user asks.
 - Custom emoji per network (a chadd-hosted set advertised in discovery).
 - One-time prekeys for E2EE, post-quantum handshake, and MLS for encrypted channels.
 - macOS: accepted if it happens to work, never targeted.
+- Activity beyond Rich Presence (D63): "Playing" by matching running processes against Discord's list (its `executables`), and "Listening to" from MPRIS.

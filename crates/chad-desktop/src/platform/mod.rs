@@ -13,6 +13,11 @@ pub mod ptt;
 mod ptt_linux;
 #[cfg(windows)]
 mod ptt_windows;
+pub mod rpc;
+#[cfg(target_os = "linux")]
+mod rpc_linux;
+#[cfg(windows)]
+mod rpc_windows;
 
 #[cfg(target_os = "linux")]
 mod linux;

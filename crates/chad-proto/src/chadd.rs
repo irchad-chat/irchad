@@ -28,6 +28,10 @@ pub const SOUNDS: &str = "sounds";
 /// `POST <api>/sound` with a [`Sound`] (only `file` matters) and a Bearer
 /// session token: the clip's bytes (mp3, ogg, wav or flac).
 pub const SOUND: &str = "sound";
+/// `POST <api>/games` with a Bearer session token: Discord's detectable games
+/// as [`Game`]s, which chadd downloads itself so clients never tell Discord
+/// what they play. `404` when the server doesn't offer it.
+pub const GAMES: &str = "games";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
@@ -116,6 +120,13 @@ pub struct Sound {
     pub name: String,
     /// For [`SOUND`].
     pub file: String,
+}
+
+/// A Discord application: Rich Presence names the game only by `id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Game {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -16,14 +16,13 @@ tasks:
   play:
     desc: Build the signed Play Store bundle (arm64) for upload to the Play Console
     dir: android
-    env:
-      ABIS: arm64-v8a
-      PROFILE: release
     preconditions:
       # Without these the bundle gets the debug key, which Play rejects.
-      - sh: test -f "$IRCHAD_KEYSTORE" && test -n "$IRCHAD_KEYSTORE_PASSWORD"
-        msg: set IRCHAD_KEYSTORE (the release .p12) and IRCHAD_KEYSTORE_PASSWORD
+      - sh: test -f "$IRCHAD_PLAY_KEYSTORE" && test -n "$IRCHAD_PLAY_KEYSTORE_PASSWORD"
+        msg: set IRCHAD_PLAY_KEYSTORE (the Play upload .p12, key alias irchad) and IRCHAD_PLAY_KEYSTORE_PASSWORD
     cmds:
-      - ./gradlew --no-daemon bundlePlayRelease
+      # The Play upload key, not the APK's release key (the Play app is chat.irchad.IrChad).
+      # Set inline: the shell's variables would override task env.
+      - ABIS=arm64-v8a PROFILE=release IRCHAD_KEYSTORE="$IRCHAD_PLAY_KEYSTORE" IRCHAD_KEYSTORE_PASSWORD="$IRCHAD_PLAY_KEYSTORE_PASSWORD" ./gradlew --no-daemon bundlePlayRelease
       - cmd: echo "built android/app/build/outputs/bundle/playRelease/app-play-release.aab"
         silent: true

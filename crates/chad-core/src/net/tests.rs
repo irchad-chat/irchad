@@ -17,6 +17,7 @@ fn net() -> Net {
         guest: false,
         uploads: None,
         gifs: None,
+        games: false,
         oper: false,
     };
     let mut n = Net::new(Store::memory(), info);

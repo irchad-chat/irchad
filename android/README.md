@@ -15,7 +15,8 @@ adb install -r app/build/outputs/apk/full/debug/app-full-debug.apk
 
 There are two flavors: `full` is the APK on the releases page (Obtainium), and `play` is the Play Store bundle, built locally with `task play` (not in CI).
 `play` drops the "Stay connected" background mode, because Play reviews specialUse foreground services strictly (`app/src/play/AndroidManifest.xml`), so its background notifications only come through UnifiedPush.
-Both have the same application ID and signing key, so either one installs over the other.
+`play` is a separate app, `chat.irchad.IrChad`, signed with its own upload key (`IRCHAD_PLAY_KEYSTORE`, `IRCHAD_PLAY_KEYSTORE_PASSWORD`, alias `irchad`); Google holds its app signing key. So it doesn't update the `full` APK, and both can be installed.
+`app/src/full/assets/adi-registration.properties` proves ownership of `party.gentoo.irchad` for Android developer verification.
 
 Gradle runs `build-rust.sh` first. It builds `libchad_ffi.so` and generates the Kotlin bindings into
 `app/build/rust/`. It builds x86_64 for the emulator by default. Use `ABIS="x86_64 arm64-v8a"` for phones.

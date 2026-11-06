@@ -62,6 +62,13 @@ impl Net {
         }
     }
 
+    /// Our `chad/activity`, when there's a connection that can carry it.
+    pub(super) fn publish_activity(&mut self, text: &str) {
+        if self.connected && !self.guest && self.caps.enabled("draft/metadata-2") {
+            self.set_metadata(ACTIVITY_KEY, text);
+        }
+    }
+
     /// `METADATA * SET key [value]`; an empty value deletes the key.
     pub(super) fn set_metadata(&mut self, key: &str, value: &str) {
         if !self.caps.enabled("draft/metadata-2") {
@@ -79,12 +86,14 @@ impl Net {
             return;
         };
         let (display_name, avatar) = (p.display_name.clone(), p.avatar.clone());
+        let activity = p.activity.clone();
         let network = self.id();
         self.events.push(Event::Profile {
             network,
             nick: nick.to_owned(),
             display_name,
             avatar,
+            activity,
         });
     }
 
@@ -249,16 +258,11 @@ impl Net {
             return;
         }
         let p = self.profiles.entry(folded).or_default();
-        if key == DISPLAY_NAME_KEY {
-            p.display_name = value
-                .map(|v| {
-                    v.chars()
-                        .filter(|c| !c.is_control())
-                        .take(MAX_DISPLAY_NAME)
-                        .collect::<String>()
-                })
-                .map(|v| v.trim().to_owned())
-                .filter(|v| !v.is_empty());
+        let text = |max| value.map(|v| one_line(v, max)).filter(|v| !v.is_empty());
+        if key == ACTIVITY_KEY {
+            p.activity = text(MAX_ACTIVITY);
+        } else if key == DISPLAY_NAME_KEY {
+            p.display_name = text(MAX_DISPLAY_NAME);
         } else {
             p.avatar = value
                 .and_then(|v| Url::parse(v).ok())

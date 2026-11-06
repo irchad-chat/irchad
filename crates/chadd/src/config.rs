@@ -40,6 +40,11 @@ pub struct Config {
     pub sounds: Option<Sounds>,
     /// Leave out to keep nothing on disk; concurrent fetches are still shared.
     pub cache: Option<Cache>,
+    /// Download Discord's list of detectable games at startup and daily, so
+    /// clients can name the game a Rich Presence update is from. It's an
+    /// undocumented Discord endpoint that may change or go away.
+    #[serde(default)]
+    pub discord_games: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -290,6 +295,7 @@ impl Config {
                 gifs: self.gifs.as_ref().map(|_| discovery::Gifs {
                     provider: "KLIPY".into(),
                 }),
+                games: self.discord_games,
             },
             livekit: discovery::Livekit {
                 url: or(&self.endpoints.livekit, &ws_origin, "/livekit")?,

@@ -179,6 +179,10 @@ impl App {
                 }
             }
             Event::Sounds { result: Err(e), .. } => tracing::info!("soundboard: {e}"),
+            Event::Games { result, .. } => match result {
+                Ok(list) => self.games = Some(list.into_iter().map(|g| (g.id, g.name)).collect()),
+                Err(e) => tracing::info!("game list: {e}"),
+            },
             Event::Sound {
                 network,
                 file,
@@ -246,6 +250,10 @@ impl App {
         if applied.new && self.away_sent {
             let message = Some(AWAY.to_owned());
             self.send(&origin, NetCommand::SetAway { message });
+        }
+        if applied.new && self.activity_sent.0.is_some() {
+            let text = self.activity_sent.0.clone();
+            self.send(&origin, NetCommand::SetActivity { text });
         }
         if icon_changed {
             self.view.nets[i].ui.icon = Icon::None;
@@ -400,6 +408,7 @@ impl App {
         if !idle.is_zero() && !away {
             ctx.request_repaint_after(Duration::from_secs(30));
         }
+        self.activity(ctx);
         while let Ok((origin, img)) = self.icons.1.try_recv() {
             if let Some(i) = self.net_idx(&origin) {
                 self.view.nets[i].ui.icon = match img {
@@ -436,5 +445,53 @@ impl App {
             };
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
         }
+    }
+
+    /// Starts or stops the Rich Presence listener with the setting, and sends
+    /// what it hears to every network, at most every `ACTIVITY_EVERY`.
+    fn activity(&mut self, ctx: &egui::Context) {
+        const ACTIVITY_EVERY: Duration = Duration::from_secs(15);
+        // chadd has no list for a while after it starts, or when Discord fails it.
+        const GAMES_RETRY: Duration = Duration::from_secs(5 * 60);
+        if self.settings.share_activity != self.rpc.is_some() {
+            self.rpc = self.settings.share_activity.then(|| {
+                let ctx = ctx.clone();
+                platform::rpc::Rpc::start(move || ctx.request_repaint())
+            });
+        }
+        let current = self.rpc.as_ref().and_then(|r| r.rx.borrow().clone());
+        let games_due = self.games_asked.is_none_or(|t| t.elapsed() >= GAMES_RETRY);
+        if current.is_some() && self.games.is_none() && games_due {
+            let net =
+                self.view.nets.iter().find(|n| {
+                    n.info.games && matches!(n.info.state, chad_core::ConnState::Connected)
+                });
+            if let Some(n) = net {
+                self.games_asked = Some(Instant::now());
+                let network = n.info.network.clone();
+                self.send(&network, NetCommand::Games);
+            }
+        }
+        // Sharing off: `None`, so this client leaves `chad/activity` to other devices.
+        let text = self.rpc.as_ref().map(|_| {
+            current
+                .map(|a| a.text(self.games.as_ref()))
+                .unwrap_or_default()
+        });
+        if text == self.activity_sent.0 {
+            return;
+        }
+        let wait = self.activity_sent.1.map_or(Duration::ZERO, |t| {
+            ACTIVITY_EVERY.saturating_sub(t.elapsed())
+        });
+        if !wait.is_zero() && text.as_ref().is_some_and(|t| !t.is_empty()) {
+            ctx.request_repaint_after(wait);
+            return;
+        }
+        for n in &self.view.nets {
+            let text = text.clone();
+            self.send(&n.info.network, NetCommand::SetActivity { text });
+        }
+        self.activity_sent = (text, Some(Instant::now()));
     }
 }

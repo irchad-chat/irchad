@@ -8,6 +8,9 @@ registration = "open"
 # Every chad is put here; its chanops list the official channels in its
 # `chad/channels` metadata (deploy/seed.py sets it).
 home = "#general"
+# Download Discord's detectable-games list so clients can name the game in a
+# Rich Presence update (D63). Undocumented Discord endpoint; off by default.
+discord_games = true
 
 # DEV ONLY: public secrets, matching ergo.yaml and livekit.yaml.
 [ergo]

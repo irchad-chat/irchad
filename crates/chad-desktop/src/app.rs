@@ -107,6 +107,15 @@ pub struct App {
     idle: Idle,
     /// Whether the networks were last told we're away.
     away_sent: bool,
+    /// Rich Presence listener, while `share_activity` is on.
+    rpc: Option<platform::rpc::Rpc>,
+    /// Discord's game list, id → name, from a chadd that serves it.
+    games: Option<HashMap<String, String>>,
+    /// When we last asked for it; it's asked again later if that failed.
+    games_asked: Option<Instant>,
+    /// The `chad/activity` we last sent everywhere (`None`: we leave it alone),
+    /// and when.
+    activity_sent: (Option<String>, Option<Instant>),
     update: mpsc::Receiver<(String, String)>,
     /// A newer release: (version, page).
     new_version: Option<(String, String)>,
@@ -384,6 +393,10 @@ impl App {
                 move || ctx.request_repaint()
             }),
             away_sent: false,
+            rpc: None,
+            games: None,
+            games_asked: None,
+            activity_sent: (None, None),
             new_version: None,
             update: {
                 let (tx, rx) = mpsc::channel();

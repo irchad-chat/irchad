@@ -35,7 +35,7 @@ impl Net {
                 self.profiles.insert(folded, Profile::default());
                 self.out.push(Message::new(
                     "METADATA",
-                    [from, "GET", DISPLAY_NAME_KEY, AVATAR_KEY],
+                    [from, "GET", DISPLAY_NAME_KEY, AVATAR_KEY, ACTIVITY_KEY],
                 ));
             }
         }

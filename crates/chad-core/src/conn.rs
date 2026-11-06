@@ -18,7 +18,7 @@ use url::Url;
 use crate::chadd::{self, Session};
 use crate::manager::Sink;
 use crate::net::{
-    AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure,
+    ACTIVITY_KEY, AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure,
 };
 use crate::secrets::SecretStore;
 use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
@@ -301,6 +301,7 @@ async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
         .as_ref()
         .filter(|_| !guest)
         .map(|g| g.provider.chars().take(40).collect());
+    net.info.games = d.chadd.games && !guest;
     Ok(d)
 }
 
@@ -480,6 +481,7 @@ fn start_auth(
             VOICE_KEY,
             DISPLAY_NAME_KEY,
             AVATAR_KEY,
+            ACTIVITY_KEY,
             DEVICES_KEY,
             CHANNELS_KEY,
         ];
@@ -844,6 +846,14 @@ fn fetch(
                     pos,
                     result,
                 }]);
+            });
+        }
+        NetCommand::Games => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| async move { chadd::games(&api, &t).await })
+                    .await;
+                sink.send([Event::Games { network, result }]);
             });
         }
         NetCommand::Sounds => {

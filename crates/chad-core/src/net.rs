@@ -15,7 +15,7 @@ use crate::store::{Store, StoredBuffer};
 use crate::view::Profile;
 use crate::{
     Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind,
-    NetCommand, NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, time,
+    NetCommand, NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, one_line, time,
 };
 
 mod block;
@@ -58,6 +58,9 @@ const ERGO_AUTO_AWAY: &str = "User is currently disconnected";
 pub const DISPLAY_NAME_KEY: &str = "display-name";
 pub const AVATAR_KEY: &str = "avatar";
 const MAX_DISPLAY_NAME: usize = 64;
+/// Metadata key: what someone's doing, as plain text ("Playing Celeste").
+pub const ACTIVITY_KEY: &str = "chad/activity";
+const MAX_ACTIVITY: usize = 128;
 
 #[derive(Debug)]
 enum Pending {
@@ -170,6 +173,10 @@ pub struct Net {
     profiles: HashMap<String, Profile>,
     /// Our away message, sent again after every reconnect.
     away: Option<String>,
+    /// Our `chad/activity`, set again after every reconnect (empty clears it).
+    /// `None` while this client doesn't manage it, so it never touches a value
+    /// another device of ours set.
+    activity: Option<String>,
     /// Encrypted DMs; `None` for guests, or without a keyring.
     pub e2e: Option<E2e>,
     /// Our CTCP VERSION reply.
@@ -216,6 +223,7 @@ impl Net {
             voice_of: HashMap::new(),
             profiles: HashMap::new(),
             away: None,
+            activity: None,
             e2e: None,
             version: "IrChad".into(),
             members_dirty: Vec::new(),
@@ -284,6 +292,10 @@ impl Net {
         self.persistent = !self.guest;
         if let Some(m) = &self.away {
             self.out.push(Message::new("AWAY", [m.as_str()]));
+        }
+        // Empty also clears one a crash left behind (always-on keeps metadata).
+        if let Some(a) = self.activity.clone() {
+            self.publish_activity(&a);
         }
         if !self.guest && self.caps.enabled("draft/persistence") {
             self.out.push(Message::new("PERSISTENCE", ["GET"]));

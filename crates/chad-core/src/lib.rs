@@ -26,7 +26,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
 
-pub use chad_proto::chadd::{Gif, GifPage, LinkPreview, Sound};
+pub use chad_proto::chadd::{Game, Gif, GifPage, LinkPreview, Sound};
+pub use chad_proto::one_line;
 pub use discovery::fetch_icon;
 pub use manager::start;
 
@@ -234,6 +235,14 @@ pub enum NetCommand {
     SetAvatar {
         url: String,
     },
+    /// What we're doing, as plain text ("Playing Celeste"); empty clears it.
+    /// Metadata `chad/activity`, kept across reconnects. `None` stops managing
+    /// it (clearing ours first), so other devices' values are left alone.
+    SetActivity {
+        text: Option<String>,
+    },
+    /// Discord's game list from chadd, if `NetworkInfo::games`: `Event::Games`.
+    Games,
     /// `Some(reason)` to go away, `None` to come back. Kept across reconnects.
     SetAway {
         message: Option<String>,
@@ -384,12 +393,13 @@ pub enum Event {
         target: Option<String>,
         result: Result<Url, String>,
     },
-    /// Someone's display name or avatar (metadata), as far as we know it.
+    /// Someone's display name, avatar or activity (metadata), as far as we know it.
     Profile {
         network: String,
         nick: String,
         display_name: Option<String>,
         avatar: Option<Url>,
+        activity: Option<String>,
     },
     Preview {
         network: String,
@@ -411,6 +421,10 @@ pub enum Event {
     Sounds {
         network: String,
         result: Result<Vec<Sound>, String>,
+    },
+    Games {
+        network: String,
+        result: Result<Vec<Game>, String>,
     },
     Sound {
         network: String,
@@ -526,6 +540,8 @@ pub struct NetworkInfo {
     pub uploads: Option<u64>,
     /// Who chadd's GIF search comes from, if it has one (and we have an account).
     pub gifs: Option<String>,
+    /// chadd serves Discord's game list (and we have an account).
+    pub games: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -485,11 +485,18 @@ impl App {
             .iter()
             .map(|m| {
                 let name = chatlog::shown(profiles, &m.nick);
-                let icon = if m.oper {
+                let mut icon = if m.oper {
                     format!("{} ", icons::CROWN)
                 } else {
                     String::new()
                 };
+                if profiles
+                    .get(&chad_core::view::key(&m.nick))
+                    .is_some_and(|p| p.activity.is_some())
+                {
+                    icon.push_str(icons::GAME_CONTROLLER);
+                    icon.push(' ');
+                }
                 width(format!("{icon}{}{name}", m.prefix), &body)
             })
             .chain([
@@ -564,6 +571,13 @@ impl App {
                             }
                             if m.account.is_none() {
                                 chatlog::guest_badge(ui);
+                            }
+                            let activity = profiles
+                                .get(&key(&m.nick))
+                                .and_then(|p| p.activity.as_deref());
+                            if let Some(a) = activity {
+                                ui.label(RichText::new(icons::GAME_CONTROLLER).weak())
+                                    .on_hover_text(a);
                             }
                             ui.add(egui::Label::new(t).sense(Sense::click()).truncate())
                                 .on_hover_ui(|ui| {

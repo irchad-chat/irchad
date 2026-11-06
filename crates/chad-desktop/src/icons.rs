@@ -11,6 +11,7 @@ pub const CORNERS_OUT: &str = "\u{E1D0}";
 pub const DOTS_THREE: &str = "\u{E1FE}";
 pub const EYE: &str = "\u{E220}";
 pub const FILE: &str = "\u{E230}";
+pub const GAME_CONTROLLER: &str = "\u{E26E}";
 pub const GEAR: &str = "\u{E270}";
 pub const GHOST: &str = "\u{E62A}";
 pub const HEADPHONES: &str = "\u{E2A6}";

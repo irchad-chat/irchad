@@ -8,6 +8,7 @@ mod cache;
 mod config;
 mod fetch;
 mod files;
+mod games;
 mod gifs;
 mod routes;
 mod sounds;
@@ -29,7 +30,11 @@ async fn main() -> anyhow::Result<()> {
         .into();
     let config = Config::load(&path)?;
     let listen = config.listen;
-    let app = routes::router(Arc::new(routes::AppState::new(config)?));
+    let state = Arc::new(routes::AppState::new(config)?);
+    if state.config.discord_games {
+        tokio::spawn(games::refresh(state.clone()));
+    }
+    let app = routes::router(state);
 
     let listener = tokio::net::TcpListener::bind(listen)
         .await

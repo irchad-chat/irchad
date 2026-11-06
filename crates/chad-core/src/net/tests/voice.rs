@@ -158,7 +158,10 @@ fn profiles_and_away() {
     feed(&mut n, ":carol!u@h JOIN #dev * :c");
     feed(&mut n, ":carol!u@h PART #dev");
     feed(&mut n, ":carol!u@h JOIN #dev * :c");
-    assert_eq!(out(&mut n), ["METADATA carol GET display-name avatar"]);
+    assert_eq!(
+        out(&mut n),
+        ["METADATA carol GET display-name avatar chad/activity"]
+    );
 
     n.command(NetCommand::SetDisplayName {
         name: "  Bobby  ".into(),
@@ -176,6 +179,58 @@ fn profiles_and_away() {
             "AWAY"
         ]
     );
+}
+
+#[test]
+fn activity() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * LS :draft/metadata-2"));
+    n.caps.handle(&line("CAP * ACK :draft/metadata-2"));
+    // Not managing it (phone, or sharing off): another device's value is left alone.
+    n.attach("bob");
+    out(&mut n);
+    feed(&mut n, ":s 761 * bob chad/activity * :Playing Elsewhere");
+    assert!(out(&mut n).is_empty());
+
+    feed(
+        &mut n,
+        ":s 761 * alice chad/activity * :Playing \x1b[31mCeleste",
+    );
+    let activity = events(&mut n).iter().rev().find_map(|e| match e {
+        Event::Profile { activity, .. } => Some(activity.clone()),
+        _ => None,
+    });
+    assert_eq!(activity, Some(Some("Playing [31mCeleste".into())));
+
+    let set = |n: &mut Net, t: Option<&str>| {
+        n.command(NetCommand::SetActivity {
+            text: t.map(str::to_owned),
+        });
+    };
+    // Turning sharing on clears whatever a crash left; then it follows the game.
+    set(&mut n, Some(""));
+    set(&mut n, Some(" Playing Celeste "));
+    set(&mut n, Some("Playing Celeste"));
+    set(&mut n, Some(""));
+    set(&mut n, Some("Playing Celeste"));
+    assert_eq!(
+        out(&mut n),
+        [
+            "METADATA * SET chad/activity",
+            "METADATA * SET chad/activity :Playing Celeste",
+            "METADATA * SET chad/activity",
+            "METADATA * SET chad/activity :Playing Celeste",
+        ]
+    );
+    // Kept across reconnects.
+    n.attach("bob");
+    assert!(out(&mut n).contains(&"METADATA * SET chad/activity :Playing Celeste".to_owned()));
+    // Turning sharing off takes ours down, once.
+    set(&mut n, None);
+    set(&mut n, None);
+    assert_eq!(out(&mut n), ["METADATA * SET chad/activity"]);
+    n.attach("bob");
+    assert!(!out(&mut n).iter().any(|l| l.contains("chad/activity")));
 }
 
 #[test]
