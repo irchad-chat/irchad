@@ -491,7 +491,7 @@ impl App {
             .iter()
             .map(|m| {
                 let name = chatlog::shown(profiles, &m.nick);
-                ROW_TEXT_X + width(format!("{}{name}", badges(m)), &body)
+                ROW_TEXT_X + BADGE_GAP + width(format!("{}{name}", badges(m)), &body)
             })
             .chain([
                 width(format!("ONLINE — {}", members.len() - away), &small),
@@ -533,19 +533,38 @@ impl App {
         }
         let mut dm = None;
         let mut block = None;
+        // Each line's top; a header after a section leaves a gap above it.
+        let height = |i: usize, line: &Line| match line {
+            Line::Header(..) if i == 0 => HEAD_H,
+            Line::Header(..) => HEAD_H + SECTION_GAP,
+            Line::Member(_) => ROW_H,
+        };
+        let mut tops = Vec::with_capacity(lines.len() + 1);
+        tops.push(0.0);
+        for (i, line) in lines.iter().enumerate() {
+            tops.push(tops[i] + height(i, line));
+        }
         // Only the rows in view are laid out: a channel can have thousands.
-        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
-            ui,
-            ROW_H,
-            lines.len(),
-            |ui, range| {
-                for line in &lines[range] {
-                    let m = match line {
+        egui::ScrollArea::vertical()
+            .auto_shrink(false)
+            .show_viewport(ui, |ui, view| {
+                ui.set_height(tops[lines.len()]);
+                let origin = ui.min_rect().min;
+                let first = tops[1..].partition_point(|&bottom| bottom <= view.min.y);
+                let last = tops
+                    .partition_point(|&top| top < view.max.y)
+                    .min(lines.len());
+                for i in first..last {
+                    let rect = egui::Rect::from_min_max(
+                        origin + vec2(0.0, tops[i]),
+                        egui::pos2(ui.max_rect().right(), origin.y + tops[i + 1]),
+                    );
+                    let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    let ui = &mut ui;
+                    let m = match &lines[i] {
                         Line::Header(title, n) => {
-                            // Bottom-aligned: the small text leaves a gap above it in a full row.
-                            let size = vec2(ui.available_width(), ROW_H);
                             let row = egui::Layout::left_to_right(egui::Align::Max);
-                            ui.allocate_ui_with_layout(size, row, |ui| {
+                            ui.with_layout(row, |ui| {
                                 ui.label(RichText::new(format!("{title} — {n}")).small().weak());
                             });
                             continue;
@@ -583,8 +602,7 @@ impl App {
                         });
                     }
                 }
-            },
-        );
+            });
         if let Some((nick, account)) = block {
             self.send(&network, NetCommand::Block { nick, account });
         }
@@ -595,7 +613,13 @@ impl App {
     }
 }
 
-const ROW_H: f32 = 44.0;
+const ROW_H: f32 = 40.0;
+/// A section header ("ONLINE — 4"): its small text, bottom-aligned.
+const HEAD_H: f32 = 20.0;
+/// Above every header but the first.
+const SECTION_GAP: f32 = 12.0;
+/// Between a member's name and its crown or ghost.
+const BADGE_GAP: f32 = 4.0;
 const ROW_AVATAR: f32 = 32.0;
 /// Where a member row's text starts: past the padding, avatar and a gap.
 const ROW_TEXT_X: f32 = 6.0 + ROW_AVATAR + 10.0;
@@ -701,7 +725,7 @@ fn member_row(
     let title = line(
         RichText::new(name).color(color),
         egui::TextStyle::Body,
-        (room - marks.size().x).max(0.0),
+        (room - marks.size().x - BADGE_GAP).max(0.0),
     );
     let sub = profile.and_then(|p| p.activity.as_deref()).map(|a| {
         let t = format!("{} {a}", crate::presence::icon(a));
@@ -715,7 +739,7 @@ fn member_row(
     let top = rect.center().y - high / 2.0;
     let p = ui.painter();
     let fg = v.text_color();
-    p.galley(egui::pos2(x + title.size().x, top), marks, fg);
+    p.galley(egui::pos2(x + title.size().x + BADGE_GAP, top), marks, fg);
     let below = top + title.size().y + 1.0;
     p.galley(egui::pos2(x, top), title, fg);
     if let Some(sub) = sub {
