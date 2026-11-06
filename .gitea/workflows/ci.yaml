@@ -70,7 +70,7 @@ jobs:
         with:
           prefix-key: v1-rust
           shared-key: ci-android
-      - run: ./gradlew --no-daemon assembleFullDebug assemblePlayDebug
+      - run: ./gradlew --no-daemon assembleFullDebug
         working-directory: android
 
   windows:

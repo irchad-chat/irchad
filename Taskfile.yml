@@ -12,3 +12,18 @@ tasks:
       - cargo build --release --locked -p chad-desktop
       - cmd: echo "built target/release/irchad{{.EXE}}"
         silent: true
+
+  play:
+    desc: Build the signed Play Store bundle (arm64) for upload to the Play Console
+    dir: android
+    env:
+      ABIS: arm64-v8a
+      PROFILE: release
+    preconditions:
+      # Without these the bundle gets the debug key, which Play rejects.
+      - sh: test -f "$IRCHAD_KEYSTORE" && test -n "$IRCHAD_KEYSTORE_PASSWORD"
+        msg: set IRCHAD_KEYSTORE (the release .p12) and IRCHAD_KEYSTORE_PASSWORD
+    cmds:
+      - ./gradlew --no-daemon bundlePlayRelease
+      - cmd: echo "built android/app/build/outputs/bundle/playRelease/app-play-release.aab"
+        silent: true

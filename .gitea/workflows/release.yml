@@ -146,7 +146,7 @@ jobs:
           [ -n "$KEYSTORE" ] && [ -n "$IRCHAD_KEYSTORE_PASSWORD" ] || { echo "ANDROID_KEYSTORE secrets missing"; exit 1; }
           export IRCHAD_KEYSTORE="$RUNNER_TEMP/release.p12"
           echo "$KEYSTORE" | base64 -d > "$IRCHAD_KEYSTORE"
-          ./gradlew --no-daemon assembleFullRelease bundlePlayRelease
+          ./gradlew --no-daemon assembleFullRelease
           rm "$IRCHAD_KEYSTORE"
 
       - name: Upload asset
@@ -154,10 +154,6 @@ jobs:
           curl -fsS -X POST -H "Authorization: token ${{ github.token }}" \
             -F "attachment=@android/app/build/outputs/apk/full/release/app-full-release.apk" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-android-arm64.apk"
-          # For uploading to the Play Console by hand.
-          curl -fsS -X POST -H "Authorization: token ${{ github.token }}" \
-            -F "attachment=@android/app/build/outputs/bundle/playRelease/app-play-release.aab" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-android-play.aab"
 
   chadd-image:
     needs: [release, android]

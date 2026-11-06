@@ -13,7 +13,7 @@ JAVA_HOME=/usr/lib/jvm/openjdk-bin-21 ./gradlew assembleFullDebug
 adb install -r app/build/outputs/apk/full/debug/app-full-debug.apk
 ```
 
-There are two flavors: `full` is the APK on the releases page (Obtainium), and `play` is the Play Store bundle (`bundlePlayRelease`).
+There are two flavors: `full` is the APK on the releases page (Obtainium), and `play` is the Play Store bundle, built locally with `task play` (not in CI).
 `play` drops the "Stay connected" background mode, because Play reviews specialUse foreground services strictly (`app/src/play/AndroidManifest.xml`), so its background notifications only come through UnifiedPush.
 Both have the same application ID and signing key, so either one installs over the other.
 
@@ -47,5 +47,5 @@ Pushes only come for DMs and for channel messages that name the account (`bob`),
 ## Release signing
 
 `release.yml` signs with a PKCS12 keystore from the `ANDROID_KEYSTORE` secret (base64), whose store and key (alias `irchad`) share `ANDROID_KEYSTORE_PASSWORD`.
-Locally, `IRCHAD_KEYSTORE=<file> IRCHAD_KEYSTORE_PASSWORD=<pw> ./gradlew assembleFullRelease bundlePlayRelease` does the same; without them a release build gets the debug key.
+Locally, `IRCHAD_KEYSTORE=<file> IRCHAD_KEYSTORE_PASSWORD=<pw> ./gradlew assembleFullRelease` does the same; without them a release build gets the debug key.
 Keep the keystore safe: an APK signed with another key won't install over the old one.
