@@ -235,6 +235,8 @@ pub struct Member {
 pub struct Profile {
     pub display_name: Option<String>,
     pub avatar: Option<String>,
+    /// Their `chad/activity` ("Playing Celeste"), already sanitized by chad-core.
+    pub activity: Option<String>,
 }
 
 /// One of someone's devices with encrypted DMs on.

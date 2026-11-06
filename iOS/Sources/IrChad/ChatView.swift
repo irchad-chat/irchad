@@ -466,17 +466,28 @@ private struct MembersSheet: View {
                                     Button {
                                         if m.nick.lowercased() != net.nick.lowercased() { open(m.nick) }
                                     } label: {
+                                        let p = model.client.profile(network: net.network, nick: m.nick)
                                         HStack(spacing: 12) {
-                                            Avatar(network: net.network, nick: m.nick,
-                                                   url: model.client.profile(network: net.network, nick: m.nick).avatar)
-                                            if m.oper {
-                                                Image(systemName: "wrench.and.screwdriver.fill").font(.caption)
-                                                    .accessibilityLabel("IRC operator")
+                                            Avatar(network: net.network, nick: m.nick, url: p.avatar)
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                HStack {
+                                                    if m.oper {
+                                                        Image(systemName: "crown.fill").font(.caption)
+                                                            .foregroundStyle(.yellow)
+                                                            .accessibilityLabel("IRC operator")
+                                                    }
+                                                    if m.account == nil {
+                                                        Text("👻").accessibilityLabel("Guest (not logged in)")
+                                                    }
+                                                    Text(m.prefix + m.shown).foregroundStyle(m.away ? .secondary : .primary)
+                                                }
+                                                if let a = p.activity {
+                                                    Label(a, systemImage: a.hasPrefix("Listening to") ? "music.note" : "gamecontroller.fill")
+                                                        .font(.caption)
+                                                        .foregroundStyle(.secondary)
+                                                        .lineLimit(1)
+                                                }
                                             }
-                                            if m.account == nil {
-                                                Text("👻").accessibilityLabel("Guest (not logged in)")
-                                            }
-                                            Text(m.prefix + m.shown).foregroundStyle(m.away ? .secondary : .primary)
                                         }
                                     }
                                     .buttonStyle(.plain)

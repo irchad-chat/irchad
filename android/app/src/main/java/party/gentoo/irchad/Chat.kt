@@ -74,7 +74,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Person
@@ -399,21 +398,35 @@ private fun ChatScreen(
                                 .padding(horizontal = 24.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Avatar(app, net.network, m.nick, remember(tick, m.nick) { c.profile(net.network, m.nick).avatar })
+                            val p = remember(tick, m.nick) { c.profile(net.network, m.nick) }
+                            Avatar(app, net.network, m.nick, p.avatar)
                             Spacer(Modifier.width(12.dp))
-                            if (m.oper) {
-                                Icon(Icons.Default.Build, "IRC operator", Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (m.oper) {
+                                        Text("👑", Modifier.semantics { contentDescription = "IRC operator" })
+                                        Spacer(Modifier.width(4.dp))
+                                    }
+                                    if (m.account == null) {
+                                        Text("👻", Modifier.semantics { contentDescription = "Guest (not logged in)" })
+                                        Spacer(Modifier.width(4.dp))
+                                    }
+                                    Text(
+                                        m.prefix + m.shown,
+                                        color = if (m.away) MaterialTheme.colorScheme.onSurfaceVariant
+                                        else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                p.activity?.let {
+                                    Text(
+                                        (if (it.startsWith("Listening to")) "🎵 " else "🎮 ") + it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
-                            if (m.account == null) {
-                                Text("👻", Modifier.semantics { contentDescription = "Guest (not logged in)" })
-                                Spacer(Modifier.width(4.dp))
-                            }
-                            Text(
-                                m.prefix + m.shown,
-                                color = if (m.away) MaterialTheme.colorScheme.onSurfaceVariant
-                                else MaterialTheme.colorScheme.onSurface,
-                            )
                         }
                     }
                 }

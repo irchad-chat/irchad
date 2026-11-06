@@ -679,6 +679,7 @@ impl Client {
             avatar: p
                 .and_then(|p| p.avatar.as_ref())
                 .map(std::string::ToString::to_string),
+            activity: p.and_then(|p| p.activity.clone()),
         }
     }
 
