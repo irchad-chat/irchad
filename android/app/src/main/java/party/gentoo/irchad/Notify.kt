@@ -134,7 +134,7 @@ class Notifier(private val app: IrChad) {
 
     /** Starts [KeepService] if that's the mode; only works while the app is in front. */
     fun keepConnected() {
-        if (mode == Background.SOCKET) {
+        if (mode == Background.SOCKET && BuildConfig.STAY_CONNECTED) {
             runCatching { ContextCompat.startForegroundService(app, Intent(app, KeepService::class.java)) }
         }
     }
@@ -314,7 +314,7 @@ fun BackgroundChoices(app: IrChad) {
             ),
             Triple(Background.SOCKET, "Stay connected", "Shows a permanent notification, and uses some battery"),
             Triple(Background.OFF, "Off", "Only while IrChad is open"),
-        )) {
+        ).filter { it.first != Background.SOCKET || BuildConfig.STAY_CONNECTED }) {
             val enabled = m != Background.PUSH || has
             Row(
                 Modifier.fillMaxWidth()

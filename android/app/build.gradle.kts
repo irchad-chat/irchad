@@ -30,6 +30,20 @@ android {
         ndk { abiFilters += (System.getenv("ABIS") ?: "x86_64").split(" ").filter { it.isNotBlank() } }
     }
 
+    // full: sideloaded/Obtainium APK. play: Play Store bundle, without the
+    // specialUse "Stay connected" service Play reviews strictly (src/play).
+    flavorDimensions += "store"
+    productFlavors {
+        create("full") {
+            dimension = "store"
+            buildConfigField("boolean", "STAY_CONNECTED", "true")
+        }
+        create("play") {
+            dimension = "store"
+            buildConfigField("boolean", "STAY_CONNECTED", "false")
+        }
+    }
+
     signingConfigs {
         if (releaseKeystore != null) {
             create("release") {
