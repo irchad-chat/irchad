@@ -1,0 +1,114 @@
+---
+const repo = "https://git.gentoo.party/sam/irchad-ng";
+const site = "https://irchad.chat/";
+const title = "Privacy Policy · IrChad";
+const description = "What the IrChad apps do with your data: nothing goes to the developer, and your messages go only to the networks you join.";
+const effective = "6 November 2026";
+// Keep in step with android/app/src/main/AndroidManifest.xml (and the play flavor's removals).
+const permissions = [
+  ["Internet and network state", "To connect to the networks you join, and to reconnect when your connection changes."],
+  ["Microphone", "Only while you're in a voice channel. Your audio goes to that network's voice server."],
+  ["Modify audio settings and Bluetooth", "To route call audio to your speaker, earpiece or headset."],
+  ["Foreground service (microphone)", "Keeps a voice call going when the screen is off or you switch apps. It shows an ongoing-call notification."],
+  ["Notifications", "Android 13 and newer: for DMs, mentions and the ongoing-call notification."],
+  ["Wake lock", "Keeps a voice call from being cut off while the device sleeps."],
+  ["Foreground service (special use) and start at boot", "Only in the APK from our releases page, not the Play Store build, and only if you pick \"Stay connected\". It keeps the connection open for notifications, including after a restart."],
+];
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta name="description" content={description} />
+  <link rel="canonical" href={`${site}privacy`} />
+</head>
+<body>
+  <main>
+    <p><a href="/">← IrChad</a></p>
+    <h1>Privacy Policy</h1>
+    <p class="muted">Effective {effective}. This covers the IrChad apps for Android, Linux and Windows.</p>
+
+    <h2>The short version</h2>
+    <ul>
+      <li>The apps contain no analytics, ads, advertising IDs or crash reporting. The developer receives nothing from them.</li>
+      <li>IrChad is a client. Your messages, voice and files go only to the networks you join, and whoever runs a network is responsible for what happens to data on it.</li>
+      <li>DMs are end-to-end encrypted. Channel messages, voice and screen shares are encrypted in transit, but the network's server can read them.</li>
+      <li>You can delete your account from inside the app. <a href="#delete">How to delete your account</a></li>
+    </ul>
+
+    <h2>What the developer collects</h2>
+    <p>Nothing. The apps don't send usage data, crash reports or identifiers to the developer or to any analytics or advertising service.
+      If you report a bug or contact us, you share what you choose to write, under the policies of the service you use to send it.</p>
+
+    <h2>What the app sends to the networks you join</h2>
+    <p>An IrChad network is run by its operator: an IRC server (ergo), a voice server (LiveKit) and a small service called chadd. When you join one, the app sends that network:</p>
+    <ul>
+      <li><b>Account details:</b> your account name and password. When you sign up, it also sends the email address you enter, if the network asks for one, so it can send you a confirmation code.</li>
+      <li><b>Profile:</b> the display name, avatar and status you set.</li>
+      <li><b>Messages:</b> what you post in channels, your reactions and replies, and your encrypted DMs. The server can read channel messages and usually keeps them as history. It can't read the contents of DMs.</li>
+      <li><b>Files:</b> files and images you upload. They're stored by the network and anyone with the link can open them.</li>
+      <li><b>Voice:</b> your microphone audio, only while you're in a voice channel.</li>
+      <li><b>Connection data:</b> like any server, the network sees your IP address.</li>
+    </ul>
+    <p>Each network's operator decides how long it keeps this data and who can see it. Other people on the network, including people using ordinary IRC clients, see your name and what you post in shared channels.
+      IrChad's developer runs one network, the official server linked from this site, and handles its data under this policy. It uses that data only to run the service.</p>
+
+    <h2>Other services</h2>
+    <ul>
+      <li><b>Link previews, GIFs and images from other sites</b> are fetched by the network's chadd, not by your device, so those sites see the server's address instead of yours. GIF searches go from chadd to <a href="https://klipy.com">KLIPY</a>.</li>
+      <li><b>Push notifications (Android):</b> if you choose Push, the network sends encrypted notifications to the UnifiedPush app you pick, such as ntfy, which delivers them to your device. That app's server sees when a notification arrives, but not what it says. Its own privacy policy applies.</li>
+    </ul>
+
+    <h2>What stays on your device</h2>
+    <ul>
+      <li>Your password is encrypted with a key kept in the Android Keystore, or stored in the system keyring on Linux and Windows.</li>
+      <li>Your DM encryption keys, and a cache of recent messages so they show up instantly, are stored in the app's private storage.</li>
+      <li>On Android, the app's data is excluded from Android's cloud backup.</li>
+    </ul>
+
+    <h2 id="delete">Deleting your data and your account</h2>
+    <ul>
+      <li><b>Delete your account:</b> in the app, choose <b>Leave network</b>, then tick <b>Delete account</b> (or on iOS tap <b>Delete account and leave</b>).
+        The network removes your account and the channels you founded, and the app forgets the network. The account name stays reserved so nobody else can take it.
+        From any IRC client, you can do the same with <code>/msg NickServ UNREGISTER &lt;account&gt;</code> and follow its instructions.</li>
+      <li><b>What may remain:</b> messages you posted in channels and files you uploaded may remain in the network's history, according to its operator's policy. To have them removed, contact that network's operator. For the official server, contact us below.</li>
+      <li><b>Remove data from your device:</b> leave the network in the app, or uninstall the app or clear its data in Android's settings.</li>
+    </ul>
+
+    <h2>Android permissions</h2>
+    <dl>
+      {permissions.map(([name, why]) => <><dt>{name}</dt><dd>{why}</dd></>)}
+    </dl>
+
+    <h2>Children</h2>
+    <p>IrChad isn't directed at children under 13, and we don't knowingly collect data from them.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If this policy changes, we'll update the effective date above and mention significant changes in the release notes.</p>
+
+    <h2>Contact</h2>
+    <p>Email <a href="mailto:android@irchad.chat">android@irchad.chat</a>, or open an issue on the <a href={`${repo}/issues`}>issue tracker</a>.</p>
+  </main>
+</body>
+</html>
+
+<style is:global>
+  /* The same Catppuccin tokens as index.astro. */
+  :root { color-scheme: light dark; --bg: #e6e9ef; --fg: #4c4f69; --muted: #6c6f85; --accent: #40a02b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #11111b; --fg: #cdd6f4; --muted: #a6adc8; --accent: #a6e3a1; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 16px 4rem; }
+  a { color: inherit; text-decoration-color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 2.25rem; margin: 1rem 0 0; }
+  h2 { font-size: 1.3rem; margin: 2.5rem 0 .5rem; }
+  .muted { color: var(--muted); }
+  li { margin: .35rem 0; }
+  dt { font-weight: 600; margin-top: .75rem; }
+  dd { margin: 0; color: var(--muted); }
+  code { font-size: .9em; overflow-wrap: anywhere; }
+</style>
