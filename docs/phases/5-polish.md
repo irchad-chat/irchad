@@ -12,6 +12,7 @@
 - [x] GIF picker: a GIF tab in the composer's emoji picker (no separate button) and `/gif [search]`, searching KLIPY's native API through chadd (D30, D31). Clicking one sends its URL.
   The required "Search KLIPY" placeholder is in. Still to do: a screenshot scenario, KLIPY's logo for the optional "Powered by KLIPY" mark, and KLIPY's written OK for the server-side proxy (see D31).
 - [x] Away status from idle (ext-idle-notify / XScreenSaver / Windows), and manual status.
+- [x] Opt-in read receipts in DMs (D68): "Seen" under our newest message they've read, while both accounts turn them on. Desktop, Android and iOS.
 - [x] Keyboard navigation (Ctrl+K quick switcher, Alt+↑/↓ for channels), and accessibility via AccessKit.
 - [x] A guest can sign up without leaving the network (D35): "Create an account…" in the network menu sends `NetCommand::Register`.
   Unit: `after_a_guest_signs_up_their_channels_are_rejoined_once`.
