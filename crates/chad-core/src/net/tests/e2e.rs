@@ -108,6 +108,7 @@ fn e2e_sends_ciphertext_and_shows_the_echo_as_plaintext() {
         target: "alice".into(),
         text: "secret".into(),
         reply_to: None,
+        mentions: Vec::new(),
     });
     let sent = out(&mut n);
     assert_eq!(sent.len(), 1, "one device: {sent:?}");

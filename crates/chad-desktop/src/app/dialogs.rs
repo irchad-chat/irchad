@@ -549,6 +549,7 @@ impl App {
                             target,
                             text: g.url.into(),
                             reply_to,
+                            mentions: Vec::new(),
                         },
                     );
                 }

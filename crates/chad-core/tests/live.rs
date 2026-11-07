@@ -85,6 +85,7 @@ async fn register_chat_restart_history() {
             target: "#dev".into(),
             text: text.clone(),
             reply_to: None,
+            mentions: Vec::new(),
         },
     });
     let msgid = until(&mut rx, |e| match e {
@@ -424,6 +425,7 @@ async fn two_networks_upload_profile() {
                 target: "#general".into(),
                 text: text.clone(),
                 reply_to: None,
+                mentions: Vec::new(),
             },
         });
         until(&mut rx, |e| match e {
@@ -595,6 +597,7 @@ async fn encrypted_dms_across_devices() {
         target: bob.clone(),
         text: secret.clone(),
         reply_to: None,
+        mentions: Vec::new(),
     }));
     let has = |target: String, text: String| {
         move |e: &Event| match e {
@@ -630,6 +633,7 @@ async fn encrypted_dms_across_devices() {
         target: alice.clone(),
         text: reply.clone(),
         reply_to: None,
+        mentions: Vec::new(),
     }));
     for rx in [&mut a1rx, &mut a2rx] {
         assert_eq!(
@@ -700,6 +704,7 @@ async fn encrypted_dms_across_devices() {
         target: bob.clone(),
         text: "plain hi".into(),
         reply_to: None,
+        mentions: Vec::new(),
     }));
     assert_eq!(
         until(&mut brx, has(guest.clone(), "plain hi".into())).await,
@@ -784,6 +789,7 @@ async fn background_pauses_and_catches_up() {
             target: "#dev".into(),
             text: text.clone(),
             reply_to: None,
+            mentions: Vec::new(),
         },
     });
     until(&mut arx, |e| match e {

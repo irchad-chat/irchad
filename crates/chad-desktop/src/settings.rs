@@ -49,10 +49,11 @@ pub struct Settings {
     /// Share the game we're playing as `chad/activity`: its Discord Rich
     /// Presence, or its executable seen running.
     pub share_activity: bool,
-    /// Share what a media player (MPRIS) is playing as `chad/activity` (Linux).
+    /// Share what a media player is playing as `chad/activity`.
     pub share_music: bool,
-    /// MPRIS players (by bus name, e.g. `spotify`) whose songs `share_music`
-    /// shares. Opt-in per player, so a browser tab's title never leaks by surprise.
+    /// Media players whose songs `share_music` shares: MPRIS bus names (e.g.
+    /// `spotify`) on Linux, app ids (e.g. `Spotify.exe`) on Windows.
+    /// Opt-in per player, so a browser tab's title never leaks by surprise.
     pub music_players: Vec<String>,
 }
 
@@ -250,7 +251,7 @@ impl Settings {
                         );
                     ui.end_row();
 
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", windows))]
                     {
                         ui.label("");
                         ui.checkbox(&mut self.share_music, "Share what I'm listening to")
@@ -328,7 +329,7 @@ impl Section {
 }
 
 /// A checkbox per media player, running or picked before: only those ticked share.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 fn music_players(ui: &mut egui::Ui, picked: &mut Vec<String>, seen: &[String]) {
     ui.weak("Share from these players only:");
     let mut all: Vec<String> = seen.iter().chain(picked.iter()).cloned().collect();

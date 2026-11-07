@@ -12,6 +12,7 @@ fn send_echo_and_failure() {
         target: "#c".into(),
         text: "hello".into(),
         reply_to: Some("p1".into()),
+        mentions: Vec::new(),
     });
     let pending = messages(&events(&mut n));
     assert_eq!(pending[0].status, SendStatus::Pending);
@@ -42,6 +43,7 @@ fn send_echo_and_failure() {
         target: "#c".into(),
         text: "x".into(),
         reply_to: None,
+        mentions: Vec::new(),
     });
     let label = label_of(&out(&mut n)[0]).to_owned();
     feed(
@@ -59,6 +61,7 @@ fn send_echo_and_failure() {
         target: "#c".into(),
         text: "lost".into(),
         reply_to: None,
+        mentions: Vec::new(),
     });
     n.detach();
     let ev = messages(&events(&mut n));
@@ -67,6 +70,7 @@ fn send_echo_and_failure() {
         target: "#c".into(),
         text: "offline".into(),
         reply_to: None,
+        mentions: Vec::new(),
     });
     assert!(out(&mut n).is_empty());
     assert!(matches!(
@@ -84,6 +88,7 @@ fn multiline_both_ways() {
         target: "#c".into(),
         text: format!("one\n\n{long}\n"),
         reply_to: None,
+        mentions: Vec::new(),
     });
     let sent = out(&mut n);
     assert!(sent[0].starts_with("@label=") && sent[0].ends_with("BATCH +ml1 draft/multiline #c"));
@@ -120,6 +125,7 @@ fn multiline_both_ways() {
         target: "#c".into(),
         text: "x\n".repeat(150),
         reply_to: None,
+        mentions: Vec::new(),
     });
     assert!(out(&mut n).is_empty());
 }
@@ -191,6 +197,25 @@ fn read_markers_and_mentions() {
     );
     let b = buffer(&events(&mut n), "#c").unwrap();
     assert_eq!((b.unread, b.mentions), (2, 1));
+
+    // Our display name highlights too, as a whole word.
+    feed(&mut n, ":s 761 * bob display-name * :Robert Smith");
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=d;time={} :alice!u@h PRIVMSG #c :robert smith, hi",
+            ts(500)
+        ),
+    );
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=e;time={} :alice!u@h PRIVMSG #c :robert smithy",
+            ts(600)
+        ),
+    );
+    let b = buffer(&events(&mut n), "#c").unwrap();
+    assert_eq!((b.unread, b.mentions), (4, 2));
 
     feed(&mut n, &format!(":s MARKREAD #c timestamp={}", ts(1000)));
     let b = buffer(&events(&mut n), "#c").unwrap();
@@ -449,14 +474,14 @@ fn edits_apply_only_from_the_author_and_never_go_backwards() {
     feed(
         &mut n,
         &format!(
-            "@msgid=x1;account=eve;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* pwned",
+            r"@msgid=x1;account=eve;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* pwned",
             ts(2)
         ),
     );
     feed(
         &mut n,
         &format!(
-            "@msgid=x2;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* pwned",
+            r"@msgid=x2;time={};+chad/edit=m1 :alice!u@h PRIVMSG #c :* pwned",
             ts(2)
         ),
     );
@@ -496,6 +521,7 @@ fn edits_apply_only_from_the_author_and_never_go_backwards() {
         target: "#c".into(),
         msgid: "b1".into(),
         text: "fixed".into(),
+        mentions: Vec::new(),
     });
     assert!(messages(&events(&mut n)).is_empty());
     let sent = out(&mut n);
@@ -567,4 +593,58 @@ fn members_sort_by_prefix_then_nick() {
         .unwrap();
     let nicks: Vec<_> = m.iter().map(|m| m.nick.as_str()).collect();
     assert_eq!(nicks, ["bea", "cal", "Zed", "amy", "ann"]);
+}
+
+#[test]
+fn mentions_tag() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    n.account = Some("bob".into());
+    feed(&mut n, ":alice!u@h JOIN #c al :Alice");
+    feed(&mut n, ":gus!u@h JOIN #c * :Gus");
+    events(&mut n);
+    out(&mut n);
+
+    // Picked nicks that are here with an account and still in the text.
+    n.command(NetCommand::Send {
+        target: "#c".into(),
+        text: "alice: hi gus".into(),
+        reply_to: None,
+        mentions: vec!["alice".into(), "gus".into(), "carol".into(), "ALICE".into()],
+    });
+    let sent = out(&mut n);
+    assert!(
+        sent[0].starts_with(r"@+chad/mentions=alice\sal;label="),
+        "{sent:?}"
+    );
+    let local = messages(&events(&mut n));
+    assert_eq!(local[0].mentions.len(), 1);
+
+    // Our account highlights under a nick we no longer have.
+    feed(
+        &mut n,
+        r"@msgid=x1;+chad/mentions=robert\sbob :carol!u@h PRIVMSG #c :robert: hi",
+    );
+    // A tag without its nick in the text is dropped, so it can't ping silently.
+    feed(
+        &mut n,
+        r"@msgid=x2;+chad/mentions=robert\sbob :carol!u@h PRIVMSG #c :nothing here",
+    );
+    // Someone else's account: no highlight, still drawn as a mention.
+    feed(
+        &mut n,
+        r"@msgid=x3;+chad/mentions=alice\sal :carol!u@h PRIVMSG #c :alice hi",
+    );
+    // Ignored in DMs.
+    feed(
+        &mut n,
+        r"@msgid=x4;+chad/mentions=alice\sal :carol!u@h PRIVMSG bob :alice hi",
+    );
+    let got: Vec<(bool, usize)> = messages(&events(&mut n))
+        .iter()
+        .map(|m| (m.mention, m.mentions.len()))
+        .collect();
+    assert_eq!(got, [(true, 1), (false, 0), (false, 1), (true, 0)]);
+    // Kept in the cache.
+    assert_eq!(n.store.get("x1").unwrap().1.mentions[0].account, "bob");
 }

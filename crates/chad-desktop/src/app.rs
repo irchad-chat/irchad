@@ -194,6 +194,8 @@ struct BufUi {
     draft: String,
     /// The Tab completion in progress in the draft.
     tab: Option<complete::Tab>,
+    /// Nicks completed into the draft, for `+chad/mentions` (D66).
+    picked: Vec<String>,
     /// (msgid, nick) of the message being replied to.
     reply: Option<(String, String)>,
     /// msgid of our message the draft replaces.
@@ -207,6 +209,16 @@ struct BufUi {
 }
 
 impl BufUi {
+    /// A nick was completed into the draft.
+    fn pick(&mut self, nick: &str) {
+        if !nick.is_empty()
+            && self.picked.len() < chad_core::mention::MAX * 4
+            && !self.picked.iter().any(|p| p == nick)
+        {
+            self.picked.push(nick.to_owned());
+        }
+    }
+
     /// Puts our message `m` in the composer to edit it.
     fn start_edit(&mut self, m: &ChatMessage) {
         if let Some(id) = &m.msgid {
@@ -215,6 +227,7 @@ impl BufUi {
             // shortcut: the draft gets the text without its formatting;
             // turn IRC codes back into markdown if people miss it.
             self.draft = format::strip(&m.text);
+            self.picked = m.mentions.iter().map(|x| x.nick.clone()).collect();
         }
     }
 }

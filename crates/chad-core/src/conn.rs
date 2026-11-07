@@ -437,6 +437,13 @@ async fn register(
                 .param(0)
                 .unwrap_or(&account)
                 .clone_into(&mut net.info.nick),
+            // RPL_LOGGEDIN: `<nick> <mask> <account> :You are now logged in as ...`.
+            "900" => {
+                net.account = m
+                    .param(2)
+                    .filter(|a| !a.is_empty() && a.len() <= 64)
+                    .map(str::to_owned);
+            }
             "376" | "422" => {
                 if p.guest && p.joining.take().is_some() {
                     net.store.set_meta("origin", &net.info.network.clone());

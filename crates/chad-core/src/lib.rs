@@ -13,6 +13,7 @@ pub mod emoji;
 pub mod format;
 pub mod invite;
 mod manager;
+pub mod mention;
 mod net;
 mod platform;
 pub mod secrets;
@@ -126,10 +127,13 @@ pub enum Auth {
 #[derive(Debug, Clone)]
 pub enum NetCommand {
     /// `text` may hold newlines; it goes out as one `draft/multiline` message.
+    /// `mentions` are the nicks picked from completion; those still in the
+    /// text are sent as `+chad/mentions` (D66).
     Send {
         target: String,
         text: String,
         reply_to: Option<String>,
+        mentions: Vec<String>,
     },
     React {
         target: String,
@@ -143,10 +147,12 @@ pub enum NetCommand {
         emoji: String,
     },
     /// Replace the text of one of your own messages (`+chad/edit`, D51).
+    /// `mentions` as in `Send`.
     Edit {
         target: String,
         msgid: String,
         text: String,
+        mentions: Vec<String>,
     },
     /// Delete one of your own messages.
     Redact {
@@ -629,6 +635,16 @@ pub struct ChatMessage {
     pub mention: bool,
     pub own: bool,
     pub crypt: Crypt,
+    /// Who it `@`-mentions (`+chad/mentions`, D66); each nick is in `text`.
+    pub mentions: Vec<Mention>,
+}
+
+/// Someone a message `@`-mentions: their nick as written in the text, and the
+/// account it stands for, which still names them after a rename.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mention {
+    pub nick: String,
+    pub account: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -428,6 +428,7 @@ fn live_e2ee() {
         target: alice.clone(),
         text: "hi! only our devices can read this".into(),
         reply_to: None,
+        mentions: Vec::new(),
     }));
     let (g, _grx) = core(
         2,

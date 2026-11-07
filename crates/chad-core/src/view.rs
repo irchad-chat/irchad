@@ -146,6 +146,22 @@ pub fn shown<'a>(profiles: &'a HashMap<String, Profile>, nick: &'a str) -> &'a s
         .unwrap_or(nick)
 }
 
+/// The name to show for a mention (D66): the display name, else the nick, of
+/// whoever is in `members` with its account now, else of the nick it was
+/// written as.
+pub fn mention_name<'a>(
+    profiles: &'a HashMap<String, Profile>,
+    members: Option<&'a [crate::Member]>,
+    m: &'a crate::Mention,
+) -> &'a str {
+    let nick = members
+        .into_iter()
+        .flatten()
+        .find(|x| (x.account.as_deref()).is_some_and(|a| a.eq_ignore_ascii_case(&m.account)))
+        .map_or(m.nick.as_str(), |x| x.nick.as_str());
+    shown(profiles, nick)
+}
+
 impl<B> Buf<B> {
     /// Who's typing now, longest first.
     pub fn typing(&self) -> impl Iterator<Item = &str> {

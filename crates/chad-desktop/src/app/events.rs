@@ -122,6 +122,7 @@ impl App {
                             target: t.clone(),
                             text: url.to_string(),
                             reply_to: None,
+                            mentions: Vec::new(),
                         },
                     ),
                     (None, Ok(url)) => self.send(

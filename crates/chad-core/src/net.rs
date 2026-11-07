@@ -14,8 +14,9 @@ use chad_irc::label::Labels;
 use crate::store::{Store, StoredBuffer};
 use crate::view::Profile;
 use crate::{
-    Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, MessageKind,
-    NetCommand, NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState, one_line, time,
+    Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, Mention,
+    MessageKind, NetCommand, NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState,
+    mention, one_line, time,
 };
 
 mod block;
@@ -146,6 +147,8 @@ pub struct Net {
     pub home: Option<String>,
     /// No account, so never always-on: rejoin our channels ourselves.
     pub guest: bool,
+    /// The account we're logged in to (`900`), for `+chad/mentions` (D66).
+    pub account: Option<String>,
     pub out: Vec<Message>,
     events: Vec<Event>,
     cm: Casemapping,
@@ -203,6 +206,7 @@ impl Net {
             invite_channel: None,
             home: None,
             guest: false,
+            account: None,
             out: Vec::new(),
             events: Vec::new(),
             cm: Casemapping::Ascii,
@@ -544,7 +548,7 @@ impl Net {
             && crypt
             && msg.status == SendStatus::Sent
             && orig.kind != MessageKind::Notice
-            && self.store.edit(id, text, msg.time)
+            && self.store.edit(id, text, &msg.mentions, msg.time)
         {
             self.refresh(id);
         }
@@ -749,17 +753,21 @@ fn reaction(m: &Message) -> Option<(&str, bool)> {
         .or_else(|| m.tag("+draft/unreact").map(|e| (e, false)))
 }
 
-/// `nick` as a whole word, ignoring ASCII case.
-fn mentions(text: &str, nick: &str) -> bool {
-    if nick.is_empty() {
-        return false;
+impl Net {
+    /// `text` names us: our account in its `+chad/mentions`, or our nick or
+    /// display name as a whole word.
+    fn mentioned(&self, text: &str, tagged: &[Mention]) -> bool {
+        let display_name = (self.profiles.get(&self.fold(&self.info.nick)))
+            .and_then(|p| p.display_name.as_deref());
+        (self.account.as_deref()).is_some_and(|a| tagged.iter().any(|m| self.cm.eq(&m.account, a)))
+            || mentions(text, &self.info.nick)
+            || display_name.is_some_and(|d| mentions(text, d))
     }
-    let word =
-        |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "_-[]\\`^{}|".contains(c));
-    let (lower, nick) = (text.to_ascii_lowercase(), nick.to_ascii_lowercase());
-    lower.match_indices(&nick).any(|(i, _)| {
-        !word(lower[..i].chars().next_back()) && !word(lower[i + nick.len()..].chars().next())
-    })
+}
+
+/// `nick` (or a display name) as a whole word, ignoring ASCII case.
+fn mentions(text: &str, nick: &str) -> bool {
+    mention::find(text, nick).next().is_some()
 }
 
 #[cfg(test)]

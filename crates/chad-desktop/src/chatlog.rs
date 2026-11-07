@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use chad_core::view::{Edit, Msgs};
-use chad_core::{ChatMessage, Crypt, MessageKind, SendStatus};
+use chad_core::view::{Edit, Msgs, mention_name};
+use chad_core::{ChatMessage, Crypt, Mention, MessageKind, SendStatus, mention};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
 
@@ -31,6 +31,8 @@ pub use chad_core::view::{Profile, shown};
 /// What rows need besides the messages.
 pub struct Extras<'a> {
     pub profiles: &'a HashMap<String, Profile>,
+    /// The buffer's members, to name mentions by account (D66).
+    pub members: Option<std::sync::Arc<[chad_core::Member]>>,
     pub media: &'a mut Media,
     /// The network's origin, to tell its own uploads apart.
     pub network: &'a str,
@@ -632,7 +634,10 @@ fn row_ui(
                         .color(ui.visuals().error_fg_color),
                 );
             } else {
-                body_ui(ui, m, &parsed.lines, name, dark);
+                let who = |x: &Mention| {
+                    mention_name(extras.profiles, extras.members.as_deref(), x).to_owned()
+                };
+                body_ui(ui, m, &parsed.lines, name, dark, &who);
                 if m.edited {
                     ui.label(RichText::new("(edited)").weak().small());
                 }
@@ -813,6 +818,7 @@ fn body_ui(
     lines: &[Vec<format::Span>],
     name: &str,
     dark: bool,
+    who: &dyn Fn(&Mention) -> String,
 ) {
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
     let mut first = true;
@@ -847,11 +853,39 @@ fn body_ui(
                     ui.label(" ");
                 }
                 for span in spans {
-                    span_ui(ui, m, span, weak);
+                    if m.mentions.is_empty() || span.link || span.mono {
+                        span_ui(ui, m, span, weak);
+                        continue;
+                    }
+                    for (text, x) in mention::split(&span.text, &m.mentions) {
+                        match x {
+                            Some(x) => mention_ui(ui, x, &who(x), dark),
+                            None => span_ui(
+                                ui,
+                                m,
+                                &format::Span {
+                                    text: text.to_owned(),
+                                    ..span.clone()
+                                },
+                                weak,
+                            ),
+                        }
+                    }
                 }
             });
         }
     }
+}
+
+/// An `@`-mention as a pill with the person's current name (D66); hovering
+/// shows the nick it was written as and the account.
+fn mention_ui(ui: &mut egui::Ui, x: &Mention, name: &str, dark: bool) {
+    let color = nick_color(&x.nick, dark);
+    let t = RichText::new(format!("@{name}"))
+        .color(color)
+        .background_color(color.gamma_multiply(0.18));
+    ui.label(t)
+        .on_hover_text(format!("{} (account {})", x.nick, x.account));
 }
 
 fn span_ui(ui: &mut egui::Ui, m: &ChatMessage, span: &format::Span, weak: bool) {

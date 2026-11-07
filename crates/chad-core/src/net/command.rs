@@ -10,15 +10,18 @@ impl Net {
                 target,
                 text,
                 reply_to,
-            } => self.send_text(&target, &text, reply_to, None),
+                mentions,
+            } => self.send_text(&target, &text, reply_to, None, &mentions),
             NetCommand::Edit {
                 target,
                 msgid,
                 text,
+                mentions,
             } => {
                 if !text.trim().is_empty() && msgid.len() <= 128 {
                     // The `* ` tells plain clients it's a correction (D51).
-                    self.send_text(&target, &format!("* {text}"), None, Some(msgid));
+                    let text = format!("* {text}");
+                    self.send_text(&target, &text, None, Some(msgid), &mentions);
                 }
             }
             NetCommand::MarkRead { target } => self.mark_read(&target),
@@ -229,6 +232,7 @@ impl Net {
         text: &str,
         reply_to: Option<String>,
         edits: Option<String>,
+        picked: &[String],
     ) {
         let text = text.trim_end_matches(['\n', '\r', ' ']);
         if text.trim().is_empty() {
@@ -244,9 +248,10 @@ impl Net {
             }
             let piece = truncate(text, chad_e2ee::MAX_PLAINTEXT);
             let cut = piece.rfind('\n').filter(|&i| i > 0).unwrap_or(piece.len());
-            self.send_text(target, &text[..cut], reply_to.clone(), None);
-            return self.send_text(target, &text[cut..], reply_to, None);
+            self.send_text(target, &text[..cut], reply_to.clone(), None, &[]);
+            return self.send_text(target, &text[cut..], reply_to, None, &[]);
         }
+        let mentions = self.resolve_mentions(target, text, picked);
         self.next_local += 1;
         let local = ChatMessage {
             msgid: None,
@@ -265,6 +270,7 @@ impl Net {
             mention: false,
             own: true,
             crypt: Crypt::Plain,
+            mentions,
         };
         if self.connected && !self.is_channel(target) && self.e2e.is_some() {
             self.send_dm(target, local);
@@ -273,12 +279,45 @@ impl Net {
         }
     }
 
+    /// The `picked` nicks that are members of channel `target` with an
+    /// account and still in `text`. None in DMs, where everything highlights
+    /// and the tag would sit outside the encryption.
+    fn resolve_mentions(&self, target: &str, text: &str, picked: &[String]) -> Vec<Mention> {
+        let Some(b) = self
+            .buffers
+            .get(&self.fold(target))
+            .filter(|b| b.kind == BufferKind::Channel)
+        else {
+            return Vec::new();
+        };
+        let mut out: Vec<Mention> = Vec::new();
+        for nick in picked {
+            if out.len() >= mention::MAX {
+                break;
+            }
+            let Some(m) = b.members.get(&self.fold(nick)) else {
+                continue;
+            };
+            if let Some(account) = &m.account
+                && !out.iter().any(|o| o.nick == m.nick)
+                && mention::find(text, &m.nick).next().is_some()
+            {
+                out.push(Mention {
+                    nick: m.nick.clone(),
+                    account: account.clone(),
+                });
+            }
+        }
+        out
+    }
+
     pub(super) fn send_plain(&mut self, target: &str, mut local: ChatMessage) {
         let (text, reply_to, edits) = (
             local.text.clone(),
             local.reply_to.clone(),
             local.edits.clone(),
         );
+        let mentions = (!local.mentions.is_empty()).then(|| mention::encode(&local.mentions));
         let pieces = split(&text);
         let limits = self.caps.enabled("draft/multiline").then(|| {
             let v = self.caps.value("draft/multiline").unwrap_or_default();
@@ -316,6 +355,10 @@ impl Net {
         let reply = |m: Message| {
             let m = match &reply_to {
                 Some(id) => m.with_tag("+draft/reply", id.as_str()),
+                None => m,
+            };
+            let m = match &mentions {
+                Some(v) => m.with_tag(mention::TAG, v.as_str()),
                 None => m,
             };
             match &edits {

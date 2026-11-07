@@ -1,17 +1,41 @@
-//! Nick completion in the composer: `@` opens a list of matching nicks, and
+//! Nick completion in the composer: `@` opens a list of matching people, and
 //! Tab completes the word before the cursor, cycling on repeated presses.
 //!
-//! Either way the nick goes in as plain text (`nick: ` at the start of the
-//! message, `nick ` elsewhere), which is what IRC clients highlight on.
+//! Both match nicks and display names, but either way the nick goes in as
+//! plain text (`nick: ` at the start of the message, `nick ` elsewhere), which
+//! is what IRC clients highlight on. The composer remembers what was picked so
+//! the message can carry `+chad/mentions` (D66), which IrChad draws with the
+//! person's current name.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::view::{Profile, key};
 use crate::{BufferInfo, BufferKind, ChatMessage, Member};
 
 /// Most suggestions to show in the `@` list.
 const MAX_SUGGESTIONS: usize = 50;
 /// How far back the log is searched for recent speakers.
 const RECENT_MSGS: usize = 200;
+
+/// Someone who can be completed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cand {
+    pub nick: String,
+    pub display_name: Option<String>,
+}
+
+impl Cand {
+    /// Their name in the list: the display name if they set one.
+    pub fn shown(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.nick)
+    }
+
+    /// The nick or display name, lowercased, passes `f`.
+    fn any(&self, f: impl Fn(&str) -> bool) -> bool {
+        f(&self.nick.to_lowercase())
+            || (self.display_name.as_deref()).is_some_and(|d| f(&d.to_lowercase()))
+    }
+}
 
 /// Every nick that can be completed, recent speakers first and then the
 /// rest alphabetically, without our own. `recent` is newest first.
@@ -41,32 +65,43 @@ pub fn candidates<'a>(
 }
 
 /// What can be completed in a buffer: its members, or the other side of a DM
-/// before the member list is in, recent speakers first.
+/// before the member list is in, recent speakers first, with their display
+/// names from `profiles`.
 pub fn completable(
     members: Option<&[Member]>,
     msgs: &[ChatMessage],
     info: &BufferInfo,
     own: &str,
-) -> Vec<String> {
+    profiles: &HashMap<String, Profile>,
+) -> Vec<Cand> {
     let recent = msgs.iter().rev().map(|m| m.nick.as_str());
-    match members {
+    let nicks = match members {
         Some(ms) => candidates(ms.iter().map(|m| m.nick.as_str()), recent, own),
         None if info.kind == BufferKind::Dm => candidates([info.target.as_str()], recent, own),
         None => Vec::new(),
-    }
+    };
+    nicks
+        .into_iter()
+        .map(|nick| Cand {
+            display_name: profiles
+                .get(&key(&nick))
+                .and_then(|p| p.display_name.clone()),
+            nick,
+        })
+        .collect()
 }
 
-/// The `@` list for `word` (which includes the `@`): nicks starting with the
-/// rest, then ones containing it. `None` when `word` isn't an `@` word.
-pub fn suggest<'a>(cands: &'a [String], word: &str) -> Option<Vec<&'a str>> {
-    let q = word.strip_prefix('@')?.to_ascii_lowercase();
+/// The `@` list for `word` (which includes the `@`): people whose nick or
+/// display name starts with the rest, then ones containing it. `None` when
+/// `word` isn't an `@` word.
+pub fn suggest<'a>(cands: &'a [Cand], word: &str) -> Option<Vec<&'a Cand>> {
+    let q = word.strip_prefix('@')?.to_lowercase();
     let (mut start, mut inside) = (Vec::new(), Vec::new());
-    for n in cands {
-        let k = n.to_ascii_lowercase();
-        if k.starts_with(&q) {
-            start.push(n.as_str());
-        } else if k.contains(&q) {
-            inside.push(n.as_str());
+    for c in cands {
+        if c.any(|k| k.starts_with(&q)) {
+            start.push(c);
+        } else if c.any(|k| k.contains(&q)) {
+            inside.push(c);
         }
     }
     start.extend(inside);
@@ -74,7 +109,7 @@ pub fn suggest<'a>(cands: &'a [String], word: &str) -> Option<Vec<&'a str>> {
     Some(start)
 }
 
-/// What a completed nick is inserted as.
+/// What a completed name is inserted as.
 pub fn insert(nick: &str, at_start: bool) -> String {
     if at_start {
         format!("{nick}: ")
@@ -92,14 +127,22 @@ pub struct Tab {
     i: usize,
 }
 
+impl Tab {
+    /// The nick it put in last.
+    pub fn nick(&self) -> &str {
+        &self.matches[self.i]
+    }
+}
+
 /// Tab (or Shift+Tab, `back`) at char index `cursor`. Completes the word
-/// before the cursor to the first matching nick, or swaps the last
-/// completion for the next one. Returns the new cursor if `text` changed.
+/// before the cursor to the first match by nick or display name, or swaps
+/// the last completion for the next one. Returns the new cursor if `text`
+/// changed.
 pub fn tab(
     text: &mut String,
     cursor: usize,
     state: &mut Option<Tab>,
-    cands: &[String],
+    cands: &[Cand],
     back: bool,
 ) -> Option<usize> {
     let byte = |text: &str, ci: usize| text.char_indices().nth(ci).map_or(text.len(), |(b, _)| b);
@@ -133,11 +176,11 @@ pub fn tab(
     if word.is_empty() {
         return None;
     }
-    let q = word.to_ascii_lowercase();
+    let q = word.to_lowercase();
     let matches: Vec<String> = cands
         .iter()
-        .filter(|n| n.to_ascii_lowercase().starts_with(&q))
-        .cloned()
+        .filter(|c| c.any(|k| k.starts_with(&q)))
+        .map(|c| c.nick.clone())
         .collect();
     let first = if back {
         matches.len().checked_sub(1)?
@@ -161,7 +204,7 @@ pub fn tab(
 mod tests {
     use super::*;
 
-    fn cands() -> Vec<String> {
+    fn nicks() -> Vec<String> {
         candidates(
             ["zed", "Alice", "albert", "me", "bob"],
             ["bob", "gone", "me", "bob", "albert"],
@@ -169,18 +212,51 @@ mod tests {
         )
     }
 
+    fn cands() -> Vec<Cand> {
+        nicks()
+            .into_iter()
+            .map(|nick| Cand {
+                nick,
+                display_name: None,
+            })
+            .collect()
+    }
+
+    fn shown(l: Option<Vec<&Cand>>) -> Option<Vec<&str>> {
+        l.map(|l| l.into_iter().map(Cand::shown).collect())
+    }
+
     #[test]
     fn order() {
-        assert_eq!(cands(), ["bob", "albert", "Alice", "zed"]);
+        assert_eq!(nicks(), ["bob", "albert", "Alice", "zed"]);
     }
 
     #[test]
     fn at_list() {
         let c = cands();
-        assert_eq!(suggest(&c, "@AL"), Some(vec!["albert", "Alice"]));
-        assert_eq!(suggest(&c, "@e"), Some(vec!["albert", "Alice", "zed"]));
+        assert_eq!(shown(suggest(&c, "@AL")), Some(vec!["albert", "Alice"]));
+        assert_eq!(
+            shown(suggest(&c, "@e")),
+            Some(vec!["albert", "Alice", "zed"])
+        );
         assert_eq!(suggest(&c, "@").map(|v| v.len()), Some(4));
         assert_eq!(suggest(&c, "al"), None);
+    }
+
+    #[test]
+    fn display_names() {
+        let mut c = cands();
+        c[0].display_name = Some("Robért the Great".to_owned());
+        // Found by nick or display name and listed as the latter, but the
+        // nick goes in.
+        assert_eq!(shown(suggest(&c, "@bo")), Some(vec!["Robért the Great"]));
+        assert_eq!(shown(suggest(&c, "@ROBÉ")), Some(vec!["Robért the Great"]));
+        assert_eq!(shown(suggest(&c, "@great")), Some(vec!["Robért the Great"]));
+        let mut t = "hi rob".to_owned();
+        let mut s = None;
+        assert_eq!(tab(&mut t, 6, &mut s, &c, false), Some(7));
+        assert_eq!(t, "hi bob ");
+        assert_eq!(s.as_ref().map(Tab::nick), Some("bob"));
     }
 
     #[test]

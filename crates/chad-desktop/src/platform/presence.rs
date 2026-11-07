@@ -97,19 +97,17 @@ impl Poll {
 #[cfg(target_os = "linux")]
 use super::presence_linux::{Media, programs};
 #[cfg(windows)]
-use super::presence_windows::programs;
+use super::presence_windows::{Media, programs};
 
 #[cfg(not(any(target_os = "linux", windows)))]
 fn programs() -> Vec<String> {
     Vec::new()
 }
 
-// shortcut: no Windows media source (GlobalSystemMediaTransportControls needs
-// the `windows` crate's WinRT bindings); add one if Windows users ask.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 struct Media;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 impl Media {
     fn new() -> Self {
         Self
@@ -122,7 +120,7 @@ impl Media {
 }
 
 /// "Title by Artist, Artist" from a media player's text, made safe to share.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 pub(super) fn track(title: &str, artists: &[String]) -> Option<String> {
     let title = chad_core::one_line(title, 80);
     let by = chad_core::one_line(&artists.join(", "), 60);

@@ -527,6 +527,11 @@ impl Net {
         };
         let text = truncate(&text, MAX_TEXT).to_owned();
         let dm = !self.is_channel(&target);
+        // Channels only: in a DM everything highlights, and we never send it there.
+        let mentions = match head.tag(mention::TAG) {
+            Some(v) if !dm => mention::decode(v, &text),
+            _ => Vec::new(),
+        };
         Some((
             target,
             ChatMessage {
@@ -553,11 +558,12 @@ impl Net {
                 redacted: false,
                 edited: false,
                 reactions: Vec::new(),
-                mention: !own && (dm || mentions(&text, &self.info.nick)),
+                mention: !own && (dm || self.mentioned(&text, &mentions)),
                 own,
                 nick,
                 text,
                 crypt: Crypt::Plain,
+                mentions,
             },
         ))
     }

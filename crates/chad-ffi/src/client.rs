@@ -152,6 +152,7 @@ impl Client {
                             target,
                             text: url.into(),
                             reply_to: None,
+                            mentions: Vec::new(),
                         },
                     }),
                     Event::Sounds { network, result } => match result {
@@ -234,19 +235,26 @@ impl Client {
         });
     }
 
-    /// The `@` list in `target` for `query` (what follows the `@`): nicks
-    /// starting with it, then ones containing it, recent speakers first.
+    /// The `@` list in `target` for `query` (what follows the `@`): people
+    /// whose nick or display name starts with it, then ones containing it,
+    /// recent speakers first. Each is the nick to insert.
     pub fn nicks(&self, network: String, target: String, query: String) -> Vec<String> {
         let v = self.view();
         let (Some(ni), Some(b)) = (v.net(&network), v.buf(&network, &target)) else {
             return Vec::new();
         };
-        let own = &v.nets[ni].info.nick;
-        let cands = chad_core::complete::completable(b.members.as_deref(), &b.msgs, &b.info, own);
+        let n = &v.nets[ni];
+        let cands = chad_core::complete::completable(
+            b.members.as_deref(),
+            &b.msgs,
+            &b.info,
+            &n.info.nick,
+            &n.profiles,
+        );
         chad_core::complete::suggest(&cands, &format!("@{query}"))
             .unwrap_or_default()
             .into_iter()
-            .map(str::to_owned)
+            .map(|c| c.nick.clone())
             .collect()
     }
 
@@ -298,6 +306,7 @@ impl Client {
                 target,
                 text: format::markdown(&text),
                 reply_to,
+                mentions: Vec::new(),
             },
         );
     }
@@ -311,6 +320,7 @@ impl Client {
                 target,
                 msgid,
                 text,
+                mentions: Vec::new(),
             },
         );
     }

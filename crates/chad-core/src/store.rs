@@ -12,7 +12,9 @@ use rusqlite::{Connection, OptionalExtension as _, Params, Row, params};
 
 use chad_e2ee::{Changes, Device};
 
-use crate::{Block, BufferKind, ChatMessage, Crypt, MessageKind, Reaction, SendStatus};
+use crate::{
+    Block, BufferKind, ChatMessage, Crypt, Mention, MessageKind, Reaction, SendStatus, mention,
+};
 
 /// Messages kept per buffer between runs.
 const KEEP: u32 = 2000;
@@ -71,6 +73,8 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE messages ADD COLUMN crypt INTEGER NOT NULL DEFAULT 0",
     // The time of the edit that set `text`, 0 if never edited.
     "ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0",
+    // `+chad/mentions` as sent (D66).
+    "ALTER TABLE messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''",
 ];
 
 fn ok<T: Default>(what: &str, r: rusqlite::Result<T>) -> T {
@@ -80,8 +84,7 @@ fn ok<T: Default>(what: &str, r: rusqlite::Result<T>) -> T {
     })
 }
 
-const MESSAGE_COLUMNS: &str =
-    "msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited";
+const MESSAGE_COLUMNS: &str = "msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, edited, mentions";
 
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
@@ -282,11 +285,11 @@ impl Store {
             "write message",
             self.exec(
                 "INSERT OR IGNORE INTO messages
-                 (buffer, msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                 (buffer, msgid, time, nick, account, kind, text, reply_to, redacted, mention, own, crypt, mentions)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     buffer, m.msgid, m.time, m.nick, m.account, kind, m.text, m.reply_to,
-                    m.redacted, m.mention, m.own, crypt
+                    m.redacted, m.mention, m.own, crypt, mention::encode(&m.mentions)
                 ],
             )
             .map(|n| n == 1),
@@ -383,7 +386,7 @@ impl Store {
             self.one(
                 &format!("SELECT {MESSAGE_COLUMNS}, buffer FROM messages WHERE msgid = ?1"),
                 [msgid],
-                |r| Ok((r.get(12)?, row(r)?)),
+                |r| Ok((r.get(13)?, row(r)?)),
             ),
         );
         found.map(|(b, mut m): (String, ChatMessage)| {
@@ -403,14 +406,15 @@ impl Store {
         );
     }
 
-    /// Replaces a message's text, unless a later edit already did. True if it did.
-    pub fn edit(&self, msgid: &str, text: &str, time: i64) -> bool {
+    /// Replaces a message's text and mentions, unless a later edit already
+    /// did. True if it did.
+    pub fn edit(&self, msgid: &str, text: &str, mentions: &[Mention], time: i64) -> bool {
         ok(
             "edit",
             self.exec(
-                "UPDATE messages SET text = ?2, edited = ?3
+                "UPDATE messages SET text = ?2, edited = ?3, mentions = ?4
                  WHERE msgid = ?1 AND redacted = 0 AND edited < ?3",
-                params![msgid, text, time],
+                params![msgid, text, time, mention::encode(mentions)],
             )
             .map(|n| n == 1),
         )
@@ -594,7 +598,9 @@ fn group(rows: Vec<(String, String)>) -> Vec<Reaction> {
 }
 
 fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
+    let text: String = r.get(5)?;
     Ok(ChatMessage {
+        mentions: mention::decode(&r.get::<_, String>(12)?, &text),
         msgid: r.get(0)?,
         local_id: None,
         time: r.get(1)?,
@@ -605,7 +611,7 @@ fn row(r: &Row) -> rusqlite::Result<ChatMessage> {
             2 => MessageKind::Action,
             _ => MessageKind::Privmsg,
         },
-        text: r.get(5)?,
+        text,
         reply_to: r.get(6)?,
         edits: None,
         edited: r.get::<_, i64>(11)? > 0,

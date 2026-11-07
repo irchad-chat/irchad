@@ -122,10 +122,11 @@ impl App {
             .inner;
         b.ui.hide_members ^= toggle;
         let c = egui::Panel::bottom("composer")
-            .show(ui, |ui| composer(ui, &cx, b, media, &opts))
+            .show(ui, |ui| composer(ui, &cx, b, profiles, media, &opts))
             .inner;
         let extras = Extras {
             profiles,
+            members: b.members.clone(),
             media,
             network: &network,
             auto_media,
@@ -353,6 +354,7 @@ fn composer(
     ui: &mut egui::Ui,
     cx: &Pane,
     b: &mut Buffer,
+    profiles: &HashMap<String, chatlog::Profile>,
     media: &mut Media,
     opts: &ComposerOpts,
 ) -> ComposerOut {
@@ -483,12 +485,17 @@ fn composer(
                     if !q.word.starts_with('@') {
                         return Vec::new();
                     }
-                    let nicks = complete::completable(members.as_deref(), msgs, info, cx.own);
+                    let nicks =
+                        complete::completable(members.as_deref(), msgs, info, cx.own, profiles);
                     let list = complete::suggest(&nicks, q.word).unwrap_or_default();
                     list.into_iter()
-                        .map(|n| {
-                            egui::Suggestion::new(complete::insert(n, q.is_at_start()))
-                                .content(n.to_owned())
+                        .map(|c| {
+                            let label = match &c.display_name {
+                                Some(d) => format!("{d}  ({})", c.nick),
+                                None => c.nick.clone(),
+                            };
+                            egui::Suggestion::new(complete::insert(&c.nick, q.is_at_start()))
+                                .content(label)
                         })
                         .collect()
                 })
@@ -525,6 +532,9 @@ fn composer(
             state.store(ui.ctx(), id);
         }
     }
+    if let Some(s) = &field.accepted {
+        b.ui.pick(s.insert.trim_end().trim_end_matches(':'));
+    }
     let mut changed = resp.changed() || field.accepted.is_some();
     if (changed || tab.is_some())
         && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id)
@@ -536,9 +546,13 @@ fn composer(
             .map_or(end, |r| r.primary.index.into());
         let mut moved = false;
         if let Some(back) = tab {
-            let nicks = complete::completable(b.members.as_deref(), &b.msgs, &b.info, cx.own);
+            let nicks =
+                complete::completable(b.members.as_deref(), &b.msgs, &b.info, cx.own, profiles);
             if let Some(c) = complete::tab(&mut b.ui.draft, cursor, &mut b.ui.tab, &nicks, back) {
                 (cursor, moved, changed) = (c, true, true);
+                if let Some(nick) = b.ui.tab.as_ref().map(|t| t.nick().to_owned()) {
+                    b.ui.pick(&nick);
+                }
             }
         }
         if changed && chad_core::emoji::replace_shortcodes(&mut b.ui.draft, &mut cursor) {
@@ -554,6 +568,7 @@ fn composer(
     }
     if changed {
         let state = if b.ui.draft.trim().is_empty() {
+            b.ui.picked.clear();
             Typing::Done
         } else {
             Typing::Active
@@ -634,12 +649,14 @@ fn submit(
     if text.trim().is_empty() && b.ui.attached.is_empty() {
         return;
     }
+    let mentions = std::mem::take(&mut b.ui.picked);
     if let Some(msgid) = b.ui.editing.take() {
         if !text.trim().is_empty() {
             cx.send(NetCommand::Edit {
                 target: target.to_owned(),
                 msgid,
                 text: format::markdown(&text),
+                mentions,
             });
         }
     } else if !text.trim().is_empty() {
@@ -648,6 +665,7 @@ fn submit(
             target: target.to_owned(),
             text: format::markdown(&text),
             reply_to,
+            mentions,
         });
     }
     // Each attachment follows as its own message once it's up.
