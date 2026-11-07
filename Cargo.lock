@@ -1067,7 +1067,7 @@ dependencies = [
 
 [[package]]
 name = "chad-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "chad-e2ee",
  "chad-irc",
@@ -1091,7 +1091,7 @@ dependencies = [
 
 [[package]]
 name = "chad-desktop"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "ashpd",
  "chad-core",
@@ -1125,7 +1125,7 @@ dependencies = [
 
 [[package]]
 name = "chad-e2ee"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "getrandom 0.3.4",
  "hex",
@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "chad-ffi"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "chad-core",
  "chad-irc",
@@ -1149,7 +1149,7 @@ dependencies = [
 
 [[package]]
 name = "chad-irc"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -1169,7 +1169,7 @@ dependencies = [
 
 [[package]]
 name = "chad-media"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "chad-proto"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "serde",
  "serde_json",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "chadd"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "axum",
