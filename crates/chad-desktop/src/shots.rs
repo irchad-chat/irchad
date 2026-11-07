@@ -443,6 +443,7 @@ fn live_e2ee() {
             "hello from a **plain** *IRC* client, `inline` and:\n```rust\nfn main() {\n\n    println!(\"*hi*\");\n}\n```\nafter",
         ),
         reply_to: None,
+        mentions: Vec::new(),
     }));
     // bob is in #general too: his name there opens the DM.
     s.wait_for(&bob);

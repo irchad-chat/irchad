@@ -109,56 +109,73 @@ pub fn tray_title(mentions: u32) -> String {
     }
 }
 
-/// Tray icon: the logo's small-size cut (a speech bubble with a `#` cut out,
-/// drawn on a 16-unit grid), with a red dot for mentions or a white one for
+/// Tray icon: the logo (`party.gentoo.IrChad.svg`), tile and all so it reads
+/// on light and dark panels, with a red dot for mentions or a white one for
 /// unread. ARGB32, network byte order (what SNI wants).
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 pub fn tray_icon(size: usize, unread: bool, mentions: bool) -> Vec<u8> {
-    const GREEN: [f32; 3] = [64.0, 160.0, 43.0]; // Catppuccin Latte green, readable on dark and light panels
+    // The logo's Catppuccin Mocha green and base.
+    const GREEN: [f32; 3] = [166.0, 227.0, 161.0];
+    const BASE: [f32; 3] = [30.0, 30.0, 46.0];
     let dot = match (mentions, unread) {
         (true, _) => Some([210.0, 15.0, 57.0]),
         (false, true) => Some([255.0, 255.0, 255.0]),
         _ => None,
     };
-    let rect = |u: f32, v: f32, x0: f32, y0: f32, x1: f32, y1: f32| {
-        (x0..=x1).contains(&u) && (y0..=y1).contains(&v)
+    let scale = 256.0 / size as f32;
+    // The SVG's 13-unit strokes (inside its 1.15× group), but never thinner than 2 px.
+    let half = 6.5f32.max(scale / 1.15);
+    let seg = |u: f32, v: f32, ax: f32, ay: f32, bx: f32, by: f32| {
+        let (dx, dy) = (bx - ax, by - ay);
+        let t = (((u - ax) * dx + (v - ay) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
+        (u - ax - t * dx).hypot(v - ay - t * dy) <= half
     };
-    // Colour of the point (u, v) in grid units, or None if transparent.
-    let sample = |u: f32, v: f32| -> Option<[f32; 3]> {
+    // Colour of the point (x, y) in SVG units, or None if transparent.
+    let sample = |x: f32, y: f32| -> Option<[f32; 3]> {
         if let Some(c) = dot {
-            let d = (u - 13.0).hypot(v - 3.0);
-            if d <= 2.5 {
+            let d = (x - 215.0).hypot(y - 41.0);
+            if d <= 41.0 {
                 return Some(c);
             }
-            if d <= 3.5 {
+            if d <= 55.0 {
                 return None; // gap so the dot reads at 16 px
             }
         }
-        let hash = rect(u, v, 5.0, 3.0, 7.0, 11.0)
-            || rect(u, v, 9.0, 3.0, 11.0, 11.0)
-            || rect(u, v, 4.0, 4.0, 12.0, 6.0)
-            || rect(u, v, 4.0, 8.0, 12.0, 10.0);
-        if hash {
+        // The tile: (0,0)–(256,256), radius 56.
+        let (dx, dy) = (
+            (56.0 - x).max(x - 200.0).max(0.0),
+            (56.0 - y).max(y - 200.0).max(0.0),
+        );
+        if dx.hypot(dy) > 56.0 {
             return None;
         }
-        // Rounded rect (1,2)–(15,12), radius 3: distance from the inner rect.
+        // Into the bubble group's units: translate(13 8.4) scale(1.15).
+        let (u, v) = ((x - 13.0) / 1.15, (y - 8.4) / 1.15);
+        let hash = seg(u, v, 90.0, 56.0, 80.0, 124.0)
+            || seg(u, v, 124.0, 56.0, 114.0, 124.0)
+            || seg(u, v, 62.0, 78.0, 142.0, 78.0)
+            || seg(u, v, 58.0, 104.0, 138.0, 104.0);
+        if hash {
+            return Some(BASE);
+        }
+        // Rounded rect (26,30)–(174,148), radius 34: distance from the inner rect.
         let (dx, dy) = (
-            (4.0 - u).max(u - 12.0).max(0.0),
-            (5.0 - v).max(v - 9.0).max(0.0),
+            (60.0 - u).max(u - 140.0).max(0.0),
+            (64.0 - v).max(v - 114.0).max(0.0),
         );
-        let bubble = rect(u, v, 1.0, 2.0, 15.0, 12.0) && dx.hypot(dy) <= 3.0;
-        // Tail triangle (3,11) (2,15) (7,12).
+        let bubble =
+            (26.0..=174.0).contains(&u) && (30.0..=148.0).contains(&v) && dx.hypot(dy) <= 34.0;
+        // Tail triangle (60,140) (46,178) (100,146).
         let side = |ax: f32, ay: f32, bx: f32, by: f32| (bx - ax) * (v - ay) - (by - ay) * (u - ax);
         let (s1, s2, s3) = (
-            side(3.0, 11.0, 2.0, 15.0),
-            side(2.0, 15.0, 7.0, 12.0),
-            side(7.0, 12.0, 3.0, 11.0),
+            side(60.0, 140.0, 46.0, 178.0),
+            side(46.0, 178.0, 100.0, 146.0),
+            side(100.0, 146.0, 60.0, 140.0),
         );
         let tail = (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0);
-        (bubble || tail).then_some(GREEN)
+        Some(if bubble || tail { GREEN } else { BASE })
     };
     const SS: usize = 4; // 4×4 supersampling for anti-aliased edges
-    let scale = 16.0 / size as f32;
     let mut px = vec![0u8; size * size * 4];
     for y in 0..size {
         for x in 0..size {
@@ -203,24 +220,24 @@ mod tray_tests {
         assert_eq!(px.len(), 32 * 32 * 4);
         assert_eq!(at(&px, 32, 0, 0)[0], 0, "corner is transparent");
         assert_eq!(
-            at(&px, 32, 4, 14),
-            [255, 64, 160, 43],
+            at(&px, 32, 6, 13),
+            [255, 166, 227, 161],
             "bubble body is green"
         );
-        assert_eq!(at(&px, 32, 12, 14)[0], 0, "hash is cut out");
+        assert_eq!(at(&px, 32, 13, 13), [255, 30, 30, 46], "hash is base");
         assert_eq!(
             at(&px, 32, 16, 14),
-            [255, 64, 160, 43],
+            [255, 166, 227, 161],
             "hash centre is filled"
         );
-        assert_eq!(at(&px, 32, 26, 6), [255, 64, 160, 43], "no dot when read");
+        assert_eq!(at(&px, 32, 26, 5), [255, 30, 30, 46], "no dot when read");
         assert_eq!(
-            at(&tray_icon(32, true, true), 32, 26, 6),
+            at(&tray_icon(32, true, true), 32, 26, 5),
             [255, 210, 15, 57],
             "mention dot"
         );
         assert_eq!(
-            at(&tray_icon(32, true, false), 32, 26, 6),
+            at(&tray_icon(32, true, false), 32, 26, 5),
             [255, 255, 255, 255],
             "unread dot"
         );
