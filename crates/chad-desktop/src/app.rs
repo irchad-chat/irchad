@@ -84,6 +84,7 @@ pub struct App {
     adding: Option<(BufferKind, String)>,
     toasts: Vec<(String, Instant)>,
     last_badge: (bool, u32),
+    last_title: String,
     voice: Voice,
     /// Listening for push-to-talk, while that's the input mode.
     ptt: Option<Ptt>,
@@ -392,6 +393,7 @@ impl App {
             adding: None,
             toasts: Vec::new(),
             last_badge: (false, 0),
+            last_title: "IrChad".into(),
             voice,
             ptt: None,
             binding_ptt: false,

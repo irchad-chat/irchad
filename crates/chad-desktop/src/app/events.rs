@@ -443,11 +443,38 @@ impl App {
         if now != self.last_badge {
             self.last_badge = now;
             self.tray.set(now.0, now.1);
-            let title = match now.1 {
-                0 => "IrChad".into(),
-                n => format!("({}) IrChad", badge(n)),
-            };
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
+        let mut title = match now.1 {
+            0 => "IrChad".to_owned(),
+            n => format!("({}) IrChad", badge(n)),
+        };
+        if let Some((net, key)) = self.panes.get(self.pane)
+            && let Some(b) = self.view.buf(net, key)
+        {
+            let target = &b.info.target;
+            if b.info.kind == BufferKind::Dm {
+                let n = &self.view.nets[self.net_idx(net).unwrap_or_default()];
+                let shown = n.shown(target);
+                // No display name: the account, else the nick, as the DM header does.
+                let shown = if shown != target {
+                    shown
+                } else {
+                    b.msgs
+                        .iter()
+                        .rev()
+                        .filter(|m| m.nick.eq_ignore_ascii_case(target))
+                        .find_map(|m| m.account.as_deref())
+                        .unwrap_or(target)
+                };
+                title += &format!(" | @{shown}");
+            } else {
+                title += &format!(" | {target}");
+            }
+            title += &format!(" | {}", self.net_name(net));
+        }
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
         }
     }
 
