@@ -174,6 +174,17 @@ impl<B> Buf<B> {
     pub fn index_of(&self, msgid: &str) -> Option<usize> {
         self.msgs.position(msgid)
     }
+
+    /// Where "Seen" goes (D68): our newest message they've read, unless they've
+    /// written since, which says as much.
+    pub fn seen(&self) -> Option<usize> {
+        let upto = self.info.seen?.upto;
+        let end = self.msgs.partition_point(|m| m.time <= upto);
+        let i = self.msgs[..end]
+            .iter()
+            .rposition(|m| m.own && m.msgid.is_some())?;
+        (!self.msgs[i + 1..].iter().any(|m| !m.own)).then_some(i)
+    }
 }
 
 fn same_msg(a: &ChatMessage, b: &ChatMessage) -> bool {
@@ -519,6 +530,7 @@ mod tests {
             uploads: None,
             gifs: None,
             games: false,
+            receipts: false,
             oper: false,
         })
     }
@@ -536,6 +548,7 @@ mod tests {
                 away: false,
                 voice: true,
                 encryption: Encryption::Unknown,
+                seen: None,
             },
         }
     }
@@ -675,5 +688,36 @@ mod tests {
         );
         v.apply(&messages("#a", vec![msg("m", 1)]));
         assert_eq!(v.buf("https://n", "#a").unwrap().typing().count(), 0);
+    }
+
+    #[test]
+    fn seen_goes_under_our_newest_read_message() {
+        let mut v = View::<(), ()>::default();
+        v.apply(&net(ConnState::Connected));
+        let seen = |v: &mut View, upto: Option<i64>| {
+            let Event::Buffer {
+                network,
+                mut buffer,
+            } = buffer("a", BufferKind::Dm)
+            else {
+                unreachable!()
+            };
+            buffer.seen = upto.map(|upto| crate::Seen { upto, at: upto });
+            v.apply(&Event::Buffer { network, buffer });
+            v.buf("https://n", "a").unwrap().seen()
+        };
+        let own = |id, t| ChatMessage {
+            own: true,
+            ..msg(id, t)
+        };
+        assert_eq!(seen(&mut v, Some(10)), None);
+        v.apply(&messages("a", vec![own("1", 1), own("2", 2), own("3", 3)]));
+        assert_eq!(seen(&mut v, None), None);
+        assert_eq!(seen(&mut v, Some(2)), Some(1));
+        assert_eq!(seen(&mut v, Some(9)), Some(2));
+        // Their reply says it already.
+        v.apply(&messages("a", vec![msg("4", 4)]));
+        assert_eq!(seen(&mut v, Some(9)), None);
+        assert_eq!(seen(&mut v, Some(3)), None);
     }
 }

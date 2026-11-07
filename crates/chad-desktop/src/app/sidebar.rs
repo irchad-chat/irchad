@@ -250,6 +250,7 @@ impl App {
                     self.profile = Some(ProfileDialog {
                         network: network.clone(),
                         name,
+                        receipts: self.view.nets[ni].info.receipts,
                     });
                     self.send(&network, NetCommand::Devices { nick: own.clone() });
                     ui.close();

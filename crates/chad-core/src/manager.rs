@@ -203,6 +203,7 @@ fn spawn_with(
         uploads: None,
         gifs: None,
         games: false,
+        receipts: false,
         oper: false,
     };
     let mut net = Net::new(store, info);

@@ -367,6 +367,11 @@ impl Client {
         self.net(network, NetCommand::SetDisplayName { name });
     }
 
+    /// Read receipts in DMs for the whole account (D68); `Network.receipts` follows.
+    pub fn set_receipts(&self, network: String, on: bool) {
+        self.net(network, NetCommand::SetReceipts { on });
+    }
+
     /// Upload a picture through chadd and make it the avatar.
     pub fn upload_avatar(&self, network: String, name: String, bytes: Vec<u8>) {
         let bytes = chad_core::Blob(bytes.into());
@@ -607,6 +612,7 @@ impl Client {
                     guest: n.info.guest,
                     gifs: n.info.gifs.clone(),
                     uploads: n.info.uploads,
+                    receipts: n.info.receipts,
                     unread: n.unread(),
                     mentions: n.mentions(),
                     voice,
@@ -641,6 +647,8 @@ impl Client {
                 history_start: b.history_start,
                 voice: b.voice.clone(),
                 voice_allowed: b.info.voice,
+                seen: b.seen().and_then(|i| b.msgs[i].msgid.clone()),
+                seen_at: b.info.seen.map(|s| s.at),
             })
             .collect()
     }

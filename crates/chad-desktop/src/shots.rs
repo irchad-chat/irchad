@@ -490,6 +490,94 @@ fn live_e2ee() {
     s.shot("e2ee_dm_verified");
 }
 
+/// Read receipts (D68): alice turns them on in her profile, bob (a bare core)
+/// has them on and reads her DM. Same setup as `live`; fresh accounts every run.
+#[test]
+#[ignore]
+fn live_receipts() {
+    use chad_core::{Auth, Command, ConnState, Event, NetCommand};
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
+    let origin = chad_core::invite::parse(&invite).unwrap().origin;
+    let stamp = std::time::UNIX_EPOCH.elapsed().unwrap().as_secs();
+    let (alice, bob) = (format!("ra{stamp}"), format!("rb{stamp}"));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let dirs = [(); 2].map(|()| tempfile::tempdir().unwrap());
+    let core = |i: usize, account: &str| {
+        let _guard = rt.enter();
+        let (core, mut rx) = chad_core::start(chad_core::Config {
+            data_dir: dirs[i].path().to_owned(),
+            secrets: Arc::new(chad_core::secrets::MemorySecrets::default()),
+            notify: Arc::new(|| {}),
+            media: None,
+            version: "IrChad test".into(),
+        });
+        core.send(Command::Join {
+            invite: origin.clone(),
+            auth: Auth::Register {
+                account: account.into(),
+                password: "shotspass".into(),
+                email: None,
+            },
+        });
+        rt.block_on(next(&mut rx, |e| match e {
+            Event::Network(n) => (n.state == ConnState::Connected).then_some(()),
+            _ => None,
+        }));
+        (core, rx)
+    };
+    drop(core(0, &alice));
+    let (b, mut brx) = core(1, &bob);
+    let net = |cmd| Command::Net {
+        network: origin.clone(),
+        cmd,
+    };
+    b.send(net(NetCommand::SetReceipts { on: true }));
+
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", &alice);
+    s.type_into("Password", "shotspass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(2);
+    s.click("Your status and profile");
+    s.harness.get_by_label_contains("Edit profile").click();
+    s.harness.run_steps(4);
+    s.click("Read receipts in DMs");
+    s.shot("receipts_profile");
+    s.click("Save");
+    s.settle(1);
+
+    b.send(net(NetCommand::Send {
+        target: alice.clone(),
+        text: "did you get this?".into(),
+        reply_to: None,
+        mentions: Vec::new(),
+    }));
+    s.wait_for("did you get this?");
+    s.harness
+        .get_all_by_label_contains(&bob)
+        .next()
+        .unwrap()
+        .click();
+    s.settle(1);
+    let composer = format!("Message {bob}");
+    s.harness.get_by_label(&composer).focus();
+    s.settle(1);
+    s.harness.get_by_label(&composer).type_text("yes!");
+    s.harness.key_press(egui::Key::Enter);
+    rt.block_on(next(&mut brx, |e| match e {
+        Event::Messages { messages, .. } => messages.iter().any(|m| m.text == "yes!").then_some(()),
+        _ => None,
+    }));
+    b.send(net(NetCommand::MarkRead {
+        target: alice.clone(),
+    }));
+    s.wait_for(&format!("{} Seen", crate::icons::EYE));
+    s.shot("receipts_seen");
+}
+
 /// The first event `f` picks out, within 30s.
 async fn next<T>(
     rx: &mut tokio::sync::mpsc::UnboundedReceiver<chad_core::Event>,

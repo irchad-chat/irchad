@@ -128,6 +128,9 @@ impl Net {
             self.profiles.insert(newk.clone(), p);
             self.emit_profile(new);
         }
+        if self.receipts_of.remove(&old) {
+            self.receipts_of.insert(newk.clone());
+        }
         if let Some((_, ch)) = self.voice_of.remove(&old) {
             self.voice_of
                 .insert(newk.clone(), (new.to_owned(), ch.clone()));

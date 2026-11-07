@@ -13,7 +13,8 @@ use rusqlite::{Connection, OptionalExtension as _, Params, Row, params};
 use chad_e2ee::{Changes, Device};
 
 use crate::{
-    Block, BufferKind, ChatMessage, Crypt, Mention, MessageKind, Reaction, SendStatus, mention,
+    Block, BufferKind, ChatMessage, Crypt, Mention, MessageKind, Reaction, Seen, SendStatus,
+    mention,
 };
 
 /// Messages kept per buffer between runs.
@@ -41,6 +42,7 @@ pub struct StoredBuffer {
     pub kind: BufferKind,
     pub topic: String,
     pub read: Option<i64>,
+    pub seen: Option<Seen>,
 }
 
 const SCHEMA: &str = "
@@ -75,6 +77,9 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0",
     // `+chad/mentions` as sent (D66).
     "ALTER TABLE messages ADD COLUMN mentions TEXT NOT NULL DEFAULT ''",
+    // A DM's read receipt (D68): read up to `seen` (a message's time), as of `seen_at`.
+    "ALTER TABLE buffers ADD COLUMN seen INTEGER",
+    "ALTER TABLE buffers ADD COLUMN seen_at INTEGER",
 ];
 
 fn ok<T: Default>(what: &str, r: rusqlite::Result<T>) -> T {
@@ -191,7 +196,7 @@ impl Store {
         let read = || {
             let mut st = self
                 .db
-                .prepare("SELECT key, name, kind, topic, read FROM buffers")?;
+                .prepare("SELECT key, name, kind, topic, read, seen, seen_at FROM buffers")?;
             st.query_map([], |r| {
                 Ok(StoredBuffer {
                     key: r.get(0)?,
@@ -203,6 +208,10 @@ impl Store {
                     },
                     topic: r.get(3)?,
                     read: r.get(4)?,
+                    seen: match (r.get(5)?, r.get(6)?) {
+                        (Some(upto), Some(at)) => Some(Seen { upto, at }),
+                        _ => None,
+                    },
                 })
             })?
             .collect()
@@ -237,6 +246,18 @@ impl Store {
             self.exec(
                 "UPDATE buffers SET read = ?2 WHERE key = ?1",
                 params![key, time],
+            )
+            .map(drop),
+        );
+    }
+
+    pub fn set_seen(&self, key: &str, seen: Option<Seen>) {
+        let (upto, at) = (seen.map(|s| s.upto), seen.map(|s| s.at));
+        ok(
+            "write read receipt",
+            self.exec(
+                "UPDATE buffers SET seen = ?2, seen_at = ?3 WHERE key = ?1",
+                params![key, upto, at],
             )
             .map(drop),
         );

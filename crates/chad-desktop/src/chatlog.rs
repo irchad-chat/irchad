@@ -42,6 +42,8 @@ pub struct Extras<'a> {
     pub guest_media: bool,
     /// A DM, where unencrypted messages are marked.
     pub dm: bool,
+    /// The message to put "Seen" under, and when they read it (D68).
+    pub seen: Option<(String, i64)>,
 }
 
 pub enum Action {
@@ -674,6 +676,21 @@ fn row_ui(
                         }
                     }
                 });
+            }
+            if let Some((_, at)) = extras
+                .seen
+                .as_ref()
+                .filter(|(id, _)| m.msgid.as_ref() == Some(id))
+            {
+                let when = jiff::Timestamp::from_millisecond(*at)
+                    .map(|t| {
+                        t.to_zoned(TimeZone::system())
+                            .strftime("%-d %B, %H:%M")
+                            .to_string()
+                    })
+                    .unwrap_or_default();
+                ui.label(RichText::new(format!("{} Seen", icons::EYE)).small().weak())
+                    .on_hover_text(format!("Read {when}"));
             }
         });
     });

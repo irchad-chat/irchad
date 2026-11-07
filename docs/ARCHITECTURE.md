@@ -112,6 +112,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | Edit | Not in IRCv3, so IrChad's own: a new PRIVMSG tagged `+chad/edit=<msgid>`, text `* <new text>` (D51) |
 | Delete | `draft/message-redaction` (`REDACT`) |
 | Unread | `draft/read-marker` (`MARKREAD`), synced across devices |
+| Read receipts | DMs only, opt-in per account with user metadata `chad/receipts=1`. Sent only while both sides have it on, as `TAGMSG <nick>` with `+chad/read=<newest msgid read>`, alongside the `MARKREAD`. ergo stores them in history, so they reach devices that were offline (D68). |
 | Encrypted DM | One PRIVMSG per recipient device with `+chad/e2e=<type>:<ciphertext>`, `+chad/e2e-from`/`-to=<device>` and a readable fallback body. Copies after the first carry `+chad/e2e-id=<first copy's msgid>` (D29). |
 | E2EE devices | User metadata `chad/e2e/d/<device>` (signed keys), found with `METADATA <nick> LIST`. `chad/e2e/devices` is set whenever a device comes or goes, as a subscribed change signal. |
 | Verification | `TAGMSG <nick>` with `+chad/e2e-verify` (SAS steps) |

@@ -17,6 +17,8 @@ pub struct Network {
     pub gifs: Option<String>,
     /// Largest upload in bytes, if the network takes them.
     pub uploads: Option<u64>,
+    /// Read receipts in DMs are on for this account (`Client::set_receipts`).
+    pub receipts: bool,
     pub unread: bool,
     pub mentions: u32,
     pub voice: Option<String>,
@@ -47,6 +49,10 @@ pub struct Buffer {
     pub voice: Vec<String>,
     /// Channels: ops haven't turned voice off.
     pub voice_allowed: bool,
+    /// DMs: the msgid of ours to show "Seen" under (D68), and when they read it
+    /// (ms since the epoch).
+    pub seen: Option<String>,
+    pub seen_at: Option<i64>,
 }
 
 #[derive(uniffi::Record)]

@@ -728,6 +728,18 @@ impl App {
                     .small()
                     .weak(),
             );
+            if !n.info.guest {
+                ui.add_space(8.0);
+                ui.checkbox(&mut d.receipts, "Read receipts in DMs");
+                ui.label(
+                    RichText::new(
+                        "Show when you've read a DM, and see when they have. \
+                         Only between people who both turn this on.",
+                    )
+                    .small()
+                    .weak(),
+                );
+            }
             if let Some(devices) = n.devices.get(&key(&own)).filter(|d| !d.is_empty()) {
                 ui.add_space(8.0);
                 ui.label(
@@ -744,7 +756,11 @@ impl App {
         });
         if save {
             let name = d.name.trim().to_owned();
+            let receipts = (d.receipts != n.info.receipts).then_some(d.receipts);
             self.send(&network, NetCommand::SetDisplayName { name });
+            if let Some(on) = receipts {
+                self.send(&network, NetCommand::SetReceipts { on });
+            }
         }
         if remove {
             self.send(&network, NetCommand::SetAvatar { url: String::new() });

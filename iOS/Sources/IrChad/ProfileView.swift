@@ -9,6 +9,7 @@ struct ProfileView: View {
     let network: String
 
     @State private var name = ""
+    @State private var receipts = false
     @State private var photo: PhotosPickerItem?
 
     var body: some View {
@@ -46,6 +47,13 @@ struct ProfileView: View {
                     } footer: {
                         Text("On every network, until you turn it off.")
                     }
+                    if !net.guest {
+                        Section {
+                            Toggle("Read receipts in DMs", isOn: $receipts)
+                        } footer: {
+                            Text("Show when you've read a DM, and see when they have. Only between people who both turn this on.")
+                        }
+                    }
                     if !devices.isEmpty {
                         Section("Devices with encrypted DMs") {
                             ForEach(devices, id: \.id) { d in
@@ -73,12 +81,16 @@ struct ProfileView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Save") {
                             model.client.setDisplayName(network: network, name: name.trimmingCharacters(in: .whitespaces))
+                            if receipts != net.receipts {
+                                model.client.setReceipts(network: network, on: receipts)
+                            }
                             dismiss()
                         }
                     }
                 }
                 .onAppear {
                     name = profile.displayName ?? ""
+                    receipts = net.receipts
                     model.client.fetchDevices(network: network, nick: net.nick)
                 }
                 .onChange(of: photo) { _, item in

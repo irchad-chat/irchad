@@ -283,7 +283,7 @@ internal fun Choice(label: String, selected: Boolean, onClick: () -> Unit) = Row
 }
 
 @Composable
-private fun Toggle(label: String, on: Boolean, enabled: Boolean = true, set: (Boolean) -> Unit) = Row(
+internal fun Toggle(label: String, on: Boolean, enabled: Boolean = true, set: (Boolean) -> Unit) = Row(
     Modifier.fillMaxWidth().toggleable(value = on, enabled = enabled, role = Role.Switch, onValueChange = set).padding(vertical = 8.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {

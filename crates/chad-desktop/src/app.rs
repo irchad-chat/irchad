@@ -145,6 +145,8 @@ struct Switcher {
 struct ProfileDialog {
     network: String,
     name: String,
+    /// Read receipts in DMs (D68), as the account had them when opened.
+    receipts: bool,
 }
 
 /// How a watched screen share is shown (what is watched lives in `Voice`,

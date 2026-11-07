@@ -12,3 +12,5 @@ These are not scheduled. Move an item into a phase only when the user asks.
 - One-time prekeys for E2EE, post-quantum handshake, and MLS for encrypted channels.
 - macOS: accepted if it happens to work, never targeted.
 - "Listening to" on Windows (D63): GlobalSystemMediaTransportControls, needs the `windows` crate's WinRT bindings.
+
+Ideas for features Discord won't build are in [notes/discord-gaps.md](../notes/discord-gaps.md).

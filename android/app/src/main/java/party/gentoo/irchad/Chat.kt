@@ -501,6 +501,7 @@ private fun ProfileDialog(app: IrChad, tick: Long, net: Network, onDismiss: () -
     val ctx = LocalContext.current
     val me = remember(tick) { c.profile(net.network, net.nick) }
     var name by remember { mutableStateOf(me.displayName.orEmpty()) }
+    var receipts by remember { mutableStateOf(net.receipts) }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) upload(app, ctx, net, null, listOf(uri))
     }
@@ -523,6 +524,8 @@ private fun ProfileDialog(app: IrChad, tick: Long, net: Network, onDismiss: () -
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
                 Hint("People still see that you're ${net.nick}.")
+                Toggle("Read receipts in DMs", receipts) { receipts = it }
+                Hint("Show when you've read a DM, and see when they have. Only between people who both turn this on.")
                 val devices = remember(tick) { c.devices(net.network, net.nick) }
                 if (devices.isNotEmpty()) {
                     Text("Devices with encrypted DMs", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 16.dp))
@@ -533,6 +536,7 @@ private fun ProfileDialog(app: IrChad, tick: Long, net: Network, onDismiss: () -
         confirmButton = {
             TextButton(onClick = {
                 c.setDisplayName(net.network, name.trim())
+                if (receipts != net.receipts) c.setReceipts(net.network, receipts)
                 onDismiss()
             }) { Text("Save") }
         },
@@ -864,7 +868,9 @@ private fun Log(
                     prev.action || m.action || m.replyTo != null
                 Box {
                     MessageRow(
-                        app, net.network, net.nick, m, head, buf.dm, parent, onLong = { menu = m },
+                        app, net.network, net.nick, m, head, buf.dm, parent,
+                        seenAt = buf.seenAt?.takeIf { m.msgid != null && m.msgid == buf.seen },
+                        onLong = { menu = m },
                         onParent = {
                             val id = m.replyTo
                             val i = id?.let { at[it] }
@@ -958,7 +964,7 @@ private fun Log(
 @Composable
 private fun MessageRow(
     app: IrChad, network: String, own: String, m: Message, head: Boolean, dm: Boolean, parent: Message?,
-    onLong: () -> Unit, onParent: () -> Unit, onReact: (Reaction) -> Unit,
+    seenAt: Long?, onLong: () -> Unit, onParent: () -> Unit, onReact: (Reaction) -> Unit,
 ) {
     val time = remember(m.time) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(m.time)) }
     val bar = if (m.mention && !dm) MaterialTheme.colorScheme.primary else Color.Transparent
@@ -1033,6 +1039,12 @@ private fun MessageRow(
                         )
                     }
                 }
+            }
+            if (seenAt != null) {
+                val at = remember(seenAt) {
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(seenAt))
+                }
+                Text("Seen $at", style = MaterialTheme.typography.labelSmall, color = faint, modifier = Modifier.padding(top = 2.dp))
             }
         }
     }

@@ -18,7 +18,8 @@ use url::Url;
 use crate::chadd::{self, Session};
 use crate::manager::Sink;
 use crate::net::{
-    ACTIVITY_KEY, AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, VOICE_KEY, failure,
+    ACTIVITY_KEY, AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, RECEIPTS_KEY,
+    VOICE_KEY, failure,
 };
 use crate::secrets::SecretStore;
 use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
@@ -491,6 +492,7 @@ fn start_auth(
             ACTIVITY_KEY,
             DEVICES_KEY,
             CHANNELS_KEY,
+            RECEIPTS_KEY,
         ];
         out.push(Message::new(
             "METADATA",

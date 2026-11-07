@@ -15,7 +15,7 @@ use crate::store::{Store, StoredBuffer};
 use crate::view::Profile;
 use crate::{
     Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, Mention,
-    MessageKind, NetCommand, NetworkInfo, PushSubscription, SendStatus, Typing, VoiceState,
+    MessageKind, NetCommand, NetworkInfo, PushSubscription, Seen, SendStatus, Typing, VoiceState,
     mention, one_line, time,
 };
 
@@ -26,6 +26,7 @@ mod inbound;
 mod members;
 mod metadata;
 mod push;
+mod receipts;
 pub use e2e::{DEVICES_KEY, E2e};
 use url::Url;
 
@@ -62,6 +63,12 @@ const MAX_DISPLAY_NAME: usize = 64;
 /// Metadata key: what someone's doing, as plain text ("Playing Celeste").
 pub const ACTIVITY_KEY: &str = "chad/activity";
 const MAX_ACTIVITY: usize = 128;
+/// Metadata key: `1` if the account sends read receipts in DMs (D68).
+pub const RECEIPTS_KEY: &str = "chad/receipts";
+/// The client tag on a read receipt: the msgid read up to.
+const READ_TAG: &str = "+chad/read";
+/// Store meta: our own `chad/receipts`, as last seen, for offline startup.
+const RECEIPTS_META: &str = "receipts";
 
 #[derive(Debug)]
 enum Pending {
@@ -112,6 +119,8 @@ struct Buffer {
     away: bool,
     /// `chad/voice=off` on the channel.
     voice_off: bool,
+    /// DMs: their latest read receipt (D68).
+    seen: Option<Seen>,
 }
 
 impl Buffer {
@@ -125,6 +134,7 @@ impl Buffer {
             online: None,
             away: false,
             voice_off: false,
+            seen: None,
         }
     }
 }
@@ -174,6 +184,8 @@ pub struct Net {
     voice_of: HashMap<String, (String, String)>,
     /// Folded nick → display name and avatar, from metadata.
     profiles: HashMap<String, Profile>,
+    /// Folded nicks whose `chad/receipts` is on: we send them receipts.
+    receipts_of: HashSet<String>,
     /// Our away message, sent again after every reconnect.
     away: Option<String>,
     /// Our `chad/activity`, set again after every reconnect (empty clears it).
@@ -198,7 +210,8 @@ pub struct Net {
 }
 
 impl Net {
-    pub fn new(store: Store, info: NetworkInfo) -> Self {
+    pub fn new(store: Store, mut info: NetworkInfo) -> Self {
+        info.receipts = store.meta(RECEIPTS_META).is_some();
         Self {
             info,
             caps: Negotiator::new(),
@@ -226,6 +239,7 @@ impl Net {
             voice_published: false,
             voice_of: HashMap::new(),
             profiles: HashMap::new(),
+            receipts_of: HashSet::new(),
             away: None,
             activity: None,
             e2e: None,
@@ -268,11 +282,13 @@ impl Net {
             kind,
             topic,
             read,
+            seen,
         } in self.store.buffers()
         {
             let b = Buffer {
                 topic,
                 read,
+                seen,
                 ..Buffer::new(&name, kind)
             };
             self.buffers.insert(key.clone(), b);
@@ -443,6 +459,7 @@ impl Net {
         self.emit_buffer(&key);
         if kind == BufferKind::Dm {
             self.fetch_devices(name);
+            self.fetch_receipts(&[name.to_owned()]);
         }
         true
     }
@@ -604,6 +621,7 @@ impl Net {
             away: b.away,
             voice: b.kind == BufferKind::Channel && !b.voice_off,
             encryption: self.encryption(key),
+            seen: b.seen.filter(|_| self.info.receipts),
         };
         let network = self.id();
         self.events.push(Event::Buffer { network, buffer });

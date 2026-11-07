@@ -247,6 +247,11 @@ pub enum NetCommand {
     SetActivity {
         text: Option<String>,
     },
+    /// Read receipts in DMs, for every device of this account: user metadata
+    /// `chad/receipts` (D68). `NetworkInfo::receipts` follows.
+    SetReceipts {
+        on: bool,
+    },
     /// Discord's game list from chadd, if `NetworkInfo::games`: `Event::Games`.
     Games,
     /// `Some(reason)` to go away, `None` to come back. Kept across reconnects.
@@ -548,6 +553,8 @@ pub struct NetworkInfo {
     pub gifs: Option<String>,
     /// chadd serves Discord's game list (and we have an account).
     pub games: bool,
+    /// Our account sends read receipts in DMs, and shows theirs (D68).
+    pub receipts: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -582,6 +589,16 @@ pub struct BufferInfo {
     pub voice: bool,
     /// DMs: whether they're end-to-end encrypted.
     pub encryption: Encryption,
+    /// DMs: how far they've read, if both sides send read receipts (D68).
+    pub seen: Option<Seen>,
+}
+
+/// A read receipt: they've read everything up to `upto` (a message's time),
+/// as of `at`. Both in ms since the epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Seen {
+    pub upto: i64,
+    pub at: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

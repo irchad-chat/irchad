@@ -236,6 +236,7 @@ impl Net {
             .map(|b| b.name.clone())
             .collect();
         self.monitor(&dms.iter().map(String::as_str).collect::<Vec<_>>());
+        self.fetch_receipts(&dms);
         self.e2e_synced(&dms);
     }
 
@@ -316,6 +317,12 @@ impl Net {
                     self.official_channels(target, value);
                 }
             }
+            "761" | "766" if m.param(2) == Some(RECEIPTS_KEY) => {
+                let value = if m.command == "761" { m.param(4) } else { None };
+                if let Some(target) = m.param(1) {
+                    self.receipts_metadata(target, value);
+                }
+            }
             "761" | "766" if m.param(2) == Some(VOICE_KEY) => {
                 let value = if m.command == "761" { m.param(4) } else { None };
                 if let Some(target) = m.param(1) {
@@ -362,6 +369,9 @@ impl Net {
 
     /// Reactions, typing and verification steps.
     pub(super) fn tagmsg(&mut self, m: &Message, from: &str, me: bool) {
+        if m.tag(READ_TAG).is_some() {
+            return self.read_receipt(m);
+        }
         let Some(target) = self.buffer_target(m) else {
             return;
         };
@@ -670,6 +680,12 @@ impl Net {
             }
         }
         self.store.commit(began);
+        // After the inserts too: a receipt names a message, maybe in this page.
+        for m in others.iter().filter(|m| m.command == "TAGMSG") {
+            if !self.blocked(m) {
+                self.read_receipt(m);
+            }
+        }
         messages.retain(|m| m.edits.is_none());
         // What the page changed goes out with it, as stored, in one event.
         for id in touched {

@@ -207,7 +207,8 @@ private struct MessageList: View {
                             onReply: { replyTo = m; editing = nil },
                             onEdit: { editing = m; replyTo = nil },
                             onReact: { reactTo = m.msgid },
-                            target: buf.target
+                            target: buf.target,
+                            seenAt: m.msgid != nil && m.msgid == buf.seen ? buf.seenAt : nil
                         )
                     }
                 }
@@ -258,6 +259,8 @@ struct MessageRow: View {
     let onEdit: () -> Void
     let onReact: () -> Void
     let target: String
+    /// When they read up to this message, if "Seen" goes under it (D68).
+    let seenAt: Int64?
 
     var body: some View {
         let highlight = m.mention && !dm
@@ -303,6 +306,12 @@ struct MessageRow: View {
                     Text("Not sent: \(f)").font(.caption).foregroundStyle(.red)
                 }
                 if !m.reactions.isEmpty { reactions }
+                if let at = seenAt {
+                    let when = Date(timeIntervalSince1970: TimeInterval(at) / 1000)
+                    Text("Seen \(when.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -1162,6 +1162,8 @@ history:
         whitelist:
             - "+draft/react"
             - "+react"
+            # IrChad's DM read receipts (D68), so they reach devices that were offline.
+            - "+chad/read"
 
         # if `default` is true, don't store TAGMSG containing any of these tags:
         #blacklist:

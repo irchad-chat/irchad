@@ -5,6 +5,7 @@ use crate::store::msg;
 mod block;
 mod chat;
 mod e2e;
+mod receipts;
 mod voice;
 
 fn net() -> Net {
@@ -18,6 +19,7 @@ fn net() -> Net {
         uploads: None,
         gifs: None,
         games: false,
+        receipts: false,
         oper: false,
     };
     let mut n = Net::new(Store::memory(), info);

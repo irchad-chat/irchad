@@ -132,6 +132,9 @@ impl App {
             auto_media,
             guest_media,
             dm: b.info.kind == BufferKind::Dm,
+            seen: b
+                .seen()
+                .and_then(|i| Some((b.msgs[i].msgid.clone()?, b.info.seen?.at))),
         };
         let l = egui::CentralPanel::default()
             .show(ui, |ui| messages(ui, &cx, b, extras))

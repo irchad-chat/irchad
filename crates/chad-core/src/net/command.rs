@@ -103,6 +103,7 @@ impl Net {
                     result: Err("You're offline right now.".into()),
                 });
             }
+            NetCommand::SetReceipts { on } => self.set_receipts(on),
             NetCommand::SetActivity { text } => {
                 let text = text.map(|t| one_line(&t, MAX_ACTIVITY));
                 match (&text, &self.activity) {
@@ -418,7 +419,7 @@ impl Net {
 
     pub(super) fn mark_read(&mut self, target: &str) {
         let key = self.fold(target);
-        let Some((_, t)) = self.store.newest(&key) else {
+        let Some((msgid, t)) = self.store.newest(&key) else {
             return;
         };
         if self.buffers.get(&key).and_then(|b| b.read) >= Some(t) {
@@ -430,5 +431,6 @@ impl Net {
             self.out
                 .push(Message::new("MARKREAD", [target, ts.as_str()]));
         }
+        self.send_receipt(&key, &msgid);
     }
 }
