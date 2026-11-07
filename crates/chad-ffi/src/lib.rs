@@ -305,6 +305,31 @@ impl Denoiser {
     }
 }
 
+/// `text` as spans, with each `@`-mention (outside links and code) its own
+/// span named by `name` (D66).
+fn spans(
+    text: &str,
+    mentions: &[chad_core::Mention],
+    name: impl Fn(&chad_core::Mention) -> String,
+) -> Vec<Span> {
+    let mut out = Vec::new();
+    for s in format::parse(text) {
+        if mentions.is_empty() || s.link || s.mono {
+            out.push(Span::from(s));
+            continue;
+        }
+        for (piece, m) in chad_core::mention::split(&s.text, mentions) {
+            let mut sp = Span::from(format::Span {
+                text: piece.to_owned(),
+                ..s.clone()
+            });
+            sp.mention = m.map(&name);
+            out.push(sp);
+        }
+    }
+    out
+}
+
 /// The links among `spans`, in order, the same way desktop sorts them.
 fn links(spans: &[Span], network: &str) -> Vec<Link> {
     use chad_core::format::Kind;

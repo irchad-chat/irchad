@@ -117,7 +117,7 @@ fun ShareSheet(app: IrChad, shared: Shared, nets: List<Network>, onSent: (Focus)
                         Text(
                             b.target,
                             Modifier.fillMaxWidth().clickable {
-                                if (text.isNotBlank()) app.client.send(n.network, b.target, text.trim(), null)
+                                if (text.isNotBlank()) app.client.send(n.network, b.target, text.trim(), null, emptyList())
                                 if (shared.uris.isNotEmpty()) upload(app, ctx, n, b.target, shared.uris)
                                 onSent(Focus(n.network, b.target))
                             }.padding(horizontal = 32.dp, vertical = 12.dp),

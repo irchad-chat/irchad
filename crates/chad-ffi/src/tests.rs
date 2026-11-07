@@ -177,3 +177,31 @@ fn starts_empty_and_stops() {
     drop(c);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn mention_spans() {
+    let ms = [chad_core::Mention {
+        nick: "bob".into(),
+        account: "b".into(),
+    }];
+    // Bold text around a mention keeps its style; a link that contains the nick isn't split.
+    let got = spans(
+        "\x02hi bob!\x02 https://x.example/bob",
+        &ms,
+        |m| format!("<{}>", m.account),
+    );
+    let k: Vec<_> = got
+        .iter()
+        .map(|s| (s.text.as_str(), s.bold, s.mention.as_deref()))
+        .collect();
+    assert_eq!(
+        k,
+        [
+            ("hi ", true, None),
+            ("bob", true, Some("<b>")),
+            ("!", true, None),
+            (" ", false, None),
+            ("https://x.example/bob", false, None),
+        ]
+    );
+}

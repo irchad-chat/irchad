@@ -10,6 +10,8 @@ struct Composer: View {
     @Binding var editing: Message?
 
     @State private var draft = ""
+    /// Nicks picked from the `@` list, sent as `+chad/mentions` (D66).
+    @State private var picked: [String] = []
     @State private var picker = false
     @State private var files = false
     @State private var photos: [PhotosPickerItem] = []
@@ -28,6 +30,21 @@ struct Composer: View {
                     editing = nil
                     draft = ""
                 }
+            }
+            let nicks = suggestions
+            if !nicks.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(nicks, id: \.nick) { n in
+                            Button(n.shown) { complete(n.nick) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .accessibilityLabel("Mention \(n.shown)")
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                }
+                .padding(.top, 6)
             }
             HStack(alignment: .bottom, spacing: 8) {
                 if net.uploads != nil {
@@ -62,13 +79,15 @@ struct Composer: View {
         }
         .background(.bar)
         .onChange(of: draft) { _, d in
-            model.client.typing(network: net.network, target: buf.target,
-                                active: !d.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            let blank = d.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            model.client.typing(network: net.network, target: buf.target, active: !blank)
+            if blank { picked = [] }
         }
         .onChange(of: editing?.key) { _, _ in
             // Prefilled with the text without its formatting, like desktop.
             if let e = editing {
                 draft = e.text
+                picked = e.mentions
                 focused = true
             }
         }
@@ -80,7 +99,7 @@ struct Composer: View {
         .sheet(isPresented: $picker) {
             EmojiGifPicker(network: net.network, gifs: net.gifs, onEmoji: { draft += $0 }, onGif: { url in
                 // Posted as a plain link: every client can open it, and IrChad shows it inline.
-                model.client.send(network: net.network, target: buf.target, text: url, replyTo: nil)
+                model.client.send(network: net.network, target: buf.target, text: url, replyTo: nil, mentions: [])
                 picker = false
             })
         }
@@ -95,6 +114,30 @@ struct Composer: View {
             guard case let .success(urls) = result else { return }
             for u in urls { upload(u, name: u.lastPathComponent, scoped: true) }
         }
+    }
+
+    /// Where the draft's last word starts, and the word. SwiftUI's TextField
+    /// doesn't expose the cursor, so the `@` list works on the end of the draft.
+    private var lastWord: (start: String.Index, word: Substring) {
+        let start = draft.lastIndex(where: \.isWhitespace).map(draft.index(after:)) ?? draft.startIndex
+        return (start, draft[start...])
+    }
+
+    /// The `@` list for the word being typed: nicks and display names that match.
+    private var suggestions: [Nick] {
+        let w = lastWord.word
+        guard w.hasPrefix("@") else { return [] }
+        return model.client.nicks(network: net.network, target: buf.target, query: String(w.dropFirst()))
+    }
+
+    /// Replaces the `@` word with `nick`, the way IRC clients highlight on:
+    /// `nick: ` to start a message, `nick ` elsewhere.
+    private func complete(_ nick: String) {
+        let start = lastWord.start
+        let put = start == draft.startIndex ? "\(nick): " : "\(nick) "
+        draft.replaceSubrange(start..., with: put)
+        if !picked.contains(nick) { picked.append(nick) }
+        focused = true
     }
 
     private func bar(_ text: String, close: String, action: @escaping () -> Void) -> some View {
@@ -113,11 +156,13 @@ struct Composer: View {
         let text = draft.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if let e = editing, let id = e.msgid {
-            model.client.edit(network: net.network, target: buf.target, msgid: id, text: text)
+            model.client.edit(network: net.network, target: buf.target, msgid: id, text: text, mentions: picked)
         } else {
-            model.client.send(network: net.network, target: buf.target, text: text, replyTo: replyTo?.msgid)
+            model.client.send(network: net.network, target: buf.target, text: text, replyTo: replyTo?.msgid,
+                              mentions: picked)
         }
         draft = ""
+        picked = []
         replyTo = nil
         editing = nil
         // Keep the field focused for the next message (the button takes focus).

@@ -1095,7 +1095,17 @@ private fun styled(spans: List<Span>, link: Color, prefix: String = "") = buildA
             color = sp.fg?.let { rgb(it) } ?: if (sp.link) link else Color.Unspecified,
             background = sp.bg?.let { rgb(it) } ?: Color.Unspecified,
         )
-        if (sp.link) {
+        val mention = sp.mention
+        if (mention != null) {
+            // An `@`-mention, with the person's current name (D66).
+            withStyle(
+                style.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    color = link,
+                    background = link.copy(alpha = 0.15f),
+                ),
+            ) { append("@$mention") }
+        } else if (sp.link) {
             withLink(LinkAnnotation.Url(sp.text, TextLinkStyles(style))) { append(sp.text) }
         } else {
             withStyle(style) { append(sp.text) }
@@ -1115,9 +1125,14 @@ private fun Composer(
     var draft by rememberSaveable(net.network, buf.target, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
     }
+    // Nicks picked from the `@` list, sent as `+chad/mentions` (D66).
+    var picked by remember(net.network, buf.target) { mutableStateOf(listOf<String>()) }
     // Editing starts from the message's text, without its formatting (like desktop).
     LaunchedEffect(editing?.key) {
-        editing?.let { draft = TextFieldValue(it.text, TextRange(it.text.length)) }
+        editing?.let {
+            draft = TextFieldValue(it.text, TextRange(it.text.length))
+            picked = it.mentions
+        }
     }
     val ctx = LocalContext.current
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
@@ -1137,7 +1152,10 @@ private fun Composer(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = {
-                    if (editing != null) draft = TextFieldValue()
+                    if (editing != null) {
+                        draft = TextFieldValue()
+                        picked = emptyList()
+                    }
                     onDone()
                 }) { Icon(Icons.Default.Close, if (editing != null) "Cancel edit" else "Cancel reply") }
             }
@@ -1156,7 +1174,7 @@ private fun Composer(
             },
             // Posted as a plain link: every client can open it, and IrChad shows it inline.
             onGif = {
-                c.send(net.network, buf.target, it, null)
+                c.send(net.network, buf.target, it, null, emptyList())
                 picker = false
             },
             onDismiss = { picker = false },
@@ -1180,10 +1198,11 @@ private fun Composer(
             items(nicks) { n ->
                 SuggestionChip(onClick = {
                     // What IRC clients highlight on: `nick: ` to start a message, `nick ` elsewhere.
-                    val put = if (wordStart == 0) "$n: " else "$n "
+                    val put = if (wordStart == 0) "${n.nick}: " else "${n.nick} "
                     val t = draft.text
                     draft = TextFieldValue(t.substring(0, wordStart) + put + t.substring(cursor), TextRange(wordStart + put.length))
-                }, label = { Text(n) })
+                    if (n.nick !in picked) picked = picked + n.nick
+                }, label = { Text(n.shown) })
             }
         }
     }
@@ -1198,6 +1217,7 @@ private fun Composer(
                 next = TextFieldValue(r.text, TextRange(i))
             }
             c.typing(net.network, buf.target, next.text.isNotBlank())
+            if (next.text.isBlank()) picked = emptyList()
         }
         draft = next
     }
@@ -1216,9 +1236,10 @@ private fun Composer(
         }
         if (text.isBlank()) return
         val id = editing?.msgid
-        if (id != null) c.edit(net.network, buf.target, id, text)
-        else c.send(net.network, buf.target, text, replyTo?.msgid)
+        if (id != null) c.edit(net.network, buf.target, id, text, picked)
+        else c.send(net.network, buf.target, text, replyTo?.msgid, picked)
         draft = TextFieldValue()
+        picked = emptyList()
         c.typing(net.network, buf.target, false)
         onDone()
     }

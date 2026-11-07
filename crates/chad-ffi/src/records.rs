@@ -160,6 +160,18 @@ pub struct Span {
     pub bg: Option<u32>,
     /// An `http(s)` link; `text` is the URL.
     pub link: bool,
+    /// An `@`-mention (D66): `text` is the nick as written, this the name to
+    /// show (the person's current display name or nick).
+    pub mention: Option<String>,
+}
+
+/// Someone in the `@` list.
+#[derive(uniffi::Record, Debug, PartialEq, Eq)]
+pub struct Nick {
+    /// What goes in the draft.
+    pub nick: String,
+    /// What the list shows: the display name if they set one.
+    pub shown: String,
 }
 
 impl From<chad_core::format::Span> for Span {
@@ -175,6 +187,7 @@ impl From<chad_core::format::Span> for Span {
             fg: s.fg.map(rgb),
             bg: s.bg.map(rgb),
             link: s.link,
+            mention: None,
         }
     }
 }
@@ -217,6 +230,8 @@ pub struct Message {
     pub reactions: Vec<Reaction>,
     /// The http(s) links in `text`, in order.
     pub links: Vec<Link>,
+    /// The nicks it `@`-mentions (D66), to pass back when editing it.
+    pub mentions: Vec<String>,
 }
 
 #[derive(uniffi::Record)]

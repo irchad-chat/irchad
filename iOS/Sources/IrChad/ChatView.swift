@@ -419,6 +419,15 @@ func nickColor(_ nick: String, dark: Bool) -> Color {
 func styled(_ spans: [Span], prefix: String = "") -> AttributedString {
     var out = AttributedString(prefix)
     for sp in spans {
+        // An `@`-mention, with the person's current name (D66).
+        if let name = sp.mention {
+            var a = AttributedString("@\(name)")
+            a.font = sp.bold ? Font.body.bold() : Font.body.weight(.semibold)
+            a.foregroundColor = .accentColor
+            a.backgroundColor = Color.accentColor.opacity(0.15)
+            out += a
+            continue
+        }
         var a = AttributedString(sp.text)
         var font = Font.body
         if sp.mono { font = font.monospaced() }

@@ -237,8 +237,9 @@ impl Client {
 
     /// The `@` list in `target` for `query` (what follows the `@`): people
     /// whose nick or display name starts with it, then ones containing it,
-    /// recent speakers first. Each is the nick to insert.
-    pub fn nicks(&self, network: String, target: String, query: String) -> Vec<String> {
+    /// recent speakers first. Insert the nick, then pass it to `send` or
+    /// `edit` in `mentions` (D66).
+    pub fn nicks(&self, network: String, target: String, query: String) -> Vec<Nick> {
         let v = self.view();
         let (Some(ni), Some(b)) = (v.net(&network), v.buf(&network, &target)) else {
             return Vec::new();
@@ -254,7 +255,10 @@ impl Client {
         chad_core::complete::suggest(&cands, &format!("@{query}"))
             .unwrap_or_default()
             .into_iter()
-            .map(|c| c.nick.clone())
+            .map(|c| Nick {
+                nick: c.nick.clone(),
+                shown: c.shown().to_owned(),
+            })
             .collect()
     }
 
@@ -299,20 +303,37 @@ impl Client {
         self.net(network, NetCommand::Sound { file });
     }
 
-    pub fn send(&self, network: String, target: String, text: String, reply_to: Option<String>) {
+    /// `mentions`: the nicks picked from `nicks` (D66); the core keeps the
+    /// ones still in the text.
+    pub fn send(
+        &self,
+        network: String,
+        target: String,
+        text: String,
+        reply_to: Option<String>,
+        mentions: Vec<String>,
+    ) {
         self.net(
             network,
             NetCommand::Send {
                 target,
                 text: format::markdown(&text),
                 reply_to,
-                mentions: Vec::new(),
+                mentions,
             },
         );
     }
 
-    /// Replace the text of one of your own messages (D51).
-    pub fn edit(&self, network: String, target: String, msgid: String, text: String) {
+    /// Replace the text of one of your own messages (D51). `mentions` as in
+    /// `send`, starting from the message's own.
+    pub fn edit(
+        &self,
+        network: String,
+        target: String,
+        msgid: String,
+        text: String,
+        mentions: Vec<String>,
+    ) {
         let text = format::markdown(&text);
         self.net(
             network,
@@ -320,7 +341,7 @@ impl Client {
                 target,
                 msgid,
                 text,
-                mentions: Vec::new(),
+                mentions,
             },
         );
     }
@@ -634,7 +655,9 @@ impl Client {
             .iter()
             .map(|m| {
                 let profile = n.profiles.get(&chad_core::view::key(&m.nick));
-                let spans: Vec<Span> = format::parse(&m.text).into_iter().map(Span::from).collect();
+                let spans = spans(&m.text, &m.mentions, |x| {
+                    chad_core::view::mention_name(&n.profiles, b.members.as_deref(), x).to_owned()
+                });
                 Message {
                     key: m
                         .msgid
@@ -673,6 +696,7 @@ impl Client {
                             nicks: r.nicks.clone(),
                         })
                         .collect(),
+                    mentions: m.mentions.iter().map(|x| x.nick.clone()).collect(),
                 }
             })
             .collect()
