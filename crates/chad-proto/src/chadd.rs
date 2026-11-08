@@ -32,6 +32,21 @@ pub const SOUND: &str = "sound";
 /// as [`Game`]s, which chadd downloads itself so clients never tell Discord
 /// what they play. `404` when the server doesn't offer it.
 pub const GAMES: &str = "games";
+/// `POST <api>/account/delete` with a [`LoginRequest`] (no session: the password
+/// is asked again). `202 Accepted` once chadd has queued the deletion; it then
+/// unregisters the account, redacts its messages and deletes its uploads (D69).
+pub const ACCOUNT_DELETE: &str = "account/delete";
+/// `POST <api>/redacted` with a [`RedactedRequest`], no auth: msgids chadd has
+/// deleted, so clients can drop their local copies (D69).
+pub const REDACTED: &str = "redacted";
+/// Most msgids in one [`RedactedResponse`].
+pub const REDACTED_PAGE: usize = 1000;
+
+/// A msgid as chadd stores and serves it: what ergo generates (base32-ish
+/// tokens), with room to spare, and nothing that could break an IRC line.
+pub fn valid_msgid(s: &str) -> bool {
+    (1..=128).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_graphic() && b != b':')
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LoginRequest {
@@ -48,6 +63,21 @@ pub struct LoginResponse {
     pub account: String,
     /// Seconds until `token` expires.
     pub expires_in: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactedRequest {
+    /// `next` from the last response. Leave out to get only the current
+    /// cursor: a new device has nothing cached to redact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RedactedResponse {
+    /// At most [`REDACTED_PAGE`]. More may follow: ask again with `next`.
+    pub ids: Vec<String>,
+    pub next: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

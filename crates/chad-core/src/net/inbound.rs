@@ -3,6 +3,20 @@
 use super::*;
 
 impl Net {
+    /// Msgids chadd deleted with their accounts (D69): forget our copies, and
+    /// keep `next` for the next connect.
+    pub(crate) fn chadd_redacted(&mut self, ids: &[String], next: u64) {
+        let began = self.store.begin();
+        for id in ids {
+            self.store.redact(id);
+        }
+        self.store.set_meta(REDACTED_CURSOR, &next.to_string());
+        self.store.commit(began);
+        for id in ids {
+            self.refresh(id);
+        }
+    }
+
     pub(super) fn item(&mut self, item: Item) {
         match item {
             Item::Message(m) => self.message(m),

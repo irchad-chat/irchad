@@ -195,6 +195,10 @@ async fn store(
         tracing::error!("upload to {}: {e}", dir.display());
         return Err(internal());
     }
+    // Without it the upload survives account deletion; still better than refusing it.
+    if let Err(e) = crate::delete::set_owner(&dir, &account) {
+        tracing::warn!("upload owner xattr on {}: {e}", dir.display());
+    }
     tracing::info!(%account, %id, %name, bytes = body.len(), "upload");
     state
         .config

@@ -17,6 +17,7 @@ curl -k https://chat.localhost:8443/.well-known/irchad.json
 | Accounts | `alice` / `alicepass`, `bob` / `bobpass` |
 | Channels | `#general`, `#random`, `#dev` (registered to alice). `#general` is chadd's `home` and lists all three in `chad/channels` |
 | ergo oper | `admin` / `chadadmin` |
+| chadd's oper | `chadd` / `chaddoper`: only `accreg`, `history`, `nofakelag`, for account deletion (D69). Exports land in the `ergo-export` volume, shared with chadd |
 | ergo HTTP API | `http://ergo:8089` on the compose network only, bearer `chad-dev-api-token` |
 | LiveKit | key `devkey`, secret in `livekit.yaml`. Media on UDP 50000-50100 + TCP 7881, advertised as `LIVEKIT_NODE_IP` (default 127.0.0.1) |
 

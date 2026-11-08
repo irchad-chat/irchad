@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Derive a production ircd.yaml from deploy/ergo.yaml (stdin -> stdout).
 
-usage: ergo-prod.py <server-name> <network-name> <oper-bcrypt-hash> <api-token> < ergo.yaml
+usage: ergo-prod.py <server-name> <network-name> <oper-bcrypt-hash> <api-token> <chadd-oper-bcrypt-hash> < ergo.yaml
 
 Every replacement must match exactly once, so a changed ergo.yaml fails loudly.
 """
 
 import sys
 
-host, network, oper_hash, token = sys.argv[1:5]
+host, network, oper_hash, token, chadd_hash = sys.argv[1:6]
 
 REPLACE = [
     ("    name: ChadDev # irchad:", f"    name: {network}"),
@@ -27,6 +27,7 @@ REPLACE = [
     ("    path: /ircd-bin/languages # irchad: path inside the official image", "    path: /opt/ergo/languages"),
     ('    listener: ":8089" # irchad: only reachable on the compose network', '    listener: "127.0.0.1:8089"'),
     ('        - "chad-dev-api-token" # irchad: dev only; must match chadd\'s config', f'        - "{token}"'),
+    ('    output-path: "/ircd/export" #', '    output-path: "/var/lib/ergo/export" #'),
     ('        #"draft/FILEHOST": "https://example.com/filehost"', f'        "draft/FILEHOST": "https://{host}/api/upload"'),
 ]
 
@@ -42,4 +43,8 @@ hits = [i for i, l in enumerate(lines) if '# irchad: dev password "chadadmin"' i
 if len(hits) != 1:
     sys.exit(f"ergo-prod: expected one oper password line, found {len(hits)}")
 lines[hits[0]] = f'        password: "{oper_hash}"\n'
+hits = [i for i, l in enumerate(lines) if '# irchad: dev chadd oper password' in l]
+if len(hits) != 1:
+    sys.exit(f"ergo-prod: expected one chadd oper password line, found {len(hits)}")
+lines[hits[0]] = f'        password: "{chadd_hash}"\n'
 sys.stdout.write("".join(lines))

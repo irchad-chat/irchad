@@ -13,6 +13,8 @@ services:
     volumes:
       - ergo-data:/ircd
       - ./ergo.yaml:/ircd/ircd.yaml:ro
+      # HISTSERV EXPORT output, shared with chadd for account deletion (D69).
+      - ergo-export:/ircd/export
     ports:
       # Raw IRC for debugging, host loopback only.
       - "127.0.0.1:6667:6667"
@@ -31,6 +33,7 @@ services:
     volumes:
       - ergo2-data:/ircd
       - ./ergo.yaml:/ircd/ircd.yaml:ro
+      - ergo2-export:/ircd/export
     ports:
       - "127.0.0.1:6668:6667"
     networks: [chad]
@@ -57,6 +60,8 @@ services:
     volumes:
       - ./chadd.toml:/etc/chadd/chadd.toml:ro
       - chadd-uploads:/var/lib/chadd/uploads
+      - chadd-state:/var/lib/chadd/state
+      - ergo-export:/var/lib/chadd/export
       - ./sounds:/var/lib/chadd/sounds:ro
     networks: [chad]
 
@@ -71,6 +76,8 @@ services:
     volumes:
       - ./chadd2.toml:/etc/chadd/chadd.toml:ro
       - chadd2-uploads:/var/lib/chadd/uploads
+      - chadd2-state:/var/lib/chadd/state
+      - ergo2-export:/var/lib/chadd/export
       - ./sounds:/var/lib/chadd/sounds:ro
     networks: [chad]
 
@@ -95,6 +102,10 @@ volumes:
   caddy-data:
   chadd-uploads:
   chadd2-uploads:
+  chadd-state:
+  chadd2-state:
+  ergo-export:
+  ergo2-export:
 
 networks:
   chad:

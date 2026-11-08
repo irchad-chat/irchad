@@ -32,6 +32,8 @@ use url::Url;
 
 /// Messages per CHATHISTORY request (ergo allows 1000).
 const PAGE: u32 = 100;
+/// Store meta: where we are in chadd's `redacted` log (D69).
+pub(crate) const REDACTED_CURSOR: &str = "redacted_cursor";
 /// `CHATHISTORY AFTER` pages per buffer when filling a gap on reconnect.
 const MAX_GAP_PAGES: u8 = 10;
 /// Shown from the cache at startup.

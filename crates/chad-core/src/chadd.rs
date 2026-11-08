@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 use chad_proto::chadd::{
     self, ApiError, Game, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse,
-    PreviewRequest, Sound, UploadResponse, VoiceTokenRequest, VoiceTokenResponse,
+    PreviewRequest, RedactedRequest, RedactedResponse, Sound, UploadResponse, VoiceTokenRequest,
+    VoiceTokenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
@@ -22,6 +23,10 @@ pub const MAX_MEDIA: usize = 8 << 20;
 /// chadd's own caps on soundboard clips and the list.
 const MAX_SOUND: usize = 4 << 20;
 const MAX_SOUNDS: usize = 64 << 10;
+/// A full page of the longest msgids, as JSON.
+const MAX_REDACTED: usize = 256 << 10;
+/// Pages of tombstones per connect; the rest waits for the next one.
+const REDACTED_PAGES: usize = 10;
 
 /// A chadd session token and when to stop using it.
 #[derive(Debug, Clone)]
@@ -120,6 +125,61 @@ pub async fn login(api: &Url, account: &str, password: &str) -> Result<Session, 
         token: r.token,
         until: Instant::now() + ttl,
     })
+}
+
+/// Has chadd delete the account with its messages and uploads (D69). Done once
+/// chadd has queued it; the account is gone moments later.
+pub async fn delete_account(api: &Url, account: &str, password: &str) -> Result<(), Error> {
+    let req = LoginRequest {
+        account: account.to_owned(),
+        password: password.to_owned(),
+    };
+    let json = serde_json::to_vec(&req).map_err(|e| Error::Other(e.to_string()))?;
+    request(api, chadd::ACCOUNT_DELETE, None, Body::Json(json), MAX_BODY)
+        .await
+        .map(drop)
+}
+
+/// Msgids chadd deleted after `since` (D69), and the cursor to keep. With no
+/// `since` (a new device), just the cursor. `None` if chadd can't be asked or
+/// answers nonsense: nothing to redact this time.
+pub async fn redacted(api: &Url, since: Option<u64>) -> Option<(Vec<String>, u64)> {
+    catch_up(since, |since| async move {
+        let json = serde_json::to_vec(&RedactedRequest { since }).ok()?;
+        let bytes = request(api, chadd::REDACTED, None, Body::Json(json), MAX_REDACTED)
+            .await
+            .ok()?;
+        parse(&bytes).ok()
+    })
+    .await
+}
+
+/// `redacted`'s paging and checks, over any way of fetching a page.
+async fn catch_up<F: Future<Output = Option<RedactedResponse>>>(
+    since: Option<u64>,
+    mut page: impl FnMut(Option<u64>) -> F,
+) -> Option<(Vec<String>, u64)> {
+    let mut ids = Vec::new();
+    let mut cursor = since;
+    for _ in 0..REDACTED_PAGES {
+        let r = page(cursor).await?;
+        if r.ids.len() > chadd::REDACTED_PAGE {
+            return None;
+        }
+        let Some(c) = cursor else {
+            return Some((ids, r.next));
+        };
+        // Behind us: chadd lost its log. Start over from where it is now.
+        if r.next < c {
+            return Some((ids, r.next));
+        }
+        ids.extend(r.ids.into_iter().filter(|i| chadd::valid_msgid(i)));
+        cursor = Some(r.next);
+        if r.next - c < chadd::REDACTED_PAGE as u64 {
+            break;
+        }
+    }
+    cursor.map(|c| (ids, c))
 }
 
 pub async fn voice_token(
@@ -333,4 +393,59 @@ async fn request(
     } else {
         Error::Other(message)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A log of `n` msgids, served the way chadd pages it.
+    fn log(n: u64) -> impl FnMut(Option<u64>) -> std::future::Ready<Option<RedactedResponse>> {
+        move |since| {
+            let next = since.map_or(n, |s| {
+                (s + chadd::REDACTED_PAGE as u64).min(n).max(s.min(n))
+            });
+            let ids = since.map_or(0, |s| s.min(n))..next;
+            std::future::ready(Some(RedactedResponse {
+                ids: ids.map(|i| format!("m{i}")).collect(),
+                next,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn catches_up() {
+        // A new device: only the cursor.
+        assert_eq!(catch_up(None, log(5)).await, Some((vec![], 5)));
+        let (ids, next) = catch_up(Some(3), log(5)).await.unwrap();
+        assert_eq!((ids, next), (vec!["m3".to_owned(), "m4".to_owned()], 5));
+        assert_eq!(catch_up(Some(5), log(5)).await, Some((vec![], 5)));
+        // Pages until the end, at most REDACTED_PAGES of them.
+        let (ids, next) = catch_up(Some(0), log(2500)).await.unwrap();
+        assert_eq!((ids.len(), next), (2500, 2500));
+        let (ids, next) = catch_up(Some(0), log(50_000)).await.unwrap();
+        assert_eq!((ids.len(), next), (10_000, 10_000));
+        // chadd lost its log: resync, redact nothing.
+        assert_eq!(catch_up(Some(9), log(5)).await, Some((vec![], 5)));
+    }
+
+    #[tokio::test]
+    async fn distrusts_chadd() {
+        let page = |ids: Vec<&str>, next| {
+            let ids: Vec<String> = ids.into_iter().map(str::to_owned).collect();
+            move |_| {
+                std::future::ready(Some(RedactedResponse {
+                    ids: ids.clone(),
+                    next,
+                }))
+            }
+        };
+        let (ids, _) = catch_up(Some(0), page(vec!["ok", "", "a b", "x:y"], 4))
+            .await
+            .unwrap();
+        assert_eq!(ids, ["ok"]);
+        let flood = vec!["m"; chadd::REDACTED_PAGE + 1];
+        assert_eq!(catch_up(Some(0), page(flood, 2000)).await, None);
+        assert_eq!(catch_up(Some(0), |_| std::future::ready(None)).await, None);
+    }
 }

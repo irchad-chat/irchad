@@ -1,0 +1,89 @@
+---
+const site = "https://irchad.chat/";
+const title = "Delete your account · IrChad";
+const description = "How to delete your IrChad account and its data, what is deleted and what is kept.";
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta name="description" content={description} />
+  <link rel="canonical" href={`${site}delete-account`} />
+</head>
+<body>
+  <main>
+    <p><a href="/">← IrChad</a></p>
+    <h1>Delete your IrChad account</h1>
+    <p class="muted">IrChad is a client: your account lives on the network (server) you signed up on, not with the IrChad developer.
+      Deleting it removes it from that network. The steps are the same on every IrChad network.</p>
+
+    <h2>Steps</h2>
+    <h3>Android</h3>
+    <ol>
+      <li>Open the network, then tap your name or avatar to open <b>Your status and profile</b>.</li>
+      <li>Tap <b>Leave &lt;network&gt;…</b>.</li>
+      <li>Tick <b>Delete account</b>, then tap <b>Delete and leave</b>.</li>
+    </ol>
+    <h3>iOS</h3>
+    <ol>
+      <li>Open <b>Settings</b>, find the network in the list and tap <b>Leave</b>.</li>
+      <li>Tap <b>Delete account and leave</b>.</li>
+    </ol>
+    <h3>Linux and Windows</h3>
+    <ol>
+      <li>Click the <b>⋯</b> menu next to the network's name in the sidebar and choose <b>Leave network…</b>.</li>
+      <li>Tick <b>Delete account</b> and confirm.</li>
+    </ol>
+    <h3>Without the app</h3>
+    <ol>
+      <li>Connect to the network with any IRC client and log in to your account.</li>
+      <li>Send <code>/msg NickServ UNREGISTER &lt;account&gt;</code>.</li>
+      <li>NickServ replies with a confirmation command containing a code. Send it as shown, e.g. <code>/msg NickServ UNREGISTER &lt;account&gt; &lt;code&gt;</code>.</li>
+    </ol>
+    <p>If you can't log in any more, ask that network's operator to delete the account for you.
+      For the official IrChad server, email <a href="mailto:android@irchad.chat">android@irchad.chat</a> from the address you signed up with, and include your account name.</p>
+
+    <h2>What is deleted</h2>
+    <ul>
+      <li>Your account: its password and the email address you signed up with.</li>
+      <li>Everything the network stores with your account: your display name, avatar, status and the public keys used for encrypted DMs.</li>
+      <li>Channels you founded lose their registration.</li>
+      <li><b>Your messages</b> in channels and DMs are removed from the network's history. Channel messages also disappear for people who are online, and IrChad apps remove their saved copies the next time they connect.</li>
+      <li><b>Files you uploaded</b>, including your avatar.</li>
+      <li>On the device you used, the app forgets the network, your saved password and your DM encryption keys.</li>
+    </ul>
+
+    <h2>What is kept</h2>
+    <ul>
+      <li><b>Your account name</b> stays reserved, so nobody can sign up as you later. Nothing else is stored with it.</li>
+      <li><b>Copies other people already saved</b> in apps other than IrChad, such as other IRC clients and bouncers, and DMs already on the other person's devices. The network can't reach into those.</li>
+      <li><b>Messages from before the network started tracking them for deletion.</b> Ask that network's operator to remove them.</li>
+      <li>Networks running an older IrChad server only delete the account. Your messages and files stay until you ask that network's operator.</li>
+      <li><b>Server logs</b>, such as connection records, follow the operator's own retention policy.</li>
+    </ul>
+    <p>Deleting your account with an IrChad app does this cleanup. Deleting it from another IRC client (the steps above) removes only the account, so email us for the rest.
+      For the official IrChad server, email <a href="mailto:android@irchad.chat">android@irchad.chat</a> to have your remaining messages and files removed.
+      We do this within 30 days. See the <a href="/privacy">privacy policy</a> for more.</p>
+  </main>
+</body>
+</html>
+
+<style is:global>
+  /* The same Catppuccin tokens as privacy.astro. */
+  :root { color-scheme: light dark; --bg: #e6e9ef; --fg: #4c4f69; --muted: #6c6f85; --accent: #40a02b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #11111b; --fg: #cdd6f4; --muted: #a6adc8; --accent: #a6e3a1; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 16px 4rem; }
+  a { color: inherit; text-decoration-color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 2.25rem; margin: 1rem 0 0; }
+  h2 { font-size: 1.3rem; margin: 2.5rem 0 .5rem; }
+  h3 { font-size: 1.05rem; margin: 1.25rem 0 0; }
+  .muted { color: var(--muted); }
+  li { margin: .35rem 0; }
+  code { font-size: .9em; overflow-wrap: anywhere; }
+</style>

@@ -47,6 +47,7 @@ Generate the secrets once and keep them out of git:
 cat > /root/irchad-secrets <<EOF
 OPER_PASS=$(openssl rand -hex 12)
 ERGO_API_TOKEN=$(openssl rand -hex 32)
+CHADD_OPER_PASS=$(openssl rand -hex 16)
 LIVEKIT_SECRET=$(openssl rand -hex 32)
 EOF
 chmod 600 /root/irchad-secrets
@@ -61,8 +62,11 @@ From a checkout of this repo, copy the files over and fill them in:
   ```sh
   python3 deploy/native/ergo-prod.py chat.example.com MyNetwork \
     "$(caddy hash-password --plaintext "$OPER_PASS")" "$ERGO_API_TOKEN" \
+    "$(caddy hash-password --plaintext "$CHADD_OPER_PASS")" \
     < deploy/ergo.yaml > /etc/ergo/ircd.yaml
   ```
+  ergo writes history exports to `/var/lib/ergo/export`, and chadd reads and deletes them when it deletes an account.
+  Make the folder shared: `install -d -o ergo -g chadd -m 2770 /var/lib/ergo/export`.
   If you keep your own `ircd.yaml` instead, set `server.idle-timeouts.registration: 5m`.
   At ergo's default of 60s, sign-ups drop while people wait for their email code, and IrChad has to reconnect to keep waiting.
 - **LiveKit:** `deploy/native/livekit.yaml` to `/etc/livekit/livekit.yaml`, and `/etc/livekit/env` containing
@@ -86,6 +90,15 @@ From a checkout of this repo, copy the files over and fill them in:
   [uploads]
   dir = "/var/lib/chadd/uploads"
   max_bytes = 26214400             # 25 MB
+
+  # Optional: deleting an account also deletes its messages and uploads (D69).
+  # Leave this out and "Delete account" only unregisters it.
+  [delete]
+  irc = "127.0.0.1:6667"
+  oper = "chadd"
+  oper_password = "<CHADD_OPER_PASS>"
+  export_dir = "/var/lib/ergo/export"
+  state_dir = "/var/lib/chadd"
 
   # Optional: the GIF picker. Get a key at https://partner.klipy.com/api-keys
   # (a test key allows 100 searches an hour across the whole network).
@@ -118,7 +131,7 @@ Raw IRC listens on loopback only, so tunnel it: `ssh -L 6667:127.0.0.1:6667 chat
 | Set the topic | `/TOPIC #general :Welcome!` |
 | Turn voice off in a channel | `/quote METADATA #general SET chad/voice off` (D19) |
 | Ban someone from the network | `/UBAN ADD <nick> DURATION 1d REASON <why>` |
-| Delete an account | `/msg NickServ SAUNREGISTER <account>` |
+| Delete an account | `/msg NickServ UNREGISTER <account>`, then the command it replies with. Messages and uploads stay: for those, the user deletes from the app, which goes through chadd (D69) |
 | Stop sign-ups | `registration = "closed"` in chadd.toml, plus `accounts.registration.enabled: false` in ircd.yaml |
 
 New channels are auto-joined by everyone who signs up afterwards (IrChad joins everything in `LIST` on first login).
@@ -126,6 +139,9 @@ New channels are auto-joined by everyone who signs up afterwards (IrChad joins e
 **Uploads** pile up in `uploads.dir` and are never deleted. Watch the disk, or prune old ones:
 `find /var/lib/chadd/uploads -mindepth 1 -maxdepth 1 -mtime +90 -exec rm -rf {} +`.
 Anyone with an account can upload, at most 30 files a minute.
+chadd marks each upload with its owner in an extended attribute (`user.chad.owner`), so deleting an account can find its files.
+Copies that drop xattrs lose that, so back up and move uploads with `rsync -aX` or `tar --xattrs`.
+Uploads from before chadd recorded owners can be tagged once from chadd's log: `journalctl -u chadd -o cat | python3 deploy/tools/upload-owners.py /var/lib/chadd/uploads`.
 
 **Link previews** are fetched by chadd from your server's IP, never from your users' (D25). chadd refuses private and loopback addresses.
 

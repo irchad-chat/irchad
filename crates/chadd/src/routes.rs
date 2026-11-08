@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, cache, fetch, files, games, gifs, sounds};
+use crate::{api, cache, delete, fetch, files, games, gifs, sounds};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -36,6 +36,12 @@ pub struct AppState {
     pub games: games::Games,
     /// Game list downloads, per account: it's 1.5 MB each.
     pub games_throttle: api::Throttle,
+    /// `redacted.log`: every msgid deleted with an account, in order (D69).
+    pub redacted: std::sync::RwLock<Vec<String>>,
+    /// Tombstone fetches, per IP.
+    pub redacted_throttle: api::Throttle,
+    /// Wakes the deletion worker when a job is queued.
+    pub deletions: tokio::sync::Notify,
 }
 
 impl AppState {
@@ -47,6 +53,7 @@ impl AppState {
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
         let cache = cache::Cache::new(config.cache.as_ref())?;
+        let redacted = delete::load_redacted(config.delete.as_ref()).into();
         Ok(Self {
             config,
             discovery,
@@ -61,6 +68,9 @@ impl AppState {
             cache,
             games: games::Games::default(),
             games_throttle: api::Throttle::new(5),
+            redacted,
+            redacted_throttle: api::Throttle::new(60),
+            deletions: tokio::sync::Notify::new(),
         })
     }
 }
@@ -71,6 +81,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         files = files
             .nest_service("/uploads", ServeDir::new(&u.dir))
             .layer(axum::middleware::from_fn(files::headers));
+    }
+    if state.config.delete.is_some() {
+        files = files
+            .route("/api/account/delete", post(delete::delete_account))
+            .route("/api/redacted", post(delete::redacted));
     }
     let max_upload = state.config.uploads.as_ref().map_or(0, |u| u.max_bytes);
     Router::new()

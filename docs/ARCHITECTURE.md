@@ -7,7 +7,7 @@
                  ├── /.well-known/irchad.json  → chadd   discovery
                  ├── /invite/*                 → chadd   landing page
                  ├── everything else           → static  project website, if installed (D57)
-                 ├── /api/*                    → chadd   auth, LiveKit tokens, uploads, link previews
+                 ├── /api/*                    → chadd   auth, LiveKit tokens, uploads, link previews, account deletion
                  ├── /uploads/*                → chadd   uploaded files (D26)
                  ├── /irc                      → ergo    IRC over WebSocket
                  └── /livekit                  → livekit signalling (media: UDP direct / TURN)
@@ -63,6 +63,7 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
   `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
   `POST /api/gifs {query, pos}` searches the GIF provider set up in chadd.toml (KLIPY by default), and discovery's `chadd.gifs` says it's on (D30).
   `POST /api/sounds` lists the soundboard (the files in chadd.toml's `[sounds] dir`), and `POST /api/sound {file}` returns one clip (D37).
+  `POST /api/account/delete {account, password}` has chadd unregister the account, redact its messages and delete its uploads, and `POST /api/redacted {since}` lists the msgids deleted so far, which clients check after each connect (D69). Discovery's `chadd.delete` says both are on.
   Request and response types live in `chad_proto::chadd`. Calls share one session per network, and the client logs in again on a 401.
 
 ## Client crates

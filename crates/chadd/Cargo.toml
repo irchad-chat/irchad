@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 chad-proto.workspace = true
+chad-irc.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 base64 = "0.22"
@@ -23,6 +24,10 @@ tower-http = { version = "0.6", features = ["fs"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Upload owners as xattrs (D69).
+rustix = { version = "1.1", features = ["fs"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

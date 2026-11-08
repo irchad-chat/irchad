@@ -648,3 +648,18 @@ fn mentions_tag() {
     // Kept in the cache.
     assert_eq!(n.store.get("x1").unwrap().1.mentions[0].account, "bob");
 }
+
+#[test]
+fn chadd_redactions() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    feed(&mut n, "@msgid=m1 :alice!u@h PRIVMSG #c :hi");
+    feed(&mut n, "@msgid=m2 :carol!u@h PRIVMSG #c :yo");
+    events(&mut n);
+    n.chadd_redacted(&["m1".into(), "gone".into()], 7);
+    let m = messages(&events(&mut n));
+    assert_eq!(m.len(), 1);
+    assert!(m[0].redacted && m[0].text.is_empty());
+    assert!(!n.store.get("m2").unwrap().1.redacted);
+    assert_eq!(n.store.meta(REDACTED_CURSOR).as_deref(), Some("7"));
+}

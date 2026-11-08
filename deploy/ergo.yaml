@@ -383,7 +383,7 @@ server:
     # Ergo will write files to disk under certain circumstances, e.g.,
     # CPU profiling or data export. by default, these files will be written
     # to the working directory. set this to customize:
-    #output-path: "/home/ergo/out"
+    output-path: "/ircd/export" # irchad: HISTSERV EXPORT files, read and deleted by chadd (D69)
 
     # the hostname used by "services", e.g., NickServ, defaults to "localhost",
     # e.g., `NickServ!NickServ@localhost`. uncomment this to override:
@@ -734,6 +734,15 @@ oper-classes:
             - "snomasks"  # subscribe to arbitrary server notice masks
             - "roleplay"  # use the (deprecated) roleplay commands in any channel
 
+    # irchad: chadd deletes accounts: SAUNREGISTER, REDACT/HISTSERV DELETE their
+    # messages, HISTSERV EXPORT to find them, faster than fakelag allows.
+    "chadd":
+        title: IrChad server
+        capabilities:
+            - "accreg"
+            - "history"
+            - "nofakelag"
+
     # server admin: has full control of the ircd, including nickname and
     # channel registrations
     "server-admin":
@@ -755,6 +764,12 @@ oper-classes:
 
 # ircd operators
 opers:
+    # irchad: chadd's account-deletion worker (only the chadd class's capabilities)
+    chadd:
+        class: "chadd"
+        hidden: true
+        password: "$2a$04$eIMl3P8wQpTYi.rhPYPEw.efuqfIBOUXqu7FEhmb9KjGs9NxRpex." # irchad: dev chadd oper password "chaddoper"
+
     # default operator named 'admin'; log in with /OPER admin <password>
     admin:
         # which capabilities this oper has access to
@@ -1151,7 +1166,7 @@ history:
         # if persistent history is enabled, create additional index tables,
         # allowing deletion of JSON export of an account's messages. this
         # may be needed for compliance with data privacy regulations.
-        enable-account-indexing: false
+        enable-account-indexing: true # irchad: HISTSERV EXPORT for account deletion
 
     # options to control storage of TAGMSG
     tagmsg-storage:

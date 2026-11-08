@@ -69,4 +69,36 @@ sub('''api:
 sub('''    bearer-tokens:
         - "example"''', '''    bearer-tokens:
         - "chad-dev-api-token" # irchad: dev only; must match chadd's config''')
+# irchad: the drift below was hand-edited into ergo.yaml before this script caught up.
+sub('        registration: 60s', '        registration: 5m # irchad: room to fetch the sign-up email code (the client reconnects past it anyway)')
+sub('''            - "+react"
+''', '''            - "+react"
+            # IrChad's DM read receipts (D68), so they reach devices that were offline.
+            - "+chad/read"
+''')
+start = s.index('webpush:')
+i = s.index('    enabled: false', start)
+s = s[:i] + '    enabled: true # irchad: Android push via UnifiedPush (D39)' + s[i + len('    enabled: false'):]
+# account deletion by chadd (D69)
+sub('    #output-path: "/home/ergo/out"\n', '    output-path: "/ircd/export" # irchad: HISTSERV EXPORT files, read and deleted by chadd (D69)\n')
+sub('''opers:
+    # default operator named 'admin'; log in with /OPER admin <password>''', '''opers:
+    # irchad: chadd's account-deletion worker (only the chadd class's capabilities)
+    chadd:
+        class: "chadd"
+        hidden: true
+        password: "$2a$04$eIMl3P8wQpTYi.rhPYPEw.efuqfIBOUXqu7FEhmb9KjGs9NxRpex." # irchad: dev chadd oper password "chaddoper"
+
+    # default operator named 'admin'; log in with /OPER admin <password>''')
+sub('''    # server admin: has full control of the ircd, including nickname and''', '''    # irchad: chadd deletes accounts: SAUNREGISTER, REDACT/HISTSERV DELETE their
+    # messages, HISTSERV EXPORT to find them, faster than fakelag allows.
+    "chadd":
+        title: IrChad server
+        capabilities:
+            - "accreg"
+            - "history"
+            - "nofakelag"
+
+    # server admin: has full control of the ircd, including nickname and''')
+sub('        enable-account-indexing: false', '        enable-account-indexing: true # irchad: HISTSERV EXPORT for account deletion')
 open(dst, "w").write(header + s)

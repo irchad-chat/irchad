@@ -547,6 +547,15 @@ async fn live(
     let mut token: Option<JoinHandle<TokenResult>> = None;
     // Deleting the account: when to give up, and whether we sent the confirmation code.
     let mut deleting: Option<(tokio::time::Instant, bool)> = None;
+    // Messages chadd deleted with other accounts while we were away (D69).
+    let mut redactions = d.chadd.delete.then(|| {
+        let api = d.chadd.api.clone();
+        let since = net
+            .store
+            .meta(crate::net::REDACTED_CURSOR)
+            .and_then(|c| c.parse().ok());
+        tokio::spawn(async move { chadd::redacted(&api, since).await })
+    });
     loop {
         // A call keeps the connection (it needs the voice metadata) until it ends.
         if p.background && net.voice.is_none() && call.is_none() && token.is_none() {
@@ -609,6 +618,12 @@ async fn live(
                 Ok(None) => return End::Lost("The server closed the connection.".into()),
                 Err(e) => return lost(e),
             },
+            r = async { redactions.as_mut().expect("guarded").await }, if redactions.is_some() => {
+                redactions = None;
+                if let Ok(Some((ids, next))) = r {
+                    net.chadd_redacted(&ids, next);
+                }
+            }
             r = async { token.as_mut().expect("guarded").await }, if token.is_some() => {
                 token = None;
                 let Ok((channel, res)) = r else { continue };
@@ -635,6 +650,16 @@ async fn live(
                 }
             }
             cmd = rx.recv() => match cmd {
+                // chadd deletes the messages and uploads too (D69).
+                Some(ToNet::Cmd(NetCommand::DeleteAccount)) if !p.guest && d.chadd.delete => {
+                    match chadd::delete_account(&d.chadd.api, &p.account, password).await {
+                        Ok(()) => {
+                            let _ = ws.send(&Message::new("QUIT", ["account deleted"])).await;
+                            return End::Remove;
+                        }
+                        Err(e) => net.error(e.message()),
+                    }
+                }
                 Some(ToNet::Cmd(NetCommand::DeleteAccount)) if !p.guest => {
                     let text = format!("UNREGISTER {}", p.account);
                     net.out.push(Message::new("PRIVMSG", ["NickServ", text.as_str()]));

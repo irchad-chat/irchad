@@ -36,7 +36,7 @@ const permissions = [
       <li>The apps contain no analytics, ads, advertising IDs or crash reporting. The developer receives nothing from them.</li>
       <li>IrChad is a client. Your messages, voice and files go only to the networks you join, and whoever runs a network is responsible for what happens to data on it.</li>
       <li>DMs are end-to-end encrypted. Channel messages, voice and screen shares are encrypted in transit, but the network's server can read them.</li>
-      <li>You can delete your account from inside the app. <a href="#delete">How to delete your account</a></li>
+      <li>You can delete your account from inside the app. <a href="/delete-account">How to delete your account</a></li>
     </ul>
 
     <h2>What the developer collects</h2>
@@ -73,9 +73,9 @@ const permissions = [
     <h2 id="delete">Deleting your data and your account</h2>
     <ul>
       <li><b>Delete your account:</b> in the app, choose <b>Leave network</b>, then tick <b>Delete account</b> (or on iOS tap <b>Delete account and leave</b>).
-        The network removes your account and the channels you founded, and the app forgets the network. The account name stays reserved so nobody else can take it.
-        From any IRC client, you can do the same with <code>/msg NickServ UNREGISTER &lt;account&gt;</code> and follow its instructions.</li>
-      <li><b>What may remain:</b> messages you posted in channels and files you uploaded may remain in the network's history, according to its operator's policy. To have them removed, contact that network's operator. For the official server, contact us below.</li>
+        The network removes your account, the channels you founded, your messages and the files you uploaded, and the app forgets the network. The account name stays reserved so nobody else can take it.
+        From any IRC client, <code>/msg NickServ UNREGISTER &lt;account&gt;</code> removes the account only.</li>
+      <li><b>What may remain:</b> copies of your messages already saved by other people's non-IrChad apps, DMs already on the other person's devices, messages from before the network started tracking them for deletion, and everything on networks running an older IrChad server. To have those removed, contact that network's operator. For the official server, contact us below. <a href="/delete-account">Details</a></li>
       <li><b>Remove data from your device:</b> leave the network in the app, or uninstall the app or clear its data in Android's settings.</li>
     </ul>
 

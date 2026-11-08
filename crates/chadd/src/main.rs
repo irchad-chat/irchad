@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 mod api;
 mod cache;
 mod config;
+mod delete;
 mod fetch;
 mod files;
 mod games;
@@ -34,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
     if state.config.discord_games {
         tokio::spawn(games::refresh(state.clone()));
     }
+    tokio::spawn(delete::worker(state.clone()));
     let app = routes::router(state);
 
     let listener = tokio::net::TcpListener::bind(listen)

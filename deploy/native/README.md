@@ -10,7 +10,7 @@ Debian 13, no containers (D24). Live at `irchad.chat` (64.177.55.62); the old `c
 | LiveKit | `/usr/local/bin/livekit-server` | `/etc/livekit/livekit.yaml` + `/etc/livekit/env` | 127.0.0.1:7880, public 7881/tcp + 50000-50100/udp |
 | chadd | `/usr/local/bin/chadd` | `/etc/chadd/chadd.toml` | 127.0.0.1:8080 |
 
-Secrets (oper password, ergo API token, LiveKit secret) were generated on the server and live in `/root/irchad-secrets`. They are never in the repo.
+Secrets (oper password, chadd's oper password, ergo API token, LiveKit secret) were generated on the server and live in `/root/irchad-secrets`. They are never in the repo.
 The firewall is `/etc/nftables.conf`: 22, 80, 443, 6697 tcp, 443 udp, 7881 tcp, 50000-50100 udp.
 
 ## Updating
@@ -27,9 +27,36 @@ The firewall is `/etc/nftables.conf`: 22, 80, 443, 6697 tcp, 443 udp, 7881 tcp, 
 - **ergo.yaml changes:** regenerate the config on the server, then `systemctl reload ergo`.
   ```sh
   . /root/irchad-secrets
-  python3 ergo-prod.py irchad.chat GentooParty "$(caddy hash-password --plaintext "$OPER_PASS")" "$ERGO_API_TOKEN" < ergo.yaml > /etc/ergo/ircd.yaml
+  python3 ergo-prod.py irchad.chat GentooParty "$(caddy hash-password --plaintext "$OPER_PASS")" "$ERGO_API_TOKEN" "$(caddy hash-password --plaintext "$CHADD_OPER_PASS")" < ergo.yaml > /etc/ergo/ircd.yaml
   ```
 - **ergo / LiveKit versions:** download the release, check it against the published sha256, swap the binary, then restart.
 - **Debian:** `unattended-upgrades` handles security updates.
 
+### Turning on account deletion (D69, once)
+
+```sh
+echo "CHADD_OPER_PASS=$(openssl rand -hex 16)" >> /root/irchad-secrets && . /root/irchad-secrets
+install -d -o ergo -g chadd -m 2770 /var/lib/ergo/export
+# regenerate ircd.yaml as above (it takes the chadd oper hash now), then: systemctl reload ergo
+# add [delete] to /etc/chadd/chadd.toml (docs/hosting.md) with oper_password = $CHADD_OPER_PASS, deploy chadd, then:
+journalctl -u chadd -o cat | sudo -u chadd python3 upload-owners.py /var/lib/chadd/uploads
+```
+Messages sent before the reload aren't indexed, so deletion can't find them.
+
 Raw IRC for admins: `ssh -L 6667:127.0.0.1:6667 chad-prod`, then connect a client to `localhost:6667` and `/OPER admin <OPER_PASS>`.
+
+## App store reviewers
+
+Reviewers log in to the live network as `reviewer` and `reviewer2` (two, so they can try DMs and calls).
+Reviewers often test "Delete account", so (re)create both before each submission. The script leaves working accounts alone:
+
+```sh
+ssh -L 6667:127.0.0.1:6667 chad-prod    # in another terminal
+OPER_PASS=$(ssh chad-prod "sed -n 's/^OPER_PASS=//p' /root/irchad-secrets") REVIEW_PASS=<password> python3 deploy/tools/reviewer.py
+```
+
+Review notes for App Store Connect and Play Console (Play: App access → "All or some functionality is restricted"):
+
+> IrChad is a chat client. To sign in: open the app, enter `https://irchad.chat/invite` as the invite link, choose **Log in** (not Sign up), and use `reviewer` / `<password>`.
+> A second account, `reviewer2` / `<password>`, can be used on another device to try direct messages, voice calls and screen sharing.
+> Account deletion: tap your name → Leave irchad.chat… → Delete account. Steps: https://irchad.chat/delete-account

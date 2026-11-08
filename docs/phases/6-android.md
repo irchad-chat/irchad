@@ -54,6 +54,8 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
   Settings: "Notify me about" (every message, mentions and DMs, or nothing; `Client::notify_all`, and pushes only ever bring DMs and mentions), away after idle minutes (since the last touch), and desktop's voice settings (D61).
   Voice panel: connection quality, a speaker route picker, hold-to-talk with push to talk, and holding someone's chip for their voice and screen-share volume.
   Desktop-only on purpose: the quick switcher (the drawer does it), text size (the system's font scale does it), panes, stage layout, tray, autostart, the update check, and picking a microphone (Android picks it with the route).
+- [x] Account deletion removes the account's data, for Play's rules (D69): chadd unregisters it, redacts its channel messages live, `HISTSERV FORGET`s its DMs, deletes its uploads, and clients redact their copies from `/api/redacted` after each connect.
+  In chad-core, so Android, iOS and desktop all use it with no UI change. Prod needs ergo's new `chadd` oper and export dir, and `upload-owners.py` run once.
 
 ## Done when
 - The phone joins via an invite link, receives push while backgrounded, talks in voice with desktop users, and watches a desktop screen share.

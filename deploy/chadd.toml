@@ -21,6 +21,15 @@ token = "chad-dev-api-token"
 key = "devkey"
 secret = "chad-dev-livekit-secret-0123456789abcdef"
 
+# Account deletion (D69): chadd opers up as `chadd` (ergo.yaml), unregisters the
+# account, redacts its messages and deletes its uploads. Leave it out to turn it off.
+[delete]
+irc = "ergo:6667"
+oper = "chadd"
+oper_password = "chaddoper"
+export_dir = "/var/lib/chadd/export"
+state_dir = "/var/lib/chadd/state"
+
 [uploads]
 dir = "/var/lib/chadd/uploads"
 max_bytes = 26214400

@@ -45,6 +45,8 @@ pub struct Config {
     /// undocumented Discord endpoint that may change or go away.
     #[serde(default)]
     pub discord_games: bool,
+    /// Leave out to turn account deletion by chadd off; clients then only unregister.
+    pub delete: Option<Delete>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -176,6 +178,22 @@ fn default_max_bytes() -> u64 {
     25 << 20
 }
 
+/// Account deletion (D69): chadd opers up on ergo's plaintext listener, then
+/// unregisters the account, redacts its messages and deletes its uploads.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Delete {
+    /// ergo's plaintext IRC listener, e.g. `127.0.0.1:6667`. Keep it on loopback.
+    pub irc: String,
+    /// An oper whose class has `accreg`, `history` and `nofakelag`.
+    pub oper: String,
+    pub oper_password: String,
+    /// ergo's `server.output-path`, where `HISTSERV EXPORT` writes.
+    pub export_dir: std::path::PathBuf,
+    /// Queued deletions (`jobs/`) and the msgids deleted so far (`redacted.log`).
+    pub state_dir: std::path::PathBuf,
+}
+
 /// ergo's HTTP API, for checking passwords (`docs/notes/ergo-api.md`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -296,6 +314,7 @@ impl Config {
                     provider: "KLIPY".into(),
                 }),
                 games: self.discord_games,
+                delete: self.delete.is_some(),
             },
             livekit: discovery::Livekit {
                 url: or(&self.endpoints.livekit, &ws_origin, "/livekit")?,
