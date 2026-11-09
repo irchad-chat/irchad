@@ -1,5 +1,9 @@
-target
+**/target
 .git
 deploy
 docs
+android
+iOS
+site
+crates/chad-irc/fuzz
 !deploy/chadd.Dockerfile
