@@ -106,6 +106,11 @@ impl App {
                 target,
                 messages,
             } => self.messages_arrived(ctx, &network, &target, &messages, &applied),
+            Event::ChannelList { network, channels } => {
+                if let Some(b) = self.browse.as_mut().filter(|b| b.network == network) {
+                    b.channels = Some(channels);
+                }
+            }
             Event::Error { network, error } => {
                 let name = self.net_name(&network);
                 self.toast(format!("{name}: {error}"));
@@ -320,7 +325,7 @@ impl App {
             if !viewing && should_notify(self.settings.notify, m) {
                 let who = chatlog::shown(&n.profiles, &m.nick);
                 let summary = match b.info.kind {
-                    BufferKind::Dm => who.to_owned(),
+                    BufferKind::Dm | BufferKind::Server => who.to_owned(),
                     BufferKind::Channel => format!("{who} in {}", b.info.target),
                 };
                 platform::notify(summary, chatlog::snippet(&format::strip(&m.text), 200));

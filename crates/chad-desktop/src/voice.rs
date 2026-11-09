@@ -332,38 +332,47 @@ pub fn members(
             })
             .map_or_else(|| id.to_owned(), |m| m.nick.clone())
     };
-    // `note`: whispering, or on the whisper list.
-    let mut row =
-        |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool, note: Option<RichText>| {
-            let name = shown(profiles, nick).to_owned();
-            let avatar = profiles.get(&key(nick)).and_then(|p| p.avatar.clone());
-            let r = ui
-                .horizontal(|ui| {
-                    ui.add_space(16.0);
-                    let (r, _) = ui.allocate_exact_size(vec2(AVATAR, AVATAR), Sense::hover());
-                    media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
-                    if speaking {
-                        let radius = (AVATAR - RING) / 2.0;
-                        ui.painter()
-                            .circle_stroke(r.center(), radius, (RING, SPEAKING));
-                    }
-                    let color = chatlog::nick_color(nick, dark);
-                    let text = if muted {
-                        RichText::new(format!("{name} {}", icons::MICROPHONE_SLASH)).weak()
-                    } else if speaking {
-                        RichText::new(&name).color(color).strong()
-                    } else {
-                        RichText::new(&name).color(color.gamma_multiply(0.7))
-                    };
+    // `note`: whispering, or on the whisper list. `reserve`: width kept free on
+    // the right for the LIVE/camera badges, so the name truncates before them.
+    let mut row = |ui: &mut egui::Ui,
+                   nick: &str,
+                   speaking: bool,
+                   muted: bool,
+                   note: Option<RichText>,
+                   reserve: f32| {
+        let name = shown(profiles, nick).to_owned();
+        let avatar = profiles.get(&key(nick)).and_then(|p| p.avatar.clone());
+        let r = ui
+            .horizontal(|ui| {
+                ui.add_space(16.0);
+                let (r, _) = ui.allocate_exact_size(vec2(AVATAR, AVATAR), Sense::hover());
+                media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
+                if speaking {
+                    let radius = (AVATAR - RING) / 2.0;
+                    ui.painter()
+                        .circle_stroke(r.center(), radius, (RING, SPEAKING));
+                }
+                let color = chatlog::nick_color(nick, dark);
+                let text = if muted {
+                    RichText::new(format!("{name} {}", icons::MICROPHONE_SLASH)).weak()
+                } else if speaking {
+                    RichText::new(&name).color(color).strong()
+                } else {
+                    RichText::new(&name).color(color.gamma_multiply(0.7))
+                };
+                ui.scope(|ui| {
+                    ui.set_max_width((ui.available_width() - reserve).max(0.0));
                     let r = ui.add(egui::Label::new(text).sense(Sense::click()).truncate());
                     if let Some(note) = note {
                         ui.add(egui::Label::new(note.small()).truncate());
                     }
                     r
                 })
-                .inner;
-            (r, name)
-        };
+                .inner
+            })
+            .inner;
+        (r, name)
+    };
     match voice.call().filter(|_| in_call) {
         Some(call) => {
             let targets = call
@@ -381,39 +390,50 @@ pub fn members(
                     (false, false) if listed => Some(RichText::new("whisper").weak()),
                     _ => None,
                 };
-                let (r, name) = row(ui, &nick_of(&p.identity), p.speaking, p.muted, note);
+                // Room for the badges' natural widths (egui's button min width is 40).
+                let reserve =
+                    if p.sharing { 48.0 } else { 0.0 } + if p.camera { 44.0 } else { 0.0 };
+                let (r, name) = row(
+                    ui,
+                    &nick_of(&p.identity),
+                    p.speaking,
+                    p.muted,
+                    note,
+                    reserve,
+                );
+                // A child, not `put`: an overflowing badge must not widen the
+                // panel, or the panel creeps wider every frame.
+                let mut badges = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(egui::Rect::from_x_y_ranges(
+                            ui.max_rect().x_range(),
+                            r.rect.y_range(),
+                        ))
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
                 if p.sharing {
                     let live = egui::Button::new(
                         RichText::new("LIVE").small().strong().color(Color32::WHITE),
                     )
                     .fill(DANGER)
                     .small();
-                    let at = egui::Rect::from_min_size(
-                        egui::pos2(ui.max_rect().right() - 40.0, r.rect.top()),
-                        vec2(36.0, r.rect.height()),
-                    );
                     let tip = if p.local {
                         "Preview your share"
                     } else {
                         "Watch"
                     };
-                    if ui.put(at, live).on_hover_text(tip).clicked() {
+                    if badges.add(live).on_hover_text(tip).clicked() {
                         watch = Some((p.identity.clone(), false));
                     }
                 }
                 if p.camera {
                     let cam = egui::Button::new(RichText::new(icons::VIDEO_CAMERA).small()).small();
-                    let right = if p.sharing { 64.0 } else { 40.0 };
-                    let at = egui::Rect::from_min_size(
-                        egui::pos2(ui.max_rect().right() - right, r.rect.top()),
-                        vec2(20.0, r.rect.height()),
-                    );
                     let tip = if p.local {
                         "Preview your camera"
                     } else {
                         "Watch their camera"
                     };
-                    if ui.put(at, cam).on_hover_text(tip).clicked() {
+                    if badges.add(cam).on_hover_text(tip).clicked() {
                         watch = Some((p.identity.clone(), true));
                     }
                 }
@@ -457,7 +477,7 @@ pub fn members(
         }
         None => {
             for n in nicks {
-                row(ui, n, false, false, None);
+                row(ui, n, false, false, None, 0.0);
             }
         }
     }

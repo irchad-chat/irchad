@@ -81,6 +81,10 @@ impl Client {
     where
         F: Future<Output = Result<T, Error>>,
     {
+        // Classic networks (D72) have no chadd; their "api" is the IRC origin.
+        if !matches!(self.api.scheme(), "https" | "http") {
+            return Err("That isn't available on this network.".into());
+        }
         let Some(password) = &self.password else {
             return Err("That needs an account. Sign up to use it.".into());
         };

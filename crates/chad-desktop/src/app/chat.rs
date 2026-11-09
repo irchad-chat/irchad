@@ -656,6 +656,14 @@ fn submit(
     if text.trim().is_empty() && b.ui.attached.is_empty() {
         return;
     }
+    // A classic network's server buffer takes raw IRC lines (D72).
+    if b.info.kind == BufferKind::Server {
+        if !text.trim().is_empty() {
+            cx.send(NetCommand::Raw { line: text });
+        }
+        b.ui.draft.clear();
+        return;
+    }
     let mentions = std::mem::take(&mut b.ui.picked);
     if let Some(msgid) = b.ui.editing.take() {
         if !text.trim().is_empty() {

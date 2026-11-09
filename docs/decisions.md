@@ -389,3 +389,25 @@ Accepted gaps:
 - The SFU's active-speaker updates go to everyone, so a non-target on mobile, which shows those, sees the whisperer as speaking without hearing anything. Desktop computes speaking from audio it decodes, so it doesn't show this.
 - Someone dropped from the list mid-whisper may hear about one round trip more, until the SFU applies the update.
 - Newcomers can't subscribe to our mic or shares until our next permission update lands, which is one round trip after they join. That's fail-closed.
+
+## D72: Classic IRC networks: the URL scheme decides, no chadd (2026-11-09)
+
+IrChad can join any IRC network, not just IrChad servers. A network id of `ircs://host:port` or `irc://host:port` makes it *classic*. `https://` is an IrChad server, as before. There's no flag to store, and the two can't disagree.
+Classic networks:
+- **No chadd and no discovery.** `conn` builds a local `Discovery` with no features. Its required chadd and LiveKit URLs hold the IRC origin, and `chadd::Client::call` refuses non-HTTP URLs, so nothing ever calls them. Voice is refused in core and hidden in the UI.
+- **TCP/TLS lines.** `Connection` gained a line variant with the same 16 KiB cap as WebSocket frames (D14). Oversized lines are dropped up to their `\n`. Non-UTF-8 input decodes as latin-1, because old networks still send it. Plaintext `irc://` is allowed, since some EFnet servers have no TLS, but the dialog warns.
+- **Auth.** SASL uses the bare account, because `account@device` is ergo's (D11). Without SASL, the client sends NickServ `IDENTIFY <account> <password>` after `001`. Without a password there's no login. Sign-up stays IrChad-only.
+- **No labels.** `send_labeled` falls back when `labeled-response` isn't enabled:
+  - Sync runs at once.
+  - A send completes on its unlabeled own echo (FIFO, same target), or at once without `echo-message`, and is then stored, since there's no history to refill it.
+  - LIST collects `322`s until `323`.
+  - WHO becomes `NAMES`.
+  - Other pendings (history, devices, block lookups) are cap-gated already and get dropped.
+  
+  `353`/`366` are parsed everywhere, which is harmless on ergo with `no-implicit-names`.
+- **Persistence comes from the cap**, not from `!guest`: without `draft/persistence`, `synced` rejoins the cached channels instead of dropping them. Classic never auto-joins via LIST.
+- **Server buffer.** `BufferKind::Server`, keyed `*` (never a valid nick or channel), holds server notices, the MOTD and unhandled numerics. Typing there sends a raw line (`NetCommand::Raw`). It's classic-only, so IrChad's chads don't get a status window.
+- **Messages without msgids** are cached on classic networks. The cache is the only history there.
+- **"Browse channels…"** (`NetCommand::ListChannels` → `Event::ChannelList`) works on both kinds. It keeps at most 20k `322`s and shows the biggest 5k.
+
+Not done: presets, mobile UI for adding a classic network, a nick separate from the account, CertFP/SASL EXTERNAL, and per-network encodings.

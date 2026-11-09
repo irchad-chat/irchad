@@ -13,7 +13,9 @@ impl Net {
         else {
             return;
         };
-        let refuse = if self.guest {
+        let refuse = if self.classic() {
+            Some("Voice isn't available on this network.".to_owned())
+        } else if self.guest {
             Some("Voice needs an account. Sign up to use it.".to_owned())
         } else if b.voice_off {
             Some(format!("Voice is turned off in {}.", b.name))

@@ -93,6 +93,16 @@ fn join_dialog() {
 }
 
 #[test]
+fn join_dialog_classic() {
+    let mut s = Shots::new(Some("https://chat.localhost:8443/"));
+    s.harness.run();
+    s.harness.get_by_label("Classic IRC").click();
+    s.harness.run();
+    s.harness.get_by_label("Encrypted (TLS)").click();
+    s.shot("join_dialog_classic");
+}
+
+#[test]
 fn settings() {
     let mut s = Shots::new(None);
     s.harness.run();

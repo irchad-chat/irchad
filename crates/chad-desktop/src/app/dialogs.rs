@@ -8,6 +8,7 @@ impl App {
         self.share_dialog(ctx);
         self.join_dialog(ctx);
         self.signup_dialog(ctx);
+        self.browse_dialog(ctx);
         self.email_code_dialog(ctx);
         self.remove_dialog(ctx);
         self.settings_window(ctx);
@@ -42,20 +43,80 @@ impl App {
                 ui.set_width(360.0);
                 ui.heading("Join a network");
                 ui.add_space(8.0);
-                let l = ui.label("Server URL");
-                ui.add_enabled(
-                    !busy,
-                    egui::TextEdit::singleline(&mut j.invite)
-                        .hint_text("chat.example.com")
-                        .desired_width(f32::INFINITY),
-                )
-                .labelled_by(l.id);
+                let was_classic = j.classic;
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        ui.selectable_value(&mut j.classic, false, "IrChad server");
+                        ui.selectable_value(&mut j.classic, true, "Classic IRC");
+                    });
+                });
+                // An invite URL isn't a host, nor the other way round.
+                if j.classic != was_classic {
+                    j.invite.clear();
+                }
+                ui.add_space(4.0);
+                if j.classic {
+                    if j.mode == JoinMode::Register {
+                        j.mode = JoinMode::Login;
+                    }
+                    ui.horizontal(|ui| {
+                        let l = ui.label("Server");
+                        ui.add_enabled(
+                            !busy,
+                            egui::TextEdit::singleline(&mut j.invite)
+                                .hint_text("irc.libera.chat")
+                                .desired_width(200.0),
+                        )
+                        .labelled_by(l.id);
+                        let l = ui.label("Port");
+                        let default = if j.plaintext { "6667" } else { "6697" };
+                        ui.add_enabled(
+                            !busy,
+                            egui::TextEdit::singleline(&mut j.port)
+                                .hint_text(default)
+                                .desired_width(f32::INFINITY),
+                        )
+                        .labelled_by(l.id);
+                    });
+                    let mut tls = !j.plaintext;
+                    ui.add_enabled(!busy, egui::Checkbox::new(&mut tls, "Encrypted (TLS)"));
+                    j.plaintext = !tls;
+                    if j.plaintext {
+                        ui.label(
+                            RichText::new(
+                                "Without TLS, your messages and password \
+                                 cross the network unencrypted.",
+                            )
+                            .color(ui.visuals().warn_fg_color),
+                        );
+                    }
+                } else {
+                    let l = ui.label("Server URL");
+                    ui.add_enabled(
+                        !busy,
+                        egui::TextEdit::singleline(&mut j.invite)
+                            .hint_text("chat.example.com")
+                            .desired_width(f32::INFINITY),
+                    )
+                    .labelled_by(l.id);
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!busy, |ui| {
                         ui.selectable_value(&mut j.mode, JoinMode::Login, "I have an account");
-                        ui.selectable_value(&mut j.mode, JoinMode::Register, "Create an account");
-                        ui.selectable_value(&mut j.mode, JoinMode::Guest, "Guest");
+                        if !j.classic {
+                            ui.selectable_value(
+                                &mut j.mode,
+                                JoinMode::Register,
+                                "Create an account",
+                            );
+                        }
+                        let guest = if j.classic {
+                            "Just a nickname"
+                        } else {
+                            "Guest"
+                        };
+                        ui.selectable_value(&mut j.mode, JoinMode::Guest, guest);
                     });
                 });
                 ui.add_space(4.0);
@@ -85,7 +146,7 @@ impl App {
                             ui.end_row();
                         }
                     });
-                if j.mode == JoinMode::Guest {
+                if j.mode == JoinMode::Guest && !j.classic {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
@@ -113,7 +174,19 @@ impl App {
                 cancel = no;
             });
             if submit {
-                match invite::parse(&j.invite) {
+                let url = if j.classic {
+                    let scheme = if j.plaintext { "irc" } else { "ircs" };
+                    let port = j.port.trim();
+                    let port = if port.is_empty() {
+                        String::new()
+                    } else {
+                        format!(":{port}")
+                    };
+                    format!("{scheme}://{}{port}", j.invite.trim())
+                } else {
+                    j.invite.trim().to_owned()
+                };
+                match invite::parse(&url) {
                     Err(e) => j.error = Some(e),
                     Ok(_) => {
                         let (account, password) = (j.account.trim().to_owned(), j.password.clone());
@@ -131,11 +204,8 @@ impl App {
                             JoinMode::Guest => Auth::Guest { nick: account },
                         };
                         j.error = None;
-                        j.busy = Some(j.invite.trim().to_owned());
-                        self.core.send(Command::Join {
-                            invite: j.invite.trim().to_owned(),
-                            auth,
-                        });
+                        j.busy = Some(url.clone());
+                        self.core.send(Command::Join { invite: url, auth });
                     }
                 }
             }
@@ -143,6 +213,75 @@ impl App {
             if (cancel || modal.should_close()) && !busy {
                 self.join = None;
             }
+        }
+    }
+
+    /// "Browse channels…": filter the LIST and join from it.
+    fn browse_dialog(&mut self, ctx: &egui::Context) {
+        let Some(b) = &mut self.browse else { return };
+        let mut join = None;
+        let modal = egui::Modal::new(egui::Id::unique("browse")).show(ctx, |ui| {
+            ui.set_width(480.0);
+            ui.heading("Browse channels");
+            ui.add_space(8.0);
+            let l = ui.label("Search");
+            ui.add(
+                egui::TextEdit::singleline(&mut b.filter)
+                    .hint_text("name or topic")
+                    .desired_width(f32::INFINITY),
+            )
+            .labelled_by(l.id);
+            ui.add_space(8.0);
+            let Some(channels) = &b.channels else {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Asking the server…");
+                });
+                return;
+            };
+            let filter = b.filter.trim().to_lowercase();
+            let shown: Vec<_> = channels
+                .iter()
+                .filter(|c| {
+                    filter.is_empty()
+                        || c.name.to_lowercase().contains(&filter)
+                        || c.topic.to_lowercase().contains(&filter)
+                })
+                .collect();
+            if shown.is_empty() {
+                ui.label(RichText::new("No channels match.").weak());
+            }
+            let row = ui.text_style_height(&egui::TextStyle::Body) * 2.4;
+            egui::ScrollArea::vertical()
+                .max_height(400.0)
+                .auto_shrink([false, true])
+                .show_rows(ui, row, shown.len(), |ui, range| {
+                    for c in &shown[range] {
+                        ui.horizontal(|ui| {
+                            if ui.button("Join").clicked() {
+                                join = Some(c.name.clone());
+                            }
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new(format!("{} · {}", c.name, c.users)).strong(),
+                                );
+                                let topic = format::strip(&c.topic);
+                                ui.add(egui::Label::new(RichText::new(topic).weak()).truncate());
+                            });
+                        });
+                    }
+                });
+        });
+        if let Some(channel) = join {
+            let network = b.network.clone();
+            let k = key(&channel);
+            self.send(&network, NetCommand::JoinChannel { channel });
+            if let Some(ni) = self.net_idx(&network) {
+                select(&mut self.view.nets[ni], &k);
+            }
+            self.browse = None;
+        } else if modal.should_close() {
+            self.browse = None;
         }
     }
 

@@ -2,7 +2,7 @@
 //! commands, then drain `out` (lines to send) and `events` (for the UI).
 //! `conn` does the I/O, registration and reconnects around it.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use chad_irc::Message;
@@ -14,9 +14,9 @@ use chad_irc::label::Labels;
 use crate::store::{Store, StoredBuffer};
 use crate::view::Profile;
 use crate::{
-    Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, Member, Mention,
-    MessageKind, NetCommand, NetworkInfo, PushSubscription, Seen, SendStatus, Typing, VoiceState,
-    mention, one_line, time,
+    Block, BufferInfo, BufferKind, ChatMessage, ConnState, Crypt, Event, ListedChannel, Member,
+    Mention, MessageKind, NetCommand, NetworkInfo, PushSubscription, Seen, SendStatus, Typing,
+    VoiceState, mention, one_line, time,
 };
 
 mod block;
@@ -71,6 +71,12 @@ pub const RECEIPTS_KEY: &str = "chad/receipts";
 const READ_TAG: &str = "+chad/read";
 /// Store meta: our own `chad/receipts`, as last seen, for offline startup.
 const RECEIPTS_META: &str = "receipts";
+/// The server/status buffer's key and name on classic networks (D72): not a
+/// valid nick or channel, so it can't collide with either.
+pub const SERVER_BUFFER: &str = "*";
+/// D14: `322`s kept from one unlabeled LIST, and channels shown from any LIST.
+const MAX_LISTED: usize = 20_000;
+const MAX_LIST_SHOWN: usize = 5_000;
 
 #[derive(Debug)]
 enum Pending {
@@ -92,6 +98,8 @@ enum Pending {
     Targets,
     Sync,
     List,
+    /// The channel browser's LIST.
+    Browse,
     Who {
         channel: String,
     },
@@ -166,6 +174,13 @@ pub struct Net {
     cm: Casemapping,
     batches: Assembler,
     labels: Labels<Pending>,
+    /// Without `labeled-response` (classic networks): sends waiting for their
+    /// `echo-message`, oldest first.
+    echoes: VecDeque<Pending>,
+    /// Without `labeled-response`: a LIST in progress and its `322`s so far.
+    listing: Option<(Pending, Vec<Item>)>,
+    /// `353`s per folded channel until their `366`.
+    names: HashMap<String, HashMap<String, Member>>,
     buffers: HashMap<String, Buffer>,
     next_local: u64,
     next_batch: u64,
@@ -227,6 +242,9 @@ impl Net {
             cm: Casemapping::Ascii,
             batches: Assembler::new(),
             labels: Labels::new(),
+            echoes: VecDeque::new(),
+            listing: None,
+            names: HashMap::new(),
             buffers: HashMap::new(),
             next_local: 0,
             next_batch: 0,
@@ -259,6 +277,12 @@ impl Net {
 
     fn id(&self) -> String {
         self.info.network.clone()
+    }
+
+    /// A plain IRC network (`ircs://` / `irc://`) rather than an IrChad server
+    /// (D72): no chadd, no home channel, no auto-join.
+    pub fn classic(&self) -> bool {
+        crate::invite::classic(&self.info.network)
     }
 
     pub fn set_state(&mut self, state: ConnState) {
@@ -311,7 +335,7 @@ impl Net {
         self.joined.clear();
         self.who_wanted.clear();
         self.set_state(ConnState::Connected);
-        self.persistent = !self.guest;
+        self.persistent = !self.guest && self.caps.enabled("draft/persistence");
         if let Some(m) = &self.away {
             self.out.push(Message::new("AWAY", [m.as_str()]));
         }
@@ -342,7 +366,10 @@ impl Net {
         self.typing_sent.clear();
         self.out.clear();
         self.e2e_detach();
-        for pending in self.labels.clear() {
+        self.listing = None;
+        self.names.clear();
+        let unlabeled: Vec<Pending> = self.echoes.drain(..).collect();
+        for pending in self.labels.clear().into_iter().chain(unlabeled) {
             if let Pending::Send {
                 target, mut local, ..
             } = pending
@@ -378,7 +405,11 @@ impl Net {
         if let Some(item) = self.batches.feed(msg)? {
             match self.labels.take(item) {
                 Ok((token, item)) => self.labeled(token, item),
-                Err(item) => self.item(item),
+                Err(item) => {
+                    if let Some(item) = self.unlabeled(item) {
+                        self.item(item);
+                    }
+                }
             }
         }
         Ok(())
@@ -395,8 +426,66 @@ impl Net {
     }
 
     fn send_labeled(&mut self, m: Message, token: Pending) {
-        let m = self.labels.tag(m, token);
+        if self.caps.enabled("labeled-response") {
+            let m = self.labels.tag(m, token);
+            self.out.push(m);
+            return;
+        }
+        // Classic networks (D72): match the reply by what it looks like instead.
         self.out.push(m);
+        match token {
+            Pending::Sync => self.reply(token, Vec::new()),
+            Pending::Send { .. } if self.caps.enabled("echo-message") => {
+                self.echoes.push_back(token);
+            }
+            Pending::Send { .. } => self.reply(token, Vec::new()),
+            Pending::List | Pending::Browse => self.listing = Some((token, Vec::new())),
+            // Callers gate these on caps no labels-less server has; WHO falls back to NAMES.
+            Pending::Who { .. }
+            | Pending::History { .. }
+            | Pending::Targets
+            | Pending::Devices { .. }
+            | Pending::Block { .. } => {}
+        }
+    }
+
+    /// Without `labeled-response`: the reply to an [`Net::send_labeled`], else
+    /// `item` back for the usual handling.
+    fn unlabeled(&mut self, item: Item) -> Option<Item> {
+        let Item::Message(m) = &item else {
+            return Some(item);
+        };
+        match m.command.as_str() {
+            "321" | "322" if self.listing.is_some() => {
+                let (_, items) = self.listing.as_mut().expect("checked");
+                if items.len() < MAX_LISTED {
+                    items.push(item);
+                }
+                None
+            }
+            "323" if self.listing.is_some() => {
+                let (token, items) = self.listing.take().expect("checked");
+                self.reply(token, items);
+                None
+            }
+            "PRIVMSG" | "NOTICE"
+                if m.source_nick()
+                    .is_some_and(|n| self.cm.eq(n, &self.info.nick)) =>
+            {
+                let target = m.param(0).unwrap_or_default();
+                let ours = matches!(
+                    self.echoes.front(),
+                    Some(Pending::Send { target: t, .. }) if self.cm.eq(t, target)
+                );
+                if !ours {
+                    return Some(item);
+                }
+                let token = self.echoes.pop_front().expect("checked");
+                self.reply(token, vec![item]);
+                None
+            }
+            _ => Some(item),
+        }
     }
 
     fn history(&mut self, key: &str, kind: Hist, reference: &str) {
@@ -621,7 +710,7 @@ impl Net {
             mentions,
             online: b.online,
             away: b.away,
-            voice: b.kind == BufferKind::Channel && !b.voice_off,
+            voice: b.kind == BufferKind::Channel && !b.voice_off && !self.classic(),
             encryption: self.encryption(key),
             seen: b.seen.filter(|_| self.info.receipts),
         };

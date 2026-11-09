@@ -46,6 +46,11 @@ impl Net {
             Item::Batch(b) if b.kind() == "labeled-response" => b.items,
             other => vec![other],
         };
+        self.reply(token, items);
+    }
+
+    /// The reply to a request, labeled or matched without labels (D72).
+    pub(super) fn reply(&mut self, token: Pending, items: Vec<Item>) {
         match token {
             Pending::Send {
                 target,
@@ -83,6 +88,11 @@ impl Net {
                     }
                     (None, None) => {
                         local.status = SendStatus::Sent;
+                        // No labels and no echo (classic): nothing else will store it.
+                        if !self.caps.enabled("labeled-response") {
+                            let key = self.fold(&target);
+                            self.store.insert(&key, &local);
+                        }
                         self.emit_messages(&target, vec![*local]);
                     }
                 }
@@ -147,6 +157,23 @@ impl Net {
                     .collect();
                 self.join_all(&channels);
             }
+            Pending::Browse => {
+                let mut channels: Vec<ListedChannel> = flatten(items)
+                    .filter(|m| m.command == "322")
+                    .filter_map(|m| {
+                        let name = m.param(1).filter(|c| valid_name(c) && self.is_channel(c))?;
+                        Some(ListedChannel {
+                            name: name.to_owned(),
+                            users: m.param(2).and_then(|u| u.parse().ok()).unwrap_or(0),
+                            topic: truncate(m.param(3).unwrap_or_default(), 300).to_owned(),
+                        })
+                    })
+                    .collect();
+                channels.sort_by(|a, b| b.users.cmp(&a.users).then_with(|| a.name.cmp(&b.name)));
+                channels.truncate(MAX_LIST_SHOWN);
+                let network = self.id();
+                self.events.push(Event::ChannelList { network, channels });
+            }
             Pending::Who { channel } => {
                 let key = self.fold(&channel);
                 let prefixes: String = self.isupport.prefix().iter().map(|(_, s)| *s).collect();
@@ -207,7 +234,7 @@ impl Net {
             self.join_all(&names);
         }
         let first = self.store.meta("autojoined").is_none();
-        if first && self.joined.is_empty() {
+        if first && self.joined.is_empty() && !self.classic() {
             match self.home.clone() {
                 // Its `chad/channels` brings the rest once we're in.
                 Some(home) => self.out.push(Message::new("JOIN", [home])),
@@ -265,6 +292,13 @@ impl Net {
         match m.command.as_str() {
             "PRIVMSG" if !me && m.param(1) == Some("\x01VERSION\x01") => {
                 self.ctcp_version(&m, &from);
+            }
+            // Server notices, which `chat` drops; classic networks show them (D72).
+            "PRIVMSG" | "NOTICE"
+                if self.classic() && m.source.as_deref().is_none_or(|s| !s.contains('!')) =>
+            {
+                let from = m.source.clone().unwrap_or_default();
+                self.server_line(&from, m.params.last().cloned().unwrap_or_default(), false);
             }
             "PRIVMSG" | "NOTICE" => {
                 if let Some((target, msg)) = self.chat_in(&Item::Message(m)) {
@@ -373,12 +407,114 @@ impl Net {
                 self.push_retry = Some(Instant::now() + Duration::from_secs(5 << self.push_tries));
                 self.push_tries += 1;
             }
+            "353" => self.names_reply(&m),
+            "366" => self.names_end(&m),
             _ => {
+                if self.classic() {
+                    self.server_numeric(&m);
+                }
                 if let Some(e) = failure(&Item::Message(m)) {
                     self.error(e);
                 }
             }
         }
+    }
+
+    /// RPL_NAMREPLY `<me> <symbol> <channel> :[prefixes]nick[!user@host] ...`,
+    /// collected until `366`. ergo never sends it (`no-implicit-names`, WHOX instead).
+    fn names_reply(&mut self, m: &Message) {
+        let (Some(chan), Some(list)) = (m.param(2), m.param(3)) else {
+            return;
+        };
+        let key = self.fold(chan);
+        if !self.buffers.contains_key(&key) {
+            return;
+        }
+        let prefixes: String = self.isupport.prefix().iter().map(|(_, s)| *s).collect();
+        let members: Vec<(String, Member)> = list
+            .split(' ')
+            .filter_map(|word| {
+                let start = word.find(|c| !prefixes.contains(c))?;
+                let (pre, rest) = word.split_at(start);
+                let nick = rest.split('!').next()?;
+                valid_name(nick).then(|| {
+                    let member = Member {
+                        nick: nick.to_owned(),
+                        account: None,
+                        away: false,
+                        oper: false,
+                        // multi-prefix: highest first.
+                        prefix: pre.chars().next().map(String::from).unwrap_or_default(),
+                    };
+                    (self.fold(nick), member)
+                })
+            })
+            .collect();
+        let names = self.names.entry(key).or_default();
+        for (k, mem) in members {
+            if names.len() >= MAX_MEMBERS {
+                break;
+            }
+            names.insert(k, mem);
+        }
+    }
+
+    fn names_end(&mut self, m: &Message) {
+        let Some(key) = m.param(1).map(|c| self.fold(c)) else {
+            return;
+        };
+        let Some(mut names) = self.names.remove(&key) else {
+            return;
+        };
+        let Some(b) = self.buffers.get_mut(&key) else {
+            return;
+        };
+        // NAMES knows no accounts or away; keep what JOINs and away-notify told us.
+        for (k, new) in &mut names {
+            if let Some(old) = b.members.get(k) {
+                new.account.clone_from(&old.account);
+                new.away = old.away;
+            }
+        }
+        b.members = names;
+        self.emit_members(&key);
+    }
+
+    /// A numeric nothing else handles, as text in the server buffer (D72).
+    fn server_numeric(&mut self, m: &Message) {
+        let numeric = m.command.len() == 3 && m.command.bytes().all(|b| b.is_ascii_digit());
+        // Replies to things we asked for ourselves.
+        let ours = [
+            "315", "321", "322", "323", "324", "329", "333", "352", "354",
+        ];
+        if !numeric || ours.contains(&m.command.as_str()) {
+            return;
+        }
+        let text = m.params.get(1..).unwrap_or_default().join(" ");
+        let from = m.source.clone().unwrap_or_default();
+        self.server_line(&from, text, false);
+    }
+
+    /// A line in the classic server buffer, which is made on first use.
+    pub(super) fn server_line(&mut self, from: &str, text: String, own: bool) {
+        if !self.classic() {
+            return;
+        }
+        let key = SERVER_BUFFER.to_owned();
+        if !self.buffers.contains_key(&key) && !self.add_buffer(SERVER_BUFFER, BufferKind::Server) {
+            return;
+        }
+        let msg = ChatMessage {
+            time: time::now_ms(),
+            nick: truncate(from, MAX_NAME).to_owned(),
+            kind: MessageKind::Notice,
+            text: truncate(&text, MAX_TEXT).to_owned(),
+            own,
+            ..Default::default()
+        };
+        self.store.insert(&key, &msg);
+        self.emit_messages(SERVER_BUFFER, vec![msg]);
+        self.emit_buffer(&key);
     }
 
     /// Reactions, typing and verification steps.
@@ -636,6 +772,10 @@ impl Net {
         }
         if msg.msgid.is_some() && !self.store.insert(&key, &msg) {
             return;
+        }
+        // Classic networks (D72) have no msgids, and no history but this cache.
+        if msg.msgid.is_none() && self.classic() {
+            self.store.insert(&key, &msg);
         }
         self.emit_messages(target, vec![msg]);
         self.emit_buffer(&key);

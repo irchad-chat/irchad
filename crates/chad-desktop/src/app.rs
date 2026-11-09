@@ -82,6 +82,8 @@ pub struct App {
     /// A guest making an account.
     signup: Option<SignUpDialog>,
     adding: Option<(BufferKind, String)>,
+    /// "Browse channels…": the network's LIST.
+    browse: Option<ChannelBrowser>,
     toasts: Vec<(String, Instant)>,
     last_badge: (bool, u32),
     last_title: String,
@@ -247,7 +249,14 @@ struct Attachment {
 
 #[derive(Default)]
 struct JoinDialog {
+    /// The server URL, or a classic network's host.
     invite: String,
+    /// "Classic IRC": any IRC network, by host and port (D72).
+    classic: bool,
+    /// Classic only; empty means the default for TLS or not.
+    port: String,
+    /// Classic only: no TLS.
+    plaintext: bool,
     mode: JoinMode,
     account: String,
     password: String,
@@ -255,6 +264,24 @@ struct JoinDialog {
     /// The invite sent to the core, while waiting for the outcome.
     busy: Option<String>,
     error: Option<String>,
+}
+
+/// "Browse channels…": every channel on a network, from LIST.
+struct ChannelBrowser {
+    network: String,
+    filter: String,
+    /// `None` until the LIST is in.
+    channels: Option<Vec<chad_core::ListedChannel>>,
+}
+
+impl ChannelBrowser {
+    fn new(network: String) -> Self {
+        Self {
+            network,
+            filter: String::new(),
+            channels: None,
+        }
+    }
 }
 
 /// A guest signing up on the network they're in.
@@ -395,6 +422,7 @@ impl App {
             delete_account: false,
             signup: None,
             adding: None,
+            browse: None,
             toasts: Vec::new(),
             last_badge: (false, 0),
             last_title: "IrChad".into(),

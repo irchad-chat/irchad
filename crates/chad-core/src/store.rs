@@ -201,10 +201,10 @@ impl Store {
                 Ok(StoredBuffer {
                     key: r.get(0)?,
                     name: r.get(1)?,
-                    kind: if r.get::<_, i64>(2)? == 1 {
-                        BufferKind::Dm
-                    } else {
-                        BufferKind::Channel
+                    kind: match r.get::<_, i64>(2)? {
+                        1 => BufferKind::Dm,
+                        2 => BufferKind::Server,
+                        _ => BufferKind::Channel,
                     },
                     topic: r.get(3)?,
                     read: r.get(4)?,
@@ -220,7 +220,11 @@ impl Store {
     }
 
     pub fn put_buffer(&self, key: &str, name: &str, kind: BufferKind) {
-        let kind = i64::from(kind == BufferKind::Dm);
+        let kind: i64 = match kind {
+            BufferKind::Channel => 0,
+            BufferKind::Dm => 1,
+            BufferKind::Server => 2,
+        };
         ok(
             "write buffer",
             self.exec(

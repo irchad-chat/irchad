@@ -189,6 +189,12 @@ pub enum NetCommand {
     JoinChannel {
         channel: String,
     },
+    /// Every channel on the network, for the channel browser: `Event::ChannelList`.
+    ListChannels,
+    /// A raw IRC line typed in a classic network's server buffer (D72).
+    Raw {
+        line: String,
+    },
     /// Leaving is explicit and persists across devices (always-on).
     Part {
         channel: String,
@@ -393,6 +399,11 @@ pub enum Event {
         network: String,
         channel: String,
         nicks: Vec<String>,
+    },
+    /// The reply to `NetCommand::ListChannels`, biggest first, capped (D14).
+    ChannelList {
+        network: String,
+        channels: Vec<ListedChannel>,
     },
     /// Something went wrong, in words a user understands.
     Error {
@@ -626,6 +637,8 @@ pub enum VoiceState {
 pub enum BufferKind {
     Channel,
     Dm,
+    /// A classic network's server/status buffer, keyed `*` (D72).
+    Server,
 }
 
 /// The default is a plain, sent PRIVMSG with everything else empty.
@@ -695,6 +708,13 @@ pub enum SendStatus {
 pub struct Reaction {
     pub emoji: String,
     pub nicks: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedChannel {
+    pub name: String,
+    pub users: u32,
+    pub topic: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

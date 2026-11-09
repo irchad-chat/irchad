@@ -4,6 +4,7 @@ use crate::store::msg;
 
 mod block;
 mod chat;
+mod chat_classic;
 mod e2e;
 mod receipts;
 mod voice;

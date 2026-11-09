@@ -179,6 +179,10 @@ impl App {
                             error: None,
                         });
                     }
+                    if ui.button("Browse channels…").clicked() {
+                        self.browse = Some(ChannelBrowser::new(network.clone()));
+                        self.send(&network, NetCommand::ListChannels);
+                    }
                     if ui.button("Leave network…").clicked() {
                         self.confirm_remove = Some(network.clone());
                     }
@@ -292,6 +296,27 @@ impl App {
         egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
+                // A classic network's server buffer (D72), above everything.
+                let n = &self.view.nets[ni];
+                if let Some(b) = n.buffers.iter().find(|b| b.info.kind == BufferKind::Server) {
+                    let selected = n.ui.selected.as_deref() == Some(&b.key);
+                    let mut text = RichText::new("Server");
+                    if b.info.unread > 0 || selected {
+                        text = text.strong().color(ui.visuals().strong_text_color());
+                    } else {
+                        text = text.color(ui.visuals().weak_text_color());
+                    }
+                    let resp = ui
+                        .with_layout(egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+                            ui.add(egui::Button::selectable(selected, text).min_size(vec2(0.0, 24.0)))
+                        })
+                        .inner
+                        .on_hover_text("Server messages. Type raw IRC commands here.");
+                    if resp.clicked() {
+                        pick = Some(b.key.clone());
+                    }
+                    ui.add_space(8.0);
+                }
                 for (kind, title) in [
                     (BufferKind::Channel, "CHANNELS"),
                     (BufferKind::Dm, "DIRECT MESSAGES"),
@@ -301,13 +326,14 @@ impl App {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let hint = match kind {
                                 BufferKind::Channel => "Join a channel",
-                                BufferKind::Dm => "Message someone",
+                                BufferKind::Dm | BufferKind::Server => "Message someone",
                             };
                             let add = egui::Button::new(RichText::new("+").size(18.0))
                                 .min_size(vec2(24.0, 22.0));
                             if ui.add(add).tip(hint).clicked() {
                                 self.adding = Some((kind, String::new()));
                             }
+
                         });
                     });
                     let n = &mut self.view.nets[ni];
@@ -315,7 +341,7 @@ impl App {
                         let selected = n.ui.selected.as_deref() == Some(&b.key);
                         let name = match kind {
                             BufferKind::Dm => chatlog::shown(&n.profiles, &b.info.target),
-                            BufferKind::Channel => &b.info.target,
+                            BufferKind::Channel | BufferKind::Server => &b.info.target,
                         };
                         let mut text = RichText::new(name);
                         if b.info.unread > 0 || selected {
@@ -388,6 +414,7 @@ impl App {
                                     part = Some(b.info.target.clone());
                                 }
                             }
+                            BufferKind::Server => {}
                             BufferKind::Dm => {
                                 if ui.button("Close conversation").clicked() {
                                     close = Some(b.info.target.clone());
@@ -425,7 +452,7 @@ impl App {
                     {
                         let hint = match kind {
                             BufferKind::Channel => "#channel",
-                            BufferKind::Dm => "username",
+                            BufferKind::Dm | BufferKind::Server => "username",
                         };
                         let r = ui.add(
                             egui::TextEdit::singleline(text)
@@ -454,7 +481,7 @@ impl App {
                                         pick = Some(key(&ch));
                                         NetCommand::JoinChannel { channel: ch }
                                     }
-                                    BufferKind::Dm => {
+                                    BufferKind::Dm | BufferKind::Server => {
                                         pick = Some(key(&name));
                                         NetCommand::OpenDm { nick: name }
                                     }

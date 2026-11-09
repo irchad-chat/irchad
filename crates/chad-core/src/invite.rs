@@ -1,11 +1,13 @@
 //! What the user pastes into "Join a network": an invite URL, an `irchad://` link
-//! or a bare host. All of them name one origin (D5).
+//! or a bare host. All of them name one origin (D5). `ircs://` and `irc://`
+//! name a classic IRC network instead (D72).
 
 use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invite {
-    /// `https://host[:port]`, no path. Also the network's id.
+    /// `https://host[:port]`, no path, or `ircs://host:port` / `irc://host:port`
+    /// for a classic network. Also the network's id.
     pub origin: String,
     /// `?channel=#general`: a hint to join, never authority (D5).
     pub channel: Option<String>,
@@ -35,6 +37,15 @@ pub fn parse(input: &str) -> Result<Invite, String> {
             inner
         }
         "https" => url,
+        "ircs" | "irc" => {
+            let host = url.host_str().filter(|h| !h.is_empty()).ok_or_else(bad)?;
+            let tls = url.scheme() == "ircs";
+            let port = url.port().unwrap_or(if tls { 6697 } else { 6667 });
+            return Ok(Invite {
+                origin: format!("{}://{}:{port}", url.scheme(), host.to_ascii_lowercase()),
+                channel,
+            });
+        }
         _ => return Err(bad()),
     };
     if origin.host_str().is_none_or(str::is_empty) {
@@ -44,6 +55,11 @@ pub fn parse(input: &str) -> Result<Invite, String> {
         origin: origin.origin().ascii_serialization(),
         channel,
     })
+}
+
+/// A network id naming a classic IRC network, not an IrChad server (D72).
+pub fn classic(origin: &str) -> bool {
+    !origin.starts_with("https://")
 }
 
 #[cfg(test)]
@@ -74,6 +90,26 @@ mod tests {
             ok("chat.localhost:8443"),
             ("https://chat.localhost:8443".into(), None)
         );
+    }
+
+    #[test]
+    fn classic_urls() {
+        assert_eq!(
+            ok("ircs://irc.Libera.Chat").0,
+            "ircs://irc.libera.chat:6697"
+        );
+        assert_eq!(ok("irc://irc.efnet.org").0, "irc://irc.efnet.org:6667");
+        assert_eq!(
+            ok("ircs://irc.rizon.net:9999/").0,
+            "ircs://irc.rizon.net:9999"
+        );
+        assert_eq!(
+            ok("ircs://irc.libera.chat?channel=%23libera"),
+            ("ircs://irc.libera.chat:6697".into(), Some("#libera".into()))
+        );
+        assert!(classic("ircs://irc.libera.chat:6697"));
+        assert!(!classic("https://chat.example.com"));
+        assert!(parse("ircs://").is_err());
     }
 
     #[test]

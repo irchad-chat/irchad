@@ -48,6 +48,17 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
   Code-gated registration is parked in Phase 7, so don't build it early.
 - The discovery types live in the small shared `chad-proto` crate (D12), so client and server can't drift.
 
+### Classic IRC networks (D72)
+
+The same client also joins ordinary IRC networks (Libera, Rizon, EFnet, …) from the dialog's "Classic IRC" tab.
+- The network id is `ircs://host:port` or `irc://host:port`. The scheme alone makes it classic. There's no discovery, chadd or LiveKit, so uploads, GIFs, games, link previews and voice are off.
+- Transport is CRLF lines over TCP, TLS by default (`chad_irc::ws::Connection`, behind the same `send`/`recv` as WebSocket).
+- Login is SASL as the bare account (no `@device`), NickServ `IDENTIFY` when there's no SASL, or no login at all. Taken nicks retry as `nick1`..`nick9`.
+- Nothing is auto-joined. The client rejoins its own channels, since there's no `draft/persistence`, and "Browse channels…" lists the rest.
+- Without `labeled-response`, replies are matched by shape instead: sync is immediate, sends complete on their `echo-message` echo (or at once), LIST ends at `323`, and members come from `NAMES`.
+- The `*` server buffer collects server notices, the MOTD and unhandled numerics. Typing there sends raw lines.
+- `chad/` metadata is still published and read where the server has `draft/metadata-2`.
+
 ## Accounts and auth
 
 - Users never see NickServ. Registration uses `draft/account-registration` (`REGISTER`), and login uses SASL (SCRAM-SHA-256 preferred, PLAIN fallback).

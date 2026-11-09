@@ -10,7 +10,7 @@ use chad_irc::register::{self, Reply};
 use chad_irc::sasl::{self, Progress, Sasl};
 use chad_irc::ws::{self, Backoff, Connection};
 use chad_proto::chadd::VoiceTokenResponse;
-use chad_proto::discovery::{Discovery, Registration};
+use chad_proto::discovery::{self as proto_discovery, Discovery, Registration};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use url::Url;
@@ -274,6 +274,11 @@ async fn remove(net: Net, p: &Params, sink: &Sink) {
 /// Fresh discovery if the server answers, else the cached copy.
 async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
     let origin = net.info.network.clone();
+    if net.classic() {
+        let d = classic_discovery(&origin)?;
+        net.info.name.clone_from(&d.name);
+        return Ok(d);
+    }
     let cached = net
         .store
         .meta("discovery")
@@ -304,6 +309,31 @@ async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
         .map(|g| g.provider.chars().take(40).collect());
     net.info.games = d.chadd.games && !guest;
     Ok(d)
+}
+
+/// A classic network has no discovery document (D72). The chadd and LiveKit
+/// URLs are required fields, so they hold the IRC origin; nothing calls them
+/// (`chadd::Client::call` refuses non-HTTP URLs, `join_voice` refuses classic).
+fn classic_discovery(origin: &str) -> Result<Discovery, String> {
+    let url = Url::parse(origin).map_err(|_| format!("“{origin}” isn't a server URL"))?;
+    Ok(Discovery {
+        version: proto_discovery::VERSION,
+        name: url.host_str().unwrap_or(origin).to_owned(),
+        icon: None,
+        home: None,
+        irc: proto_discovery::Irc {
+            websocket: url.clone(),
+        },
+        chadd: proto_discovery::Chadd {
+            api: url.clone(),
+            uploads: None,
+            gifs: None,
+            games: false,
+            delete: false,
+        },
+        livekit: proto_discovery::Livekit { url },
+        registration: Registration::Closed,
+    })
 }
 
 async fn session(
@@ -372,6 +402,7 @@ async fn register(
     let mut auth_started = false;
     let mut nick_tries = 0;
     let mut sasl: Option<Sasl> = None;
+    let mut sasl_ok = false;
     loop {
         let m = tokio::select! {
             r = ws.recv() => match r {
@@ -405,6 +436,7 @@ async fn register(
                 Progress::Continue(more) => out.extend(more),
                 Progress::LoggedIn => {
                     sasl = None;
+                    sasl_ok = true;
                     out.push(net.caps.end());
                     logged_in(net, p, password, sink).await;
                 }
@@ -433,11 +465,26 @@ async fn register(
             }
             None => {}
         }
+        // Classic (D72): the welcome, MOTD and server notices go to the server buffer.
+        let numeric = m.command.len() == 3 && m.command.bytes().all(|b| b.is_ascii_digit());
+        if net.classic()
+            && ((numeric && !matches!(m.command.as_str(), "005" | "221")) || m.command == "NOTICE")
+        {
+            let _ = net.handle(m.clone());
+        }
         match m.command.as_str() {
-            "001" => m
-                .param(0)
-                .unwrap_or(&account)
-                .clone_into(&mut net.info.nick),
+            "001" => {
+                m.param(0)
+                    .unwrap_or(&account)
+                    .clone_into(&mut net.info.nick);
+                // Classic without SASL (or without CAP at all): NickServ, the old way.
+                if net.classic() && !p.guest && !sasl_ok {
+                    auth_started = true;
+                    let text = format!("IDENTIFY {account} {password}");
+                    out.push(Message::new("PRIVMSG", ["NickServ", text.as_str()]));
+                    logged_in(net, p, password, sink).await;
+                }
+            }
             // RPL_LOGGEDIN: `<nick> <mask> <account> :You are now logged in as ...`.
             "900" => {
                 net.account = m
@@ -452,12 +499,14 @@ async fn register(
                 }
                 return Ok(net.info.nick.clone());
             }
-            // Guests take the next free `nick1`..`nick9`.
-            "433" if p.guest && nick_tries < 9 => {
+            // Guests and classic networks take the next free `nick1`..`nick9`.
+            "433" if (p.guest || net.classic()) && nick_tries < 9 => {
                 nick_tries += 1;
                 out.push(Message::new("NICK", [format!("{account}{nick_tries}")]));
             }
-            "433" if p.guest => return Err(End::Fatal("That nickname is taken.".into())),
+            "433" if p.guest || net.classic() => {
+                return Err(End::Fatal("That nickname is taken.".into()));
+            }
             "433" => return Err(End::Fatal("That username is taken.".into())),
             "432" => return Err(End::Fatal("That name isn't allowed here.".into())),
             "MODE" | "221" => {
@@ -514,12 +563,22 @@ fn start_auth(
         return Ok(None);
     }
     if !net.caps.enabled("sasl") {
+        if net.classic() {
+            // NickServ IDENTIFY once registered (`001`).
+            out.push(net.caps.end());
+            return Ok(None);
+        }
         return Err(End::Fatal(format!(
             "{} doesn't support logging in.",
             d.name
         )));
     }
-    let user = format!("{}@{}", p.account, p.device);
+    // `@device` is ergo's per-device login (D11); elsewhere it's just the account.
+    let user = if net.classic() {
+        p.account.clone()
+    } else {
+        format!("{}@{}", p.account, p.device)
+    };
     let mechs = net.caps.value("sasl").unwrap_or_default();
     let mut s = Sasl::new(&user, password, mechs).map_err(|e| End::Fatal(sasl_error(e)))?;
     out.push(s.start());
@@ -650,6 +709,9 @@ async fn live(
                 }
             }
             cmd = rx.recv() => match cmd {
+                Some(ToNet::Cmd(NetCommand::DeleteAccount)) if net.classic() => {
+                    net.error("Ask this network's services (NickServ) to drop your account.");
+                }
                 // chadd deletes the messages and uploads too (D69).
                 Some(ToNet::Cmd(NetCommand::DeleteAccount)) if !p.guest && d.chadd.delete => {
                     match chadd::delete_account(&d.chadd.api, &p.account, password).await {

@@ -210,6 +210,10 @@ impl Net {
             }
             NetCommand::RemoveDevice { id } => self.remove_device(&id),
             NetCommand::JoinChannel { channel } => self.out.push(Message::new("JOIN", [channel])),
+            NetCommand::ListChannels => {
+                self.send_labeled(Message::new("LIST", [""; 0]), Pending::Browse)
+            }
+            NetCommand::Raw { line } => self.raw(&line),
             NetCommand::Part { channel } => self.out.push(Message::new("PART", [channel])),
             NetCommand::OpenDm { .. } => {}
             NetCommand::Block { nick, account } => self.block(&nick, account),
@@ -223,6 +227,10 @@ impl Net {
     }
 
     pub(super) fn who(&mut self, channel: String) {
+        if !self.caps.enabled("labeled-response") {
+            // Classic (D72): the 353s go through `names`, no label needed.
+            return self.out.push(Message::new("NAMES", [channel]));
+        }
         let m = Message::new("WHO", [channel.as_str(), "%tcnfa,1"]);
         self.send_labeled(m, Pending::Who { channel });
     }
@@ -432,5 +440,26 @@ impl Net {
                 .push(Message::new("MARKREAD", [target, ts.as_str()]));
         }
         self.send_receipt(&key, &msgid);
+    }
+
+    /// A line typed in the server buffer, sent as is (`/` and `/quote ` optional).
+    fn raw(&mut self, line: &str) {
+        let line = line.trim();
+        let line = line.strip_prefix('/').unwrap_or(line);
+        let line = ["quote ", "raw "]
+            .iter()
+            .find_map(|p| {
+                line.get(..p.len())
+                    .filter(|h| h.eq_ignore_ascii_case(p))
+                    .map(|_| &line[p.len()..])
+            })
+            .unwrap_or(line);
+        match Message::parse(line) {
+            Ok(m) if !line.contains(['\r', '\n']) => {
+                self.server_line(&self.info.nick.clone(), format!("> {line}"), true);
+                self.out.push(m);
+            }
+            _ => self.error("That isn't an IRC command."),
+        }
     }
 }

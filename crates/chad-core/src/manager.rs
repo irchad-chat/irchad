@@ -194,7 +194,10 @@ fn spawn_with(
     invite_channel: Option<String>,
 ) -> mpsc::UnboundedSender<ToNet> {
     let info = NetworkInfo {
-        name: origin.trim_start_matches("https://").to_owned(),
+        name: origin
+            .split_once("://")
+            .map_or(origin.as_str(), |(_, rest)| rest)
+            .to_owned(),
         network: origin,
         icon: None,
         nick: p.account.clone(),
@@ -234,6 +237,7 @@ pub(crate) fn valid_nick(nick: &str) -> bool {
 }
 
 fn file_name(origin: &str) -> PathBuf {
+    // Classic ids keep their scheme, so `ircs://` and `irc://` to one host differ.
     let safe: String = origin
         .trim_start_matches("https://")
         .chars()
