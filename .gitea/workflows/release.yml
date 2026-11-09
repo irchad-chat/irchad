@@ -198,4 +198,4 @@ jobs:
         continue-on-error: true
         env:
           CHADSTER_PASSWORD: ${{ secrets.CHADSTER_PASSWORD }}
-        run: python3 deploy/tools/announce.py ${{ needs.release.outputs.version }} "${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.release.outputs.version }}"
+        run: python3 deploy/tools/announce.py ${{ needs.release.outputs.version }} "https://git.gentoo.party/${{ github.repository }}/releases/tag/v${{ needs.release.outputs.version }}"
