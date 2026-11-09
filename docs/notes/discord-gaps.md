@@ -10,6 +10,7 @@ Already shipped, so worth marketing: source-quality streams with no viewer cap, 
 On Discord you talk to the whole channel or you leave it. TeamSpeak's whisper is the common comparison.
 Hold a key to speak only to chosen people or a saved sub-group.
 On LiveKit, use track subscription permissions or a separate audio track sent to a subset of the room. Plain IRC clients don't notice.
+**Done** (D71): sent from desktop, received on desktop, Android and iOS, with a cue before each whisper on desktop.
 
 ## 2. Local full-text search and real export
 

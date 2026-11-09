@@ -59,6 +59,8 @@ import party.gentoo.irchad.core.Voice
 private const val WATCHING = "watching"
 /** The soundboard's own track (D37). */
 private const val BOARD = "soundboard"
+/** Desktop's whisper track (D71): the SFU only lets its targets subscribe. */
+private const val WHISPER = "whisper"
 
 /** Someone in the call, by ergo account (chadd's token identity). */
 data class Person(
@@ -234,7 +236,7 @@ class Calls(private val app: IrChad) : Voice {
             for (pub in p.trackPublications.values) {
                 val t = pub.track as? RemoteAudioTrack ?: continue
                 val v = when {
-                    pub.source == Track.Source.MICROPHONE -> s.volume(id, false)
+                    pub.source == Track.Source.MICROPHONE || pub.name == WHISPER -> s.volume(id, false)
                     pub.source == Track.Source.SCREEN_SHARE_AUDIO -> s.volume(id, true)
                     pub.name == BOARD -> s.soundboardVolume
                     else -> continue
@@ -282,7 +284,10 @@ class Calls(private val app: IrChad) : Voice {
         runCatching { r.localParticipant.updateAttributes(mapOf(WATCHING to (identity ?: ""))) }
     }
 
-    /** Mics and the soundboard always; a screen share and its audio only while watched. */
+    /**
+     * Mics, whispers and the soundboard always (a whisper only arrives if we're its
+     * target); a screen share and its audio only while watched.
+     */
     private fun subscribe(r: Room) {
         val watching = state.value?.watching
         for (p in r.remoteParticipants.values) {
@@ -290,7 +295,7 @@ class Calls(private val app: IrChad) : Voice {
                 pub as? RemoteTrackPublication ?: continue
                 val want = when (pub.source) {
                     Track.Source.MICROPHONE -> true
-                    Track.Source.UNKNOWN -> pub.name == BOARD
+                    Track.Source.UNKNOWN -> pub.name == BOARD || pub.name == WHISPER
                     Track.Source.SCREEN_SHARE, Track.Source.SCREEN_SHARE_AUDIO -> p.identity?.value == watching
                     else -> false
                 }

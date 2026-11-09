@@ -414,6 +414,7 @@ impl App {
                                 self.settings.load_media,
                                 &mut self.settings.volumes,
                                 &mut self.settings.screen_volumes,
+                                &mut self.settings.whisper_to,
                             )
                         {
                             watch = Some(who);

@@ -1105,6 +1105,8 @@ dependencies = [
  "image",
  "jiff",
  "ksni",
+ "livekit",
+ "livekit-api",
  "notify-rust",
  "reqwest",
  "rfd",

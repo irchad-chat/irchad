@@ -53,5 +53,7 @@ windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_Sy
 [dev-dependencies]
 egui_kittest = { version = "0.37.0", features = ["eframe", "wgpu"] }
 egui_system_font_provider = "0.37.0"
+livekit.workspace = true
+livekit-api.workspace = true
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["test-util"] }

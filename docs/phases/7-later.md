@@ -2,6 +2,7 @@
 
 These are not scheduled. Move an item into a phase only when the user asks.
 
+- Whisper with several named lists, each on its own key (one list and one key landed in D71). Sending whispers from Android and iOS.
 - Webcam grid (desktop): see everyone's cameras at once. Single-camera webcam landed in D70.
 - Admin UI: kick, ban, channel management. Until then, admins use a normal IRC client.
   When this lands, chadd must also enforce bans and channel membership for voice tokens.

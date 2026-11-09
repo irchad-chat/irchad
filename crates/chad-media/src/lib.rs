@@ -26,6 +26,8 @@ pub use sound::{MAX_SECS as MAX_SOUND_SECS, load as load_sound};
 /// Everything runs at 48 kHz mono, 10 ms frames.
 pub(crate) const RATE: u32 = 48_000;
 pub(crate) const FRAME: usize = (RATE / 100) as usize;
+/// Most accounts on the whisper list.
+pub const MAX_WHISPER_TARGETS: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -121,6 +123,8 @@ pub struct Participant {
     pub watchers: u32,
     /// Has their camera on.
     pub camera: bool,
+    /// Whispers to us; for ourselves, whispers to our list (D71).
+    pub whispering: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -183,6 +187,29 @@ impl Voice {
 
     pub fn set_ptt(&self, down: bool) {
         self.shared.set_ptt(down);
+    }
+
+    /// Holds the whisper key: only [`Voice::set_whisper_targets`] hear us (D71).
+    pub fn set_whisper(&self, down: bool) {
+        self.shared.set_whisper(down);
+    }
+
+    /// Whether the mic goes to the whisper targets right now.
+    pub fn whispering(&self) -> bool {
+        self.shared.whispering()
+    }
+
+    /// The accounts the whisper key talks to, when they're in the call.
+    pub fn set_whisper_targets(&self, mut targets: Vec<String>) {
+        targets.sort();
+        targets.dedup();
+        targets.truncate(MAX_WHISPER_TARGETS);
+        let mut t = engine::lock(&self.shared.whisper_to);
+        if *t != targets {
+            *t = targets;
+            drop(t);
+            self.shared.whisper_changed.notify_one();
+        }
     }
 
     pub fn muted(&self) -> bool {

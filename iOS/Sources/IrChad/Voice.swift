@@ -6,6 +6,8 @@ import SwiftUI
 private let watchingKey = "watching"
 /// The soundboard's own track (D37).
 private let boardTrack = "soundboard"
+/// Desktop's whisper track (D71): the SFU only lets its targets subscribe.
+private let whisperTrack = "whisper"
 
 /// Someone in the call, by ergo account (chadd's token identity).
 struct Person: Equatable {
@@ -170,14 +172,15 @@ final class Calls {
         Task { try? await r.localParticipant.set(attributes: [watchingKey: identity ?? ""]) }
     }
 
-    /// Mics and the soundboard always; a screen share and its audio only while watched.
+    /// Mics, whispers and the soundboard always (a whisper only arrives if we're
+    /// its target); a screen share and its audio only while watched.
     private func subscribe(_ r: Room) {
         let watching = state?.watching
         for p in r.remoteParticipants.values {
             for case let pub as RemoteTrackPublication in p.trackPublications.values {
                 let want = switch pub.source {
                 case .microphone: true
-                case .unknown: pub.name == boardTrack
+                case .unknown: pub.name == boardTrack || pub.name == whisperTrack
                 case .screenShareVideo, .screenShareAudio: p.identity?.stringValue == watching
                 default: false
                 }

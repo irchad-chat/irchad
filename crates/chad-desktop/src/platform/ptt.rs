@@ -1,4 +1,4 @@
-//! Push-to-talk that works while another app has focus.
+//! Push-to-talk (and the whisper key, D71) that works while another app has focus.
 //!
 //! Picked at runtime: on Wayland, the GlobalShortcuts portal (the desktop owns
 //! the binding); on X11, XInput2 raw events (see press and release without
@@ -44,6 +44,42 @@ impl PttBind {
     }
 }
 
+/// What a held key does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    Talk,
+    /// Talk to the whisper list only.
+    Whisper,
+}
+
+impl Action {
+    pub fn set(self, voice: &Voice, down: bool) {
+        match self {
+            Self::Talk => voice.set_ptt(down),
+            Self::Whisper => voice.set_whisper(down),
+        }
+    }
+
+    /// The portal's shortcut id.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Talk => "push-to-talk",
+            Self::Whisper => "whisper",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Talk => "Push to talk",
+            Self::Whisper => "Whisper",
+        }
+    }
+}
+
+/// The keys to listen for, each with what it does.
+pub type Binds = Vec<(Action, PttBind)>;
+
 /// `(X11 keysym, XDG shortcut trigger name, Windows virtual key)`.
 #[cfg_attr(not(any(target_os = "linux", windows)), allow(dead_code))]
 pub fn keymap(key: egui::Key) -> Option<(u32, String, u16)> {
@@ -85,16 +121,16 @@ pub enum PttStatus {
     FocusedOnly(String),
 }
 
-/// A running push-to-talk listener. Dropping it stops listening.
+/// A running push-to-talk and whisper listener. Dropping it stops listening.
 pub struct Ptt {
-    pub bind: PttBind,
+    pub binds: Binds,
     status: Arc<Mutex<PttStatus>>,
     stop: Arc<AtomicBool>,
     voice: Voice,
 }
 
 impl Ptt {
-    pub fn start(voice: Voice, bind: PttBind, wake: impl Fn() + Send + Sync + 'static) -> Self {
+    pub fn start(voice: Voice, binds: Binds, wake: impl Fn() + Send + Sync + 'static) -> Self {
         let status = Arc::new(Mutex::new(PttStatus::Starting));
         let stop = Arc::new(AtomicBool::new(false));
         let report = {
@@ -105,9 +141,9 @@ impl Ptt {
                 wake();
             }
         };
-        listen(voice.clone(), bind, stop.clone(), Box::new(report));
+        listen(voice.clone(), binds.clone(), stop.clone(), Box::new(report));
         Self {
-            bind,
+            binds,
             status,
             stop,
             voice,
@@ -126,7 +162,9 @@ impl Ptt {
 impl Drop for Ptt {
     fn drop(&mut self) {
         self.stop.store(true, Relaxed);
-        self.voice.set_ptt(false);
+        for (action, _) in &self.binds {
+            action.set(&self.voice, false);
+        }
     }
 }
 
@@ -138,7 +176,7 @@ use super::ptt_linux::listen;
 use super::ptt_windows::listen;
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn listen(_voice: Voice, _bind: PttBind, _stop: Arc<AtomicBool>, report: Report) {
+fn listen(_voice: Voice, _binds: Binds, _stop: Arc<AtomicBool>, report: Report) {
     report(PttStatus::FocusedOnly(
         "Global shortcuts aren't supported on this system.".into(),
     ));

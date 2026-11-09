@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use crate::chatlog::{self, Profile, shown};
 use crate::icons::{self, Tip};
 use crate::media::Media;
-use crate::platform::ptt::{Ptt, PttBind, PttStatus, keymap};
+use crate::platform::ptt::{Action, Ptt, PttBind, PttStatus, keymap};
 use crate::settings::{self, Settings};
 
 const SPEAKING: Color32 = Color32::from_rgb(35, 165, 90);
@@ -23,6 +23,8 @@ pub const AWAY: Color32 = Color32::from_rgb(240, 178, 50);
 const AVATAR: f32 = 24.0;
 const RING: f32 = 2.0;
 const DANGER: Color32 = Color32::from_rgb(218, 55, 60);
+/// Whispers, to tell them from talking to everyone.
+const WHISPER: Color32 = Color32::from_rgb(160, 130, 235);
 
 /// The core decides when to join and leave; this connects.
 pub struct Glue(pub Voice);
@@ -112,11 +114,17 @@ pub fn panel(
             .weak(),
     );
     if let Some(p) = ptt.filter(|p| p.focused_only()) {
-        ui.label(
-            RichText::new(format!("Push to talk ({}) only works here", p.bind.name()))
+        for (action, bind) in &p.binds {
+            ui.label(
+                RichText::new(format!(
+                    "{} ({}) only works here",
+                    action.label(),
+                    bind.name()
+                ))
                 .small()
                 .color(ui.visuals().warn_fg_color),
-        );
+            );
+        }
     }
     if voice.sharing() {
         let watchers = call
@@ -293,8 +301,8 @@ fn soundboard(
 
 /// Who's in a channel's voice room, under its row in the sidebar. In our own
 /// call the live list (speaking, muted, sharing) replaces the metadata one.
-/// Volume changes land in `volumes` and `screen_volumes`, which persist with
-/// the settings. Returns whose screen share (or camera, `true`) was clicked,
+/// Volume changes land in `volumes` and `screen_volumes`, and whisper list
+/// changes in `whisper_to`, which persist with the settings. Returns whose screen share (or camera, `true`) was clicked,
 /// to watch.
 #[allow(clippy::too_many_arguments)]
 pub fn members(
@@ -308,6 +316,7 @@ pub fn members(
     auto: bool,
     volumes: &mut HashMap<String, f32>,
     screen_volumes: &mut HashMap<String, f32>,
+    whisper_to: &mut Vec<String>,
 ) -> Option<(String, bool)> {
     let mut watch = None;
     let dark = ui.visuals().dark_mode;
@@ -323,36 +332,56 @@ pub fn members(
             })
             .map_or_else(|| id.to_owned(), |m| m.nick.clone())
     };
-    let mut row = |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool| {
-        let name = shown(profiles, nick).to_owned();
-        let avatar = profiles.get(&key(nick)).and_then(|p| p.avatar.clone());
-        let r = ui
-            .horizontal(|ui| {
-                ui.add_space(16.0);
-                let (r, _) = ui.allocate_exact_size(vec2(AVATAR, AVATAR), Sense::hover());
-                media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
-                if speaking {
-                    let radius = (AVATAR - RING) / 2.0;
-                    ui.painter()
-                        .circle_stroke(r.center(), radius, (RING, SPEAKING));
-                }
-                let color = chatlog::nick_color(nick, dark);
-                let text = if muted {
-                    RichText::new(format!("{name} {}", icons::MICROPHONE_SLASH)).weak()
-                } else if speaking {
-                    RichText::new(&name).color(color).strong()
-                } else {
-                    RichText::new(&name).color(color.gamma_multiply(0.7))
-                };
-                ui.add(egui::Label::new(text).sense(Sense::click()).truncate())
-            })
-            .inner;
-        (r, name)
-    };
+    // `note`: whispering, or on the whisper list.
+    let mut row =
+        |ui: &mut egui::Ui, nick: &str, speaking: bool, muted: bool, note: Option<RichText>| {
+            let name = shown(profiles, nick).to_owned();
+            let avatar = profiles.get(&key(nick)).and_then(|p| p.avatar.clone());
+            let r = ui
+                .horizontal(|ui| {
+                    ui.add_space(16.0);
+                    let (r, _) = ui.allocate_exact_size(vec2(AVATAR, AVATAR), Sense::hover());
+                    media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
+                    if speaking {
+                        let radius = (AVATAR - RING) / 2.0;
+                        ui.painter()
+                            .circle_stroke(r.center(), radius, (RING, SPEAKING));
+                    }
+                    let color = chatlog::nick_color(nick, dark);
+                    let text = if muted {
+                        RichText::new(format!("{name} {}", icons::MICROPHONE_SLASH)).weak()
+                    } else if speaking {
+                        RichText::new(&name).color(color).strong()
+                    } else {
+                        RichText::new(&name).color(color.gamma_multiply(0.7))
+                    };
+                    let r = ui.add(egui::Label::new(text).sense(Sense::click()).truncate());
+                    if let Some(note) = note {
+                        ui.add(egui::Label::new(note.small()).truncate());
+                    }
+                    r
+                })
+                .inner;
+            (r, name)
+        };
     match voice.call().filter(|_| in_call) {
         Some(call) => {
+            let targets = call
+                .participants
+                .iter()
+                .filter(|p| !p.local && whisper_to.contains(&p.identity))
+                .count();
             for p in &call.participants {
-                let (r, name) = row(ui, &nick_of(&p.identity), p.speaking, p.muted);
+                let listed = whisper_to.contains(&p.identity);
+                let note = match (p.whispering, p.local) {
+                    (true, true) => {
+                        Some(RichText::new(format!("whispering to {targets}")).color(WHISPER))
+                    }
+                    (true, false) => Some(RichText::new("whispering to you").color(WHISPER)),
+                    (false, false) if listed => Some(RichText::new("whisper").weak()),
+                    _ => None,
+                };
+                let (r, name) = row(ui, &nick_of(&p.identity), p.speaking, p.muted, note);
                 if p.sharing {
                     let live = egui::Button::new(
                         RichText::new("LIVE").small().strong().color(Color32::WHITE),
@@ -392,6 +421,23 @@ pub fn members(
                     continue;
                 }
                 r.context_menu(|ui| {
+                    let mut on = listed;
+                    let room = on || whisper_to.len() < chad_media::MAX_WHISPER_TARGETS;
+                    if ui
+                        .add_enabled(
+                            room,
+                            egui::Checkbox::new(&mut on, format!("Whisper to {name}")),
+                        )
+                        .on_hover_text("Your whisper key talks only to the people ticked here.")
+                        .changed()
+                    {
+                        if on {
+                            whisper_to.push(p.identity.clone());
+                        } else {
+                            whisper_to.retain(|a| *a != p.identity);
+                        }
+                        voice.set_whisper_targets(whisper_to.clone());
+                    }
                     let mut v = voice.volume(&p.identity);
                     let l = ui.label(format!("{name} volume"));
                     if volume_slider(ui, &mut v).labelled_by(l.id).changed() {
@@ -411,7 +457,7 @@ pub fn members(
         }
         None => {
             for n in nicks {
-                row(ui, n, false, false);
+                row(ui, n, false, false, None);
             }
         }
     }
@@ -424,9 +470,9 @@ pub fn settings(
     s: &mut Settings,
     voice: &Voice,
     ptt: Option<&Ptt>,
-    binding: &mut bool,
+    binding: &mut Option<Action>,
 ) -> bool {
-    let before = (s.audio.clone(), s.ptt);
+    let before = (s.audio.clone(), s.ptt, s.whisper);
     let devices = voice.devices();
     egui::Grid::new("audio")
         .num_columns(2)
@@ -500,39 +546,48 @@ pub fn settings(
                 }
                 InputMode::PushToTalk => {
                     ui.label("Key");
-                    ui.horizontal(|ui| {
-                        let text = if *binding {
-                            "Press a key or mouse button…".to_owned()
-                        } else {
-                            s.ptt.name()
-                        };
-                        if ui.button(text).clicked() {
-                            *binding = !*binding;
-                        }
-                        if *binding && let Some(b) = captured(ui) {
-                            s.ptt = b;
-                            *binding = false;
-                        }
-                    });
-                    ui.end_row();
-                    ui.label("");
-                    match ptt.map(Ptt::status) {
-                        Some(PttStatus::Global(how)) => ui.label(RichText::new(how).small().weak()),
-                        Some(PttStatus::FocusedOnly(why)) => ui.label(
-                            RichText::new(format!(
-                                "{why} Push to talk works only while IrChad is focused."
-                            ))
-                            .small()
-                            .color(ui.visuals().warn_fg_color),
-                        ),
-                        _ => ui.spinner(),
-                    };
+                    let mut b = Some(s.ptt);
+                    bind_button(ui, Action::Talk, &mut b, binding, false);
+                    s.ptt = b.unwrap_or(s.ptt);
                     ui.end_row();
                     let l = ui.label("Release delay");
                     ui.add(egui::Slider::new(&mut s.audio.ptt_release_ms, 0..=1000).suffix(" ms"))
                         .labelled_by(l.id);
                     ui.end_row();
                 }
+            }
+
+            ui.label("Whisper key");
+            ui.vertical(|ui| {
+                bind_button(ui, Action::Whisper, &mut s.whisper, binding, true);
+                ui.label(
+                    RichText::new(
+                        "Hold it to talk only to the people you whisper to \
+                         (right-click someone in voice).",
+                    )
+                    .small()
+                    .weak(),
+                );
+            });
+            ui.end_row();
+
+            if s.audio.mode == InputMode::PushToTalk || s.whisper.is_some() {
+                ui.label("");
+                let what = if s.whisper.is_some() {
+                    "Push to talk and whisper work"
+                } else {
+                    "Push to talk works"
+                };
+                match ptt.map(Ptt::status) {
+                    Some(PttStatus::Global(how)) => ui.label(RichText::new(how).small().weak()),
+                    Some(PttStatus::FocusedOnly(why)) => ui.label(
+                        RichText::new(format!("{why} {what} only while IrChad is focused."))
+                            .small()
+                            .color(ui.visuals().warn_fg_color),
+                    ),
+                    _ => ui.spinner(),
+                };
+                ui.end_row();
             }
 
             ui.label("Echo");
@@ -576,7 +631,37 @@ pub fn settings(
         });
     // The meter moves.
     ui.ctx().request_repaint_after(Duration::from_millis(50));
-    (s.audio.clone(), s.ptt) != before
+    (s.audio.clone(), s.ptt, s.whisper) != before
+}
+
+/// A key bind's button: click, then press the key. `clear` offers to unbind.
+fn bind_button(
+    ui: &mut egui::Ui,
+    action: Action,
+    bind: &mut Option<PttBind>,
+    binding: &mut Option<Action>,
+    clear: bool,
+) {
+    ui.horizontal(|ui| {
+        let text = if *binding == Some(action) {
+            "Press a key or mouse button…".to_owned()
+        } else {
+            bind.map_or_else(|| "Not set".to_owned(), PttBind::name)
+        };
+        if ui.button(text).clicked() {
+            *binding = (*binding != Some(action)).then_some(action);
+        }
+        if *binding == Some(action)
+            && let Some(b) = captured(ui)
+        {
+            *bind = Some(b);
+            *binding = None;
+        }
+        if clear && bind.is_some() && ui.small_button("Clear").clicked() {
+            *bind = None;
+            *binding = None;
+        }
+    });
 }
 
 /// A 0–200% volume.

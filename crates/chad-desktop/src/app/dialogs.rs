@@ -342,7 +342,7 @@ impl App {
             });
         // "Hear yourself" and a key bind only last while their page is up.
         if !open || self.settings_section != settings::Section::Voice {
-            self.binding_ptt = false;
+            self.binding_ptt = None;
             if self.voice.testing() {
                 self.voice.set_testing(false);
             }
@@ -437,7 +437,11 @@ impl App {
             }
             return;
         }
-        let ptt = (self.settings.audio.mode, self.settings.ptt);
+        let ptt = (
+            self.settings.audio.mode,
+            self.settings.ptt,
+            self.settings.whisper,
+        );
         if voice::settings(
             ui,
             &mut self.settings,
@@ -446,7 +450,12 @@ impl App {
             &mut self.binding_ptt,
         ) {
             self.voice.set_settings(self.settings.audio.clone());
-            if (self.settings.audio.mode, self.settings.ptt) != ptt {
+            if (
+                self.settings.audio.mode,
+                self.settings.ptt,
+                self.settings.whisper,
+            ) != ptt
+            {
                 self.restart_ptt(ctx);
             }
         }

@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! mic ─capture()─▶ near ring ─▶ DSP thread: RNNoise? → APM → VAD/PTT gate ─▶ LiveKit source
-//!                                     ▲ far ring (process_reverse_stream)    └▶ loopback source
+//!                                     ▲ far ring (process_reverse_stream)    ├▶ whisper track (instead, D71)
+//!                                                                            └▶ loopback source
 //!                    soundboard clip ─▶ DSP thread (same 10 ms pace) ─▶ soundboard track
 //!                                                                     └▶ own soundboard source
 //! remote tracks ─▶ source rings ─render()─▶ speakers
@@ -62,11 +63,13 @@ pub struct Source {
     kind: Kind,
     rx: Consumer<i16>,
     gain: f32,
+    /// Latency cap; more than [`MAX_QUEUE`] for a source that delays itself.
+    max_queue: usize,
 }
 
 impl Source {
     fn mix(&mut self, out: &mut [i16], deaf: bool) {
-        let excess = self.rx.slots().saturating_sub(MAX_QUEUE + out.len());
+        let excess = self.rx.slots().saturating_sub(self.max_queue + out.len());
         for _ in 0..excess {
             let _ = self.rx.pop();
         }
@@ -107,12 +110,15 @@ pub enum Cue {
     ShareEnd,
     /// Someone else started watching our share, or the share we watch.
     Viewer,
+    /// Someone starts whispering to us; plays before their voice (D71).
+    Whisper,
 }
 
 impl Cue {
     /// Two notes rising for a join and falling for a leave, two quick low
-    /// ones for mute, three for a share, two high taps for a viewer.
-    fn samples(self) -> Vec<i16> {
+    /// ones for mute, three for a share, two high taps for a viewer, and a
+    /// tap leaping an octave for a whisper.
+    pub(crate) fn samples(self) -> Vec<i16> {
         const HALF: usize = CUE_LEN / 2;
         const THIRD: usize = CUE_LEN / 3;
         const SHORT: usize = CUE_LEN / 5;
@@ -126,6 +132,7 @@ impl Cue {
             Cue::ShareStart => &[(523.25, THIRD), (659.25, THIRD), (783.99, THIRD)],
             Cue::ShareEnd => &[(783.99, THIRD), (659.25, THIRD), (523.25, THIRD)],
             Cue::Viewer => &[(1174.66, TAP), (0.0, TAP / 2), (1174.66, TAP)],
+            Cue::Whisper => &[(987.77, TAP), (0.0, TAP / 2), (1975.53, TAP)],
         };
         notes
             .iter()
@@ -148,6 +155,8 @@ pub struct Mic {
     pub track: LocalAudioTrack,
     /// The soundboard track's source; `None` if the server wouldn't take it.
     pub board: Option<NativeAudioSource>,
+    /// The whisper track's source (D71); `None` if the server wouldn't take it.
+    pub whisper: Option<NativeAudioSource>,
 }
 
 pub struct Shared {
@@ -157,6 +166,17 @@ pub struct Shared {
     level: AtomicU32,
     transmitting: AtomicBool,
     ptt: AtomicBool,
+    /// The whisper key is down.
+    whisper_key: AtomicBool,
+    /// The mic goes to the whisper track right now.
+    whispering: AtomicBool,
+    /// Only the whisper targets in the room may hear the whisper track: the
+    /// call set its permissions so (D71). Nothing is whispered otherwise.
+    pub whisper_ready: AtomicBool,
+    /// Accounts the whisper key talks to.
+    pub whisper_to: Mutex<Vec<String>>,
+    /// The whisper list changed: the call redoes its permissions.
+    pub whisper_changed: tokio::sync::Notify,
     muted: AtomicBool,
     deafened: AtomicBool,
     loopback: AtomicBool,
@@ -198,6 +218,11 @@ impl Shared {
             level: AtomicU32::new(SILENT_DB.to_bits()),
             transmitting: AtomicBool::new(false),
             ptt: AtomicBool::new(false),
+            whisper_key: AtomicBool::new(false),
+            whispering: AtomicBool::new(false),
+            whisper_ready: AtomicBool::new(false),
+            whisper_to: Mutex::default(),
+            whisper_changed: tokio::sync::Notify::new(),
             muted: AtomicBool::new(false),
             deafened: AtomicBool::new(false),
             loopback: AtomicBool::new(false),
@@ -291,6 +316,14 @@ impl Shared {
         self.ptt.store(down, Relaxed);
     }
 
+    pub fn whispering(&self) -> bool {
+        self.whispering.load(Relaxed)
+    }
+
+    pub fn set_whisper(&self, down: bool) {
+        self.whisper_key.store(down, Relaxed);
+    }
+
     pub fn muted(&self) -> bool {
         self.muted.load(Relaxed) || self.deafened()
     }
@@ -356,7 +389,18 @@ impl Shared {
 
     /// A ring for one remote track; the caller pushes its audio.
     pub fn add_source(&self, key: &str, identity: &str, kind: Kind) -> Option<Producer<i16>> {
-        let (tx, rx) = RingBuffer::new(RING);
+        self.add_delayed_source(key, identity, kind, 0)
+    }
+
+    /// Like [`Shared::add_source`], with room for `delay` more samples queued.
+    pub fn add_delayed_source(
+        &self,
+        key: &str,
+        identity: &str,
+        kind: Kind,
+        delay: usize,
+    ) -> Option<Producer<i16>> {
+        let (tx, rx) = RingBuffer::new(RING + delay);
         let gain = match kind {
             Kind::Board => self.settings().soundboard_volume.clamp(0.0, 2.0),
             _ => self.volume(identity, kind == Kind::Screen),
@@ -371,6 +415,7 @@ impl Shared {
             kind,
             rx,
             gain,
+            max_queue: MAX_QUEUE + delay,
         });
         Some(tx)
     }
@@ -497,6 +542,8 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
     let (mut frame, mut reference) = ([0i16; FRAME], [0i16; FRAME]);
     let (mut fin, mut fout) = ([0f32; FRAME], [0f32; FRAME]);
     let mut open_until: Option<Instant> = None;
+    let mut whisper_until: Option<Instant> = None;
+    let mut whisper = [0i16; FRAME];
     let mut loopback: Option<Producer<i16>> = None;
     let mut own_board = shared.add_source(OWN_BOARD, "", Kind::Board);
     let mut board = [0i16; FRAME];
@@ -555,9 +602,22 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
                 ptt || open_until.is_some_and(|t| now < t)
             }
         } && !shared.muted();
+        let release = Duration::from_millis(settings.ptt_release_ms.into());
+        let whispering = gate_whisper(shared, &mut whisper_until, now, release);
+        // A whisper takes the mic from everyone else.
+        let open = open && !whispering;
         shared.level.store(db.to_bits(), Relaxed);
-        if shared.transmitting.swap(open, Relaxed) != open {
+        let was = (
+            shared.transmitting.swap(open, Relaxed),
+            shared.whispering.swap(whispering, Relaxed),
+        );
+        if was != (open, whispering) {
             (shared.notify)();
+        }
+        if whispering {
+            whisper = frame;
+        } else {
+            whisper.fill(0);
         }
         if !open {
             frame.fill(0);
@@ -572,20 +632,23 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
             _ => {}
         }
         if let Some(lb) = &mut loopback {
-            for &x in &frame {
+            let heard = if whispering { &whisper } else { &frame };
+            for &x in heard {
                 if lb.push(x).is_err() {
                     break;
                 }
             }
         }
-        let (source, board_source) = lock(&shared.mic)
-            .as_ref()
-            .map(|m| (m.source.clone(), m.board.clone()))
-            .unzip();
+        let (source, board_source, whisper_source) = match &*lock(&shared.mic) {
+            Some(m) => (Some(m.source.clone()), m.board.clone(), m.whisper.clone()),
+            None => (None, None, None),
+        };
         if let Some(source) = source {
             send(&source, &frame, "mic");
         }
-        let board_source = board_source.flatten();
+        if let Some(w) = whisper_source {
+            send(&w, &whisper, "whisper");
+        }
         // Paced by the mic, like the mic: a clip only plays in a call, unmuted.
         if next_clip(shared, board_source.is_some(), &mut board) {
             if let Some(b) = &board_source {
@@ -604,6 +667,21 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         shared.remove_source(LOOPBACK);
     }
     shared.remove_source(OWN_BOARD);
+}
+
+/// Whether this frame goes to the whisper track: the key is down (or was,
+/// within `release`), we aren't muted, and only targets may hear it.
+fn gate_whisper(
+    shared: &Shared,
+    until: &mut Option<Instant>,
+    now: Instant,
+    release: Duration,
+) -> bool {
+    if shared.whisper_key.load(Relaxed) {
+        *until = Some(now + release);
+    }
+    let held = shared.whisper_key.load(Relaxed) || until.is_some_and(|t| now < t);
+    held && !shared.muted() && shared.whisper_ready.load(Relaxed)
 }
 
 fn send(source: &NativeAudioSource, frame: &[i16], what: &str) {
@@ -749,7 +827,9 @@ mod tests {
     #[test]
     fn cues_fit_the_leave_delay() {
         use Cue::*;
-        for cue in [Join, Leave, Mute, Unmute, ShareStart, ShareEnd, Viewer] {
+        for cue in [
+            Join, Leave, Mute, Unmute, ShareStart, ShareEnd, Viewer, Whisper,
+        ] {
             assert!(cue.samples().len() <= CUE_LEN, "{cue:?}");
         }
     }
@@ -766,6 +846,48 @@ mod tests {
         lock(&shared.rt).cue = None;
         shared.set_deafened(true);
         assert!(lock(&shared.rt).cue.is_none());
+    }
+
+    #[test]
+    fn whispers_only_when_ready_and_unmuted() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let (now, release) = (Instant::now(), Duration::from_millis(200));
+        let mut until = None;
+        shared.set_whisper(true);
+        assert!(
+            !gate_whisper(&shared, &mut until, now, release),
+            "no targets yet"
+        );
+        shared.whisper_ready.store(true, Relaxed);
+        assert!(gate_whisper(&shared, &mut until, now, release));
+        shared.set_whisper(false);
+        assert!(
+            gate_whisper(&shared, &mut until, now, release),
+            "release tail"
+        );
+        assert!(!gate_whisper(&shared, &mut until, now + release, release));
+        shared.set_whisper(true);
+        shared.set_muted(true);
+        assert!(!gate_whisper(&shared, &mut until, now, release));
+    }
+
+    #[test]
+    fn a_delayed_source_keeps_its_delay() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let delay = Cue::Whisper.samples().len();
+        let mut tx = shared
+            .add_delayed_source("w", "alice", Kind::Mic, delay)
+            .unwrap();
+        for _ in 0..delay {
+            tx.push(0).unwrap();
+        }
+        tx.push(1000).unwrap();
+        let mut out = vec![0i16; delay + 1];
+        shared.render(&mut out);
+        assert_eq!(
+            out[delay], 1000,
+            "the voice comes after the silence, not instead"
+        );
     }
 
     #[test]

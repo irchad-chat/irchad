@@ -352,11 +352,13 @@ impl App {
                 }
             }
         }
-        // No global shortcut: push-to-talk follows the key while we're focused.
+        // No global shortcut: push-to-talk and whisper follow their keys
+        // while we're focused.
         if let Some(p) = self.ptt.as_ref().filter(|p| p.focused_only()) {
-            let bind = p.bind;
-            self.voice
-                .set_ptt(ctx.input(|i| i.focused && bind.down(i)) && !self.binding_ptt);
+            for &(action, bind) in &p.binds {
+                let down = ctx.input(|i| i.focused && bind.down(i));
+                action.set(&self.voice, down && self.binding_ptt.is_none());
+            }
         }
         for n in &mut self.view.nets {
             n.ui.media.poll(ctx);

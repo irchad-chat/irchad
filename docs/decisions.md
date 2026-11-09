@@ -360,3 +360,32 @@ Linux goes through the Camera portal (`ashpd`), then reads the node on its own P
 We take YUY2, NV12 and RGB only. MJPG isn't decoded, so a camera whose 720p30 mode is compressed-only falls back to a smaller uncompressed mode (we ask for at least 15 fps).
 Windows uses Media Foundation's source reader with advanced video processing, which decodes MJPG and hands back NV12. We pick the native mode nearest 720p at 25 fps or more.
 A grid of everyone's cameras was rejected for now: it needs per-track frame slots and textures, and it costs bandwidth for each camera on screen. chadd's voice token grants `camera`.
+
+## D71: Whisper is a second mic track that the SFU only lets the targets have (2026-11-09)
+Hold the whisper key and only the people on your whisper list hear you, like TeamSpeak (`notes/discord-gaps.md` §1). Desktop sends, and desktop, Android and iOS receive. It's pure LiveKit, so plain IRC clients never notice it.
+Each desktop call publishes a third audio track, named `whisper`, with source `Unknown`. chadd's token already grants `unknown` for the soundboard (D37). It carries silence (DTX) until the key is down, and then the mic goes there instead of to the normal mic track.
+The SFU enforces it, not the receivers (D14). We call `set_track_subscription_permissions`:
+- **No one on the list is in the room:** everyone may have everything. The key does nothing in this state, so the track stays silent.
+- **Otherwise:** listed people get `allow_all`, and everyone else gets every sid of ours except the whisper track's.
+
+Every client subscribes to `whisper` tracks, and the SFU only lets the targets' subscriptions through. The permissions are recomputed whenever someone comes or goes, our tracks change, or the list changes.
+Targets are granted while they're listed, not only while the key is held, so the first word isn't lost to subscription setup. The DSP thread only whispers while `whisper_ready` says the last permission update was sent and named a target. It clears that flag before every update.
+`examples/whisper_check.rs` checked this against LiveKit v1.13 using hostile clients that subscribe to everything:
+- A non-target never got the track, whether it joined before or after us.
+- A newcomer still got our mic once we updated, because the SFU retries a subscription it denied earlier.
+- Someone added mid-call got the whisper.
+
+The list is account names in the desktop settings, at most 50. You edit it from a voice member's right-click menu, and there's one list and one key. Several named lists are left for later.
+The key is a second bind on the push-to-talk listener: a second shortcut in the same GlobalShortcuts portal session, a second XInput2 detail, a second polled key on Windows. It works in voice-activity mode too, and it takes the mic away from everyone else while held. It uses the push-to-talk release delay.
+**Receiving on desktop:**
+- A whisper starts on the first loud frame after a second of quiet. Desktop plays `Cue::Whisper`, a tap leaping an octave (about 100 ms), and puts that much silence into the whisper's ring first, so the cue plays before the voice, not over it.
+- The silence is taken back out of the quiet frames that follow, so the delay doesn't build up.
+- A whisper source may queue that much more than the usual latency cap.
+- A whisper plays at that person's voice volume.
+- The member list says "whispering to you". The whisperer's own row says "whispering to N", and listed people are marked "whisper".
+
+Accepted gaps:
+- Mobile has no whisper cue, since the native SDKs play remote audio themselves and we can't hold it back. Mobile only marks it as speaking.
+- The SFU's active-speaker updates go to everyone, so a non-target on mobile, which shows those, sees the whisperer as speaking without hearing anything. Desktop computes speaking from audio it decodes, so it doesn't show this.
+- Someone dropped from the list mid-whisper may hear about one round trip more, until the SFU applies the update.
+- Newcomers can't subscribe to our mic or shares until our next permission update lands, which is one round trip after they join. That's fail-closed.

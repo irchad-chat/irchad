@@ -34,8 +34,8 @@ struct ComposerOpts {
     focus: bool,
     uploads: bool,
     gifs: bool,
-    /// Keys that aren't typing: push-to-talk's, and any being bound.
-    ptt_key: Option<PttBind>,
+    /// Keys that aren't typing: push-to-talk's and whisper's, and any being bound.
+    ptt_keys: Vec<PttBind>,
     binding_ptt: bool,
 }
 
@@ -83,15 +83,19 @@ impl App {
         };
         let auto_media = self.settings.load_media;
         let guest_media = self.settings.guest_media;
-        let ptt_key = self.ptt.as_ref().map(|p| p.bind);
-        let binding_ptt = self.binding_ptt;
+        let ptt_keys = self
+            .ptt
+            .as_ref()
+            .map(|p| p.binds.iter().map(|b| b.1).collect())
+            .unwrap_or_default();
+        let binding_ptt = self.binding_ptt.is_some();
         let n = &mut self.view.nets[ni];
         let opts = ComposerOpts {
             active,
             focus: active && std::mem::take(&mut n.ui.focus),
             uploads: n.info.uploads.is_some(),
             gifs: n.info.gifs.is_some(),
-            ptt_key,
+            ptt_keys,
             binding_ptt,
         };
         let connected = n.info.state == ConnState::Connected;
@@ -393,7 +397,7 @@ fn composer(
         && !opts.binding_ptt
         && ui.memory(|m| m.focused().is_none())
         && ui.input(|i| {
-            !opts.ptt_key.is_some_and(|k| k.down(i))
+            !opts.ptt_keys.iter().any(|k| k.down(i))
                 && i.events.iter().any(|e| match e {
                     egui::Event::Text(t) => !t.is_empty(),
                     egui::Event::Paste(_) | egui::Event::PasteImage(_) => true,

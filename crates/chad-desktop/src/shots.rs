@@ -15,6 +15,8 @@ use crate::{app::App, platform, voice};
 /// Keeps the runtime and data dir alive as long as the harness.
 pub struct Shots {
     pub harness: Harness<'static, App>,
+    /// The app's audio engine, to see what it's doing.
+    pub voice: chad_media::Voice,
     _rt: tokio::runtime::Runtime,
     _dir: tempfile::TempDir,
 }
@@ -28,6 +30,8 @@ impl Shots {
         let dir = tempfile::tempdir().expect("temp dir");
         let data_dir = dir.path().to_owned();
         let open = open.map(str::to_owned);
+        let voice = chad_media::Voice::new(Arc::new(|| {}));
+        let app_voice = voice.clone();
         let harness = Harness::builder()
             .with_size([1100.0, 720.0])
             // Scroll-to-bottom animations take ~20 frames to settle.
@@ -41,7 +45,7 @@ impl Shots {
                     egui_system_font_provider::SystemFontProvider::new(),
                 ));
                 let (_tx, os) = mpsc::channel();
-                let voice = chad_media::Voice::new(Arc::new(|| {}));
+                let voice = app_voice;
                 let (core, events) = chad_core::start(chad_core::Config {
                     data_dir,
                     secrets: Arc::new(chad_core::secrets::MemorySecrets::default()),
@@ -54,6 +58,7 @@ impl Shots {
         drop(_guard);
         Self {
             harness,
+            voice,
             _rt: rt,
             _dir: dir,
         }
@@ -248,6 +253,62 @@ fn live_soundboard() {
     s.settle(1);
     s.harness.key_press(egui::Key::Escape);
     s.click("Disconnect");
+}
+
+/// The whisper list (D71): bob joins #dev's call as a raw LiveKit participant,
+/// alice right-clicks him and whispers to him. Same setup as `live`, plus
+/// `LIVEKIT_URL` (default `wss://localhost:8443/livekit`).
+#[test]
+#[ignore]
+fn live_whisper() {
+    use livekit_api::access_token::{AccessToken, VideoGrants};
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23dev".into());
+    let url = std::env::var("LIVEKIT_URL").unwrap_or("wss://localhost:8443/livekit".into());
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", "alice");
+    s.type_into("Password", "alicepass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(3);
+    s.harness
+        .get_all_by_label("Join voice")
+        .next()
+        .unwrap()
+        .click();
+    s.settle(4);
+    // Whichever channel's voice that was.
+    let room = s.voice.call().expect("in a call").room;
+    // Dev credentials from deploy/livekit.yaml.
+    let token = AccessToken::with_api_key("devkey", "chad-dev-livekit-secret-0123456789abcdef")
+        .with_identity("bob")
+        .with_grants(VideoGrants {
+            room_join: true,
+            room,
+            ..Default::default()
+        })
+        .to_jwt()
+        .unwrap();
+    let (bob, _events) = s
+        ._rt
+        .block_on(livekit::Room::connect(&url, &token, Default::default()))
+        .expect("bob joins");
+    s.settle(3);
+    // The call's row (bob shows muted: he sends no mic), above the nick list's.
+    s.harness
+        .get_all_by_label_contains("bob")
+        .next()
+        .unwrap()
+        .click_secondary();
+    s.settle(1);
+    s.shot("live_whisper_menu");
+    s.click("Whisper to bob");
+    s.harness.key_press(egui::Key::Escape);
+    s.settle(2);
+    s.shot("live_whisper_listed");
+    s.click("Disconnect");
+    s._rt.block_on(bob.close()).ok();
 }
 
 /// Split panes: #general and #dev side by side, Ctrl+Left back to #general,

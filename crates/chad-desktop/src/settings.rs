@@ -20,6 +20,10 @@ pub struct Settings {
     pub notify: Notify,
     pub audio: AudioSettings,
     pub ptt: PttBind,
+    /// Hold to talk to `whisper_to` only (D71); works in either input mode.
+    pub whisper: Option<PttBind>,
+    /// Accounts the whisper key talks to, when they're in the call.
+    pub whisper_to: Vec<String>,
     /// Voice volume per account, 0.0..=2.0.
     pub volumes: HashMap<String, f32>,
     /// Screen share audio volume per account, 0.0..=2.0.
@@ -65,6 +69,8 @@ impl Default for Settings {
             notify: Notify::MentionsAndDms,
             audio: AudioSettings::default(),
             ptt: PttBind::default(),
+            whisper: None,
+            whisper_to: Vec::new(),
             volumes: HashMap::new(),
             screen_volumes: HashMap::new(),
             screen: ScreenSettings::default(),

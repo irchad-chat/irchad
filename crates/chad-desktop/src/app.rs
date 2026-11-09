@@ -24,7 +24,7 @@ use crate::chatlog::{self, Action, ChatLog, Extras};
 use crate::icons::{self, Tip};
 use crate::media::{self, Media};
 use crate::platform::idle::Idle;
-use crate::platform::ptt::Ptt;
+use crate::platform::ptt::{Action as KeyAction, Ptt};
 use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, Layout, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
@@ -88,7 +88,8 @@ pub struct App {
     voice: Voice,
     /// Listening for push-to-talk, while that's the input mode.
     ptt: Option<Ptt>,
-    binding_ptt: bool,
+    /// The key being bound in the voice settings.
+    binding_ptt: Option<KeyAction>,
     share_dialog: Option<ShareDialog>,
     /// Why turning the camera on failed, once it has.
     camera_error: Option<std::sync::mpsc::Receiver<String>>,
@@ -369,6 +370,7 @@ impl App {
         for (id, v) in &settings.screen_volumes {
             voice.set_screen_volume(id, *v);
         }
+        voice.set_whisper_targets(settings.whisper_to.clone());
         let settings_check_updates = settings.check_updates;
         let mut app = Self {
             core,
@@ -398,7 +400,7 @@ impl App {
             last_title: "IrChad".into(),
             voice,
             ptt: None,
-            binding_ptt: false,
+            binding_ptt: None,
             share_dialog: None,
             camera_error: None,
             stage: Stage::default(),
@@ -446,13 +448,20 @@ impl App {
         app
     }
 
-    /// (Re)starts the global push-to-talk listener for the current bind.
+    /// (Re)starts the global push-to-talk and whisper listener for the
+    /// current binds.
     fn restart_ptt(&mut self, ctx: &egui::Context) {
         self.ptt = None;
-        if self.settings.audio.mode == InputMode::PushToTalk {
+        let talk = self.settings.audio.mode == InputMode::PushToTalk;
+        let binds: Vec<_> = talk
+            .then_some((KeyAction::Talk, self.settings.ptt))
+            .into_iter()
+            .chain(self.settings.whisper.map(|b| (KeyAction::Whisper, b)))
+            .collect();
+        if !binds.is_empty() {
             let ctx = ctx.clone();
             let wake = move || ctx.request_repaint();
-            self.ptt = Some(Ptt::start(self.voice.clone(), self.settings.ptt, wake));
+            self.ptt = Some(Ptt::start(self.voice.clone(), binds, wake));
         }
     }
 

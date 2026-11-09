@@ -1,4 +1,5 @@
 //! One LiveKit call: connect, publish the mic, play everyone else, report state.
+//! Whispers (D71) are a second mic track that the SFU only lets the targets have.
 //! The SDK reconnects by itself; a [`Call`] ends when the room is gone for good
 //! or when it's dropped.
 
@@ -10,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use livekit::options::{AudioEncoding, TrackPublishOptions};
+use livekit::participant::ParticipantTrackPermission;
 use livekit::prelude::*;
 use livekit::track::{LocalAudioTrack, LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource};
 use livekit::webrtc::audio_source::{
@@ -33,6 +35,10 @@ const WATCHING: &str = "watching";
 /// The soundboard track's name. Its source is `Unknown`: LiveKit takes one
 /// track per known source, and the mic has `Microphone`.
 const BOARD: &str = "soundboard";
+/// The whisper track's name; `Unknown` source too.
+const WHISPER: &str = "whisper";
+/// A whisper this long after the last one starts anew, with its cue.
+const WHISPER_GAP: Duration = Duration::from_secs(1);
 
 /// D14: the SFU decides who's in the room.
 const MAX_PARTICIPANTS: usize = 500;
@@ -77,6 +83,7 @@ impl Drop for Call {
             *lock(&shared.watching) = None;
             *lock(&shared.screen) = None;
             *lock(&shared.mic) = None;
+            shared.whisper_ready.store(false, Relaxed);
             shared.set_call(self.generation, None);
             shared.play_cue(Cue::Leave);
         }
@@ -168,11 +175,40 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
         }
     };
 
+    // Silent until permissions say only the targets may have it (D71).
+    let whisper = new_source();
+    let whisper_track =
+        LocalAudioTrack::create_audio_track(WHISPER, RtcAudioSource::Native(whisper.clone()));
+    let whisper = match room
+        .local_participant()
+        .publish_track(
+            LocalTrack::Audio(whisper_track),
+            TrackPublishOptions {
+                source: TrackSource::Unknown,
+                dtx: true,
+                red: true,
+                audio_encoding: Some(AudioEncoding {
+                    max_bitrate: u64::from(kbps) * 1000,
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+    {
+        Ok(_) => Some(whisper),
+        Err(e) => {
+            tracing::warn!("publishing the whisper track: {e}");
+            None
+        }
+    };
+
     let generation = shared.generation.fetch_add(1, Relaxed) + 1;
+    shared.whisper_ready.store(false, Relaxed);
     *lock(&shared.mic) = Some(Mic {
         source,
         track,
         board,
+        whisper,
     });
     *lock(&shared.room) = Some(room.clone());
     *lock(&shared.watching) = None;
@@ -203,13 +239,21 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
         // Speaking comes from our own audio, not the SFU's slow active-speaker reports.
         let epoch = Instant::now();
         let local_id = short(&r.local_participant().identity().to_string());
-        let mut talking: HashMap<String, (String, Arc<AtomicU64>)> = HashMap::new();
-        let mut speakers = HashSet::new();
+        // Per mic or whisper track: (identity, last loud, a whisper).
+        let mut talking: HashMap<String, (String, Arc<AtomicU64>, bool)> = HashMap::new();
+        let mut speakers = (HashSet::new(), HashSet::new());
         let mut seen = None;
+        let mut grants = None;
+        permit(&shared, &r, &mut grants).await;
         snapshot(&shared, generation, &r, &mut seen, &speakers);
         let reason = loop {
             let ev = tokio::select! {
                 ev = events.recv() => ev,
+                () = shared.whisper_changed.notified() => {
+                    permit(&shared, &r, &mut grants).await;
+                    snapshot(&shared, generation, &r, &mut seen, &speakers);
+                    continue;
+                }
                 _ = stats.tick() => {
                     let rtt = rtt_ms(&r).await;
                     if shared.current(generation) {
@@ -222,7 +266,8 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                     if now != speakers && shared.current(generation) {
                         shared.update_call(|c| {
                             for p in &mut c.participants {
-                                p.speaking = now.contains(&p.identity);
+                                p.speaking = now.0.contains(&p.identity);
+                                p.whispering = now.1.contains(&p.identity);
                             }
                         });
                     }
@@ -241,17 +286,23 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 } => {
                     let sid = publication.sid().to_string();
                     let identity = short(&participant.identity().to_string());
+                    let whisper = publication.source() == TrackSource::Unknown
+                        && publication.name() == WHISPER;
+                    // A whisper plays at their voice's volume.
                     let kind = match publication.source() {
                         TrackSource::Microphone => Kind::Mic,
                         TrackSource::ScreenshareAudio => Kind::Screen,
+                        _ if whisper => Kind::Mic,
                         _ => Kind::Board,
                     };
-                    if let Some(tx) = shared.add_source(&sid, &identity, kind) {
+                    let cue = whisper.then(|| shared.clone());
+                    let delay = if whisper { whisper_cue_len() } else { 0 };
+                    if let Some(tx) = shared.add_delayed_source(&sid, &identity, kind, delay) {
                         let loud = Arc::new(AtomicU64::new(0));
                         if kind == Kind::Mic {
-                            talking.insert(sid.clone(), (identity, loud.clone()));
+                            talking.insert(sid.clone(), (identity, loud.clone(), whisper));
                         }
-                        let h = tokio::spawn(play(t, tx, loud, epoch));
+                        let h = tokio::spawn(play(t, tx, loud, epoch, cue));
                         if let Some(old) = streams.insert(sid, h) {
                             old.abort();
                         }
@@ -306,6 +357,8 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 RoomEvent::Disconnected { reason } => break end_reason(reason),
                 _ => {}
             }
+            // Someone came or went, or our tracks changed.
+            permit(&shared, &r, &mut grants).await;
             snapshot(&shared, generation, &r, &mut seen, &speakers);
         };
         for (sid, h) in streams {
@@ -324,22 +377,74 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
 }
 
 /// Pushes one remote track into its mixer ring, and stamps `loud` (ms since
-/// `epoch`) whenever it carries voice.
+/// `epoch`) whenever it carries voice. With `cue`, it's a whisper: each one
+/// starts with [`Cue::Whisper`], its voice held back until the cue is done.
 async fn play(
     track: RemoteAudioTrack,
     mut tx: rtrb::Producer<i16>,
     loud: Arc<AtomicU64>,
     epoch: Instant,
+    cue: Option<Arc<Shared>>,
 ) {
     let mut stream = NativeAudioStream::new(track.rtc_track(), RATE as i32, 1);
+    let mut onset = Onset::default();
     while let Some(frame) = stream.next().await {
-        if !frame.data.is_empty() && dbfs(&frame.data) > TALKING_DB {
+        let is_loud = !frame.data.is_empty() && dbfs(&frame.data) > TALKING_DB;
+        if is_loud {
             loud.store(epoch.elapsed().as_millis() as u64, Relaxed);
         }
-        for &x in frame.data.iter() {
+        let mut data: &[i16] = &frame.data;
+        if let Some(shared) = &cue {
+            let (lead, skip) = onset.frame(is_loud, Instant::now(), data.len());
+            if lead > 0 && !shared.deafened() {
+                shared.play_cue(Cue::Whisper);
+                for _ in 0..lead {
+                    if tx.push(0).is_err() {
+                        break;
+                    }
+                }
+            }
+            data = &data[skip..];
+        }
+        for &x in data {
             if tx.push(x).is_err() {
                 break;
             }
+        }
+    }
+}
+
+fn whisper_cue_len() -> usize {
+    Cue::Whisper.samples().len()
+}
+
+/// Where whispers start, to put the cue before them.
+#[derive(Default)]
+struct Onset {
+    last_loud: Option<Instant>,
+    /// Silence we put in for a cue and haven't taken back out yet.
+    debt: usize,
+}
+
+impl Onset {
+    /// For one frame of `len` samples: how much silence to put before it (the
+    /// cue's length when a whisper starts), and how much of it to skip (quiet
+    /// samples, to pay back that silence between whispers).
+    fn frame(&mut self, loud: bool, now: Instant, len: usize) -> (usize, usize) {
+        if loud {
+            let new = self
+                .last_loud
+                .is_none_or(|t| now.duration_since(t) >= WHISPER_GAP);
+            self.last_loud = Some(now);
+            if new && self.debt == 0 {
+                self.debt = whisper_cue_len();
+                return (self.debt, 0);
+            }
+            (0, 0)
+        } else {
+            let skip = self.debt.min(len);
+            self.debt -= skip;
+            (0, skip)
         }
     }
 }
@@ -351,9 +456,10 @@ fn subscribe(shared: &Shared, publication: &RemoteTrackPublication, identity: &s
             .as_ref()
             .is_some_and(|w| w.0 == identity && w.1 == camera)
     };
+    // A whisper only reaches us if the SFU lets it: we're a target (D71).
     let want = match publication.source() {
         TrackSource::Microphone => true,
-        TrackSource::Unknown => publication.name() == BOARD,
+        TrackSource::Unknown => [BOARD, WHISPER].contains(&publication.name().as_str()),
         TrackSource::Screenshare | TrackSource::ScreenshareAudio => watched(false),
         TrackSource::Camera => watched(true),
     };
@@ -450,25 +556,110 @@ struct Seen {
     watchers: HashMap<String, u32>,
 }
 
-/// Who's talking right now: us while the mic gate is open, others while their
-/// decoded audio was loud within [`VAD_HANG`].
+/// Who's talking right now, and who of them whispers: us while the mic gate
+/// (or whisper) is open, others while their decoded audio was loud within
+/// [`VAD_HANG`].
 fn speaking(
     shared: &Shared,
     local_id: &str,
-    talking: &HashMap<String, (String, Arc<AtomicU64>)>,
+    talking: &HashMap<String, (String, Arc<AtomicU64>, bool)>,
     epoch: Instant,
-) -> HashSet<String> {
+) -> (HashSet<String>, HashSet<String>) {
     let now = epoch.elapsed().as_millis() as u64;
     let hang = VAD_HANG.as_millis() as u64;
-    talking
+    let live: Vec<_> = talking
         .values()
-        .filter(|(_, loud)| {
+        .filter(|(_, loud, _)| {
             let t = loud.load(Relaxed);
             t != 0 && now.saturating_sub(t) < hang
         })
-        .map(|(id, _)| id.clone())
-        .chain(shared.transmitting().then(|| local_id.to_owned()))
-        .collect()
+        .collect();
+    let us = |on: bool| on.then(|| local_id.to_owned());
+    let whispering = shared.whispering();
+    (
+        live.iter()
+            .map(|(id, ..)| id.clone())
+            .chain(us(shared.transmitting() || whispering))
+            .collect(),
+        live.iter()
+            .filter(|(.., w)| *w)
+            .map(|(id, ..)| id.clone())
+            .chain(us(whispering))
+            .collect(),
+    )
+}
+
+/// What each remote may subscribe to: `None` for everything, all tracks.
+type Grants = Option<Vec<(ParticipantIdentity, bool, Vec<TrackSid>)>>;
+
+/// Who may subscribe to which of `ours` (sid, the whisper track) (D71):
+/// targets to all, everyone else to all but the whisper track. `None` (all
+/// for all) while no target is here, as then nothing gets whispered.
+fn whisper_permissions(
+    remotes: &[ParticipantIdentity],
+    targets: &[String],
+    ours: &[(TrackSid, bool)],
+) -> Grants {
+    let is_target = |p: &ParticipantIdentity| targets.contains(&short(p.as_str()));
+    if !ours.iter().any(|o| o.1) || !remotes.iter().any(is_target) {
+        return None;
+    }
+    let open: Vec<TrackSid> = ours.iter().filter(|o| !o.1).map(|o| o.0.clone()).collect();
+    // D14: past the cap, a remote gets nothing (it isn't shown either).
+    let mut grants: Vec<_> = remotes
+        .iter()
+        .take(MAX_PARTICIPANTS)
+        .map(|p| {
+            let t = is_target(p);
+            (p.clone(), t, if t { Vec::new() } else { open.clone() })
+        })
+        .collect();
+    grants.sort();
+    Some(grants)
+}
+
+/// Tells the SFU who may have our whisper track, when that changed; only
+/// then may the DSP thread whisper.
+async fn permit(shared: &Shared, room: &Room, last: &mut Option<Grants>) {
+    let local = room.local_participant();
+    let mut ours: Vec<(TrackSid, bool)> = local
+        .track_publications()
+        .values()
+        .map(|p| (p.sid(), p.name() == WHISPER))
+        .collect();
+    ours.sort();
+    let mut remotes: Vec<ParticipantIdentity> = room.remote_participants().into_keys().collect();
+    remotes.sort();
+    let targets = lock(&shared.whisper_to).clone();
+    let grants = whisper_permissions(&remotes, &targets, &ours);
+    if last.as_ref() == Some(&grants) {
+        return;
+    }
+    // Closed while the SFU learns who may listen.
+    shared.whisper_ready.store(false, Relaxed);
+    let ready = grants.is_some();
+    let permissions = grants
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(
+            |(participant_identity, allow_all, allowed_track_sids)| ParticipantTrackPermission {
+                participant_identity,
+                allow_all,
+                allowed_track_sids,
+            },
+        )
+        .collect();
+    if let Err(e) = local
+        .set_track_subscription_permissions(!ready, permissions)
+        .await
+    {
+        tracing::warn!("setting track permissions: {e}");
+        *last = None;
+        return;
+    }
+    shared.whisper_ready.store(ready, Relaxed);
+    *last = Some(grants);
 }
 
 /// Rebuilds the participant list from the room.
@@ -477,7 +668,7 @@ fn snapshot(
     generation: u64,
     room: &Room,
     seen: &mut Option<Seen>,
-    speakers: &HashSet<String>,
+    (speakers, whisperers): &(HashSet<String>, HashSet<String>),
 ) {
     if !shared.current(generation) {
         return;
@@ -509,6 +700,7 @@ fn snapshot(
         sharing: shared.sharing(),
         watchers: watchers.get(&local_id).copied().unwrap_or(0),
         camera: shared.camera_on(),
+        whispering: whisperers.contains(&local_id),
         identity: local_id,
     }];
     let mut remote: Vec<Participant> = remotes
@@ -531,6 +723,7 @@ fn snapshot(
                     .values()
                     .any(|t| t.source() == TrackSource::Camera && !t.is_muted()),
                 watchers: watchers.get(&identity).copied().unwrap_or(0),
+                whispering: whisperers.contains(&identity),
                 identity,
             }
         })
@@ -612,4 +805,74 @@ fn end_reason(reason: livekit::DisconnectReason) -> Option<String> {
 
 fn short(s: &str) -> String {
     s.chars().take(MAX_IDENTITY).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sid(s: &str) -> TrackSid {
+        TrackSid::try_from(format!("TR_{s}")).unwrap()
+    }
+
+    #[test]
+    fn only_targets_may_have_the_whisper() {
+        let ours = [
+            (sid("mic"), false),
+            (sid("whisper"), true),
+            (sid("cam"), false),
+        ];
+        let remotes: Vec<ParticipantIdentity> = vec!["bob".into(), "carol".into()];
+        let g = whisper_permissions(&remotes, &["bob".into()], &ours).unwrap();
+        assert_eq!(
+            g,
+            [
+                ("bob".into(), true, vec![]),
+                ("carol".into(), false, vec![sid("mic"), sid("cam")]),
+            ]
+        );
+    }
+
+    #[test]
+    fn all_may_have_everything_without_a_target_here() {
+        let ours = [(sid("mic"), false), (sid("whisper"), true)];
+        let remotes: Vec<ParticipantIdentity> = vec!["carol".into()];
+        assert_eq!(whisper_permissions(&remotes, &[], &ours), None);
+        assert_eq!(whisper_permissions(&remotes, &["bob".into()], &ours), None);
+        // No whisper track: nothing to keep from anyone.
+        let mic = [(sid("mic"), false)];
+        assert_eq!(whisper_permissions(&remotes, &["carol".into()], &mic), None);
+    }
+
+    #[test]
+    fn past_the_cap_gets_nothing() {
+        let ours = [(sid("mic"), false), (sid("whisper"), true)];
+        let remotes: Vec<ParticipantIdentity> = (0..MAX_PARTICIPANTS + 5)
+            .map(|i| format!("p{i:04}").into())
+            .collect();
+        let g = whisper_permissions(&remotes, &["p0000".into()], &ours).unwrap();
+        assert_eq!(g.len(), MAX_PARTICIPANTS);
+        assert!(g.iter().all(|(p, t, _)| *t == (p.as_str() == "p0000")));
+    }
+
+    #[test]
+    fn the_cue_goes_before_each_whisper_and_comes_back_out_between() {
+        let cue = whisper_cue_len();
+        let mut o = Onset::default();
+        let t = Instant::now();
+        assert_eq!(o.frame(true, t, 480), (cue, 0), "the first whisper");
+        assert_eq!(o.frame(true, t + Duration::from_millis(10), 480), (0, 0));
+        // Quiet within the gap pays the silence back.
+        let mut paid = 0;
+        for i in 0..cue / 480 + 1 {
+            paid += o
+                .frame(false, t + Duration::from_millis(20 + i as u64), 480)
+                .1;
+        }
+        assert_eq!(paid, cue);
+        assert_eq!(o.frame(false, t, 480), (0, 0));
+        // Talking again soon is the same whisper.
+        assert_eq!(o.frame(true, t + Duration::from_millis(500), 480), (0, 0));
+        assert_eq!(o.frame(true, t + Duration::from_secs(2), 480), (cue, 0));
+    }
 }
