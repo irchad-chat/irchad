@@ -2,7 +2,7 @@
 
 These are not scheduled. Move an item into a phase only when the user asks.
 
-- Webcam (desktop): PipeWire Camera portal on Linux, Media Foundation on Windows.
+- Webcam grid (desktop): see everyone's cameras at once. Single-camera webcam landed in D70.
 - Admin UI: kick, ban, channel management. Until then, admins use a normal IRC client.
   When this lands, chadd must also enforce bans and channel membership for voice tokens.
 - Invite codes that gate registration (chadd mints codes, and registration goes through the ergo API).

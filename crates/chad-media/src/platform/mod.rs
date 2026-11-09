@@ -4,13 +4,17 @@ use std::sync::Arc;
 
 use crate::Devices;
 use crate::engine::Shared;
-use crate::screen::{AppSink, AudioApp, Targets};
+use crate::screen::{AppSink, AudioApp, FrameSink, OnEnd, ScreenSource, Targets};
 
+#[cfg(target_os = "linux")]
+mod camera;
 pub mod desktop;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(windows)]
 mod loopback;
+#[cfg(windows)]
+pub(crate) mod mf;
 #[cfg(not(target_os = "linux"))]
 mod other;
 #[cfg(target_os = "linux")]
@@ -63,4 +67,21 @@ pub fn backend(shared: Arc<Shared>) -> Arc<dyn Backend> {
     return Arc::new(linux::PipeWire::spawn(shared));
     #[cfg(not(target_os = "linux"))]
     return Arc::new(other::Cpal::spawn(shared));
+}
+
+/// Opens camera `id` (a [`crate::Devices::cameras`] id; `None`: the first).
+pub async fn camera(
+    id: Option<String>,
+    sink: FrameSink,
+    on_end: OnEnd,
+) -> Result<Box<dyn ScreenSource>, String> {
+    #[cfg(target_os = "linux")]
+    return camera::start(id, sink, on_end).await;
+    #[cfg(windows)]
+    return mf::start(id, sink, on_end).await;
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = (id, sink, on_end);
+        Err("Cameras aren't supported here.".into())
+    }
 }

@@ -12,7 +12,7 @@
 //! The audio callbacks only `try_lock`, so they never wait on anyone.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -172,15 +172,22 @@ pub struct Shared {
     /// The call's room, for screen share and watching.
     pub room: Mutex<Option<Arc<livekit::Room>>>,
     share: Mutex<Option<Share>>,
+    camera: Mutex<Option<Share>>,
     shares: AtomicU64,
-    /// A share whose capture ended before it was stored.
-    ended: AtomicU64,
-    /// Identity whose screen we watch.
-    pub watching: Mutex<Option<String>>,
+    /// A share (`[0]`) or camera (`[1]`) whose capture ended before it was stored.
+    ended: [AtomicU64; 2],
+    /// A camera is being turned on.
+    pub camera_starting: AtomicBool,
+    /// Identity whose video we watch, and whether it's their camera.
+    pub watching: Mutex<Option<(String, bool)>>,
     pub screen: Mutex<Option<Arc<ScreenFrame>>>,
-    /// We watch our own share: the encoder puts what it sends in `screen`.
-    pub preview: AtomicBool,
+    /// We watch our own share or camera ([`PREVIEW_SCREEN`],
+    /// [`PREVIEW_CAMERA`]; 0 for neither): its encoder puts what it sends in `screen`.
+    pub preview: AtomicU8,
 }
+
+pub const PREVIEW_SCREEN: u8 = 1;
+pub const PREVIEW_CAMERA: u8 = 2;
 
 impl Shared {
     pub fn new(notify: Arc<dyn Fn() + Send + Sync>) -> Self {
@@ -202,11 +209,13 @@ impl Shared {
             dsp: Mutex::default(),
             room: Mutex::default(),
             share: Mutex::default(),
+            camera: Mutex::default(),
             shares: AtomicU64::new(0),
-            ended: AtomicU64::new(0),
+            ended: [AtomicU64::new(0), AtomicU64::new(0)],
+            camera_starting: AtomicBool::new(false),
             watching: Mutex::default(),
             screen: Mutex::default(),
-            preview: AtomicBool::new(false),
+            preview: AtomicU8::new(0),
         }
     }
 
@@ -214,9 +223,18 @@ impl Shared {
         self.shares.fetch_add(1, Relaxed) + 1
     }
 
-    pub fn set_share(&self, share: Share) {
-        let mut s = lock(&self.share);
-        let stored = self.ended.load(Relaxed) != share.id;
+    fn slot(&self, camera: bool) -> &Mutex<Option<Share>> {
+        if camera { &self.camera } else { &self.share }
+    }
+
+    /// Stores a share (or camera) that's up, unless its capture already
+    /// ended or its call did (then dropping it unpublishes and stops it).
+    pub fn set_share(&self, share: Share, camera: bool) {
+        let mut s = lock(self.slot(camera));
+        let live = lock(&self.room)
+            .as_ref()
+            .is_some_and(|r| Arc::ptr_eq(r, &share.room));
+        let stored = live && self.ended[usize::from(camera)].load(Relaxed) != share.id;
         if stored {
             *s = Some(share);
         }
@@ -227,13 +245,13 @@ impl Shared {
         (self.notify)();
     }
 
-    /// Stops the share, or only share `id` if given.
-    pub fn take_share(&self, id: Option<u64>) -> Option<Share> {
-        let mut s = lock(&self.share);
+    /// Stops the share (or camera), or only share `id` if given.
+    pub fn take_share(&self, id: Option<u64>, camera: bool) -> Option<Share> {
+        let mut s = lock(self.slot(camera));
         if let Some(id) = id
             && s.as_ref().is_none_or(|s| s.id != id)
         {
-            self.ended.store(id, Relaxed);
+            self.ended[usize::from(camera)].store(id, Relaxed);
             return None;
         }
         s.take()
@@ -241,6 +259,10 @@ impl Shared {
 
     pub fn sharing(&self) -> bool {
         lock(&self.share).is_some()
+    }
+
+    pub fn camera_on(&self) -> bool {
+        lock(&self.camera).is_some()
     }
 
     pub fn settings(&self) -> AudioSettings {

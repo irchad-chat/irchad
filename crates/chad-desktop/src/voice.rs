@@ -56,6 +56,8 @@ pub enum PanelAction {
     Leave,
     Share,
     StopShare,
+    Camera,
+    StopCamera,
     /// Watch our own share.
     Preview,
     /// The soundboard opened: list the network's sounds again.
@@ -190,6 +192,32 @@ pub fn panel(
                 PanelAction::Share
             });
         }
+        let camera = voice.camera_on();
+        let starting = voice.camera_starting();
+        let icon = if camera || starting {
+            icons::VIDEO_CAMERA
+        } else {
+            icons::VIDEO_CAMERA_SLASH
+        };
+        let r = ui
+            .add_enabled(
+                connected && !starting,
+                egui::Button::selectable(camera, RichText::new(icon).size(16.0)),
+            )
+            .tip(if starting {
+                "Turning on camera…"
+            } else if camera {
+                "Turn off camera"
+            } else {
+                "Turn on camera"
+            });
+        if r.clicked() {
+            action = Some(if camera {
+                PanelAction::StopCamera
+            } else {
+                PanelAction::Camera
+            });
+        }
         let board = ui.add_enabled_ui(connected, |ui| {
             ui.menu_button(RichText::new(icons::MUSIC_NOTES).size(16.0), |ui| {
                 soundboard(ui, voice, sounds, audio)
@@ -266,7 +294,8 @@ fn soundboard(
 /// Who's in a channel's voice room, under its row in the sidebar. In our own
 /// call the live list (speaking, muted, sharing) replaces the metadata one.
 /// Volume changes land in `volumes` and `screen_volumes`, which persist with
-/// the settings. Returns whose screen share was clicked, to watch.
+/// the settings. Returns whose screen share (or camera, `true`) was clicked,
+/// to watch.
 #[allow(clippy::too_many_arguments)]
 pub fn members(
     ui: &mut egui::Ui,
@@ -279,7 +308,7 @@ pub fn members(
     auto: bool,
     volumes: &mut HashMap<String, f32>,
     screen_volumes: &mut HashMap<String, f32>,
-) -> Option<String> {
+) -> Option<(String, bool)> {
     let mut watch = None;
     let dark = ui.visuals().dark_mode;
     // LiveKit identities are accounts; profiles are keyed by nick.
@@ -340,7 +369,23 @@ pub fn members(
                         "Watch"
                     };
                     if ui.put(at, live).on_hover_text(tip).clicked() {
-                        watch = Some(p.identity.clone());
+                        watch = Some((p.identity.clone(), false));
+                    }
+                }
+                if p.camera {
+                    let cam = egui::Button::new(RichText::new(icons::VIDEO_CAMERA).small()).small();
+                    let right = if p.sharing { 64.0 } else { 40.0 };
+                    let at = egui::Rect::from_min_size(
+                        egui::pos2(ui.max_rect().right() - right, r.rect.top()),
+                        vec2(20.0, r.rect.height()),
+                    );
+                    let tip = if p.local {
+                        "Preview your camera"
+                    } else {
+                        "Watch their camera"
+                    };
+                    if ui.put(at, cam).on_hover_text(tip).clicked() {
+                        watch = Some((p.identity.clone(), true));
                     }
                 }
                 if p.local {
@@ -390,6 +435,7 @@ pub fn settings(
             for (label, current, list) in [
                 ("Microphone", &mut s.audio.input, &devices.inputs),
                 ("Speakers", &mut s.audio.output, &devices.outputs),
+                ("Camera", &mut s.audio.camera, &devices.cameras),
             ] {
                 let l = ui.label(label);
                 let shown = current

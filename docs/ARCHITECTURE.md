@@ -58,7 +58,7 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
 - **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs.
   A guest can sign up later from the network menu without leaving (D35).
 - **chadd session (D18):** the client POSTs the account and password to `chadd /api/login`. chadd checks them with ergo's `/v1/check_auth` and returns a 1 h signed session token.
-  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone, a screen share with its audio, and the soundboard track (source `unknown`, D37).
+  `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone, the camera, a screen share with its audio, and the soundboard track (source `unknown`, D37).
   `POST /api/upload` (raw body, Bearer or HTTP Basic, also advertised as ISUPPORT `draft/FILEHOST`) stores a file (D26).
   `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
   `POST /api/gifs {query, pos}` searches the GIF provider set up in chadd.toml (KLIPY by default), and discovery's `chadd.gifs` says it's on (D30).
@@ -157,8 +157,9 @@ Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback fo
   - Software VP9 otherwise (and on Windows for now).
   The SDK falls back to software if the asked-for encoder isn't there, and 5 s in we log the encoder libwebrtc actually picked. Presets: 720p30, 1080p60, source, plus a bitrate cap.
   The content hint maps to libwebrtc's degradation preference: "Text" keeps resolution, "Motion" keeps the frame rate.
-- Capture backends implement `ScreenSource` and hand BGRA/RGBA frames to one sink, which converts to I420 (libyuv), scales to the preset and feeds a `NativeVideoSource`.
+- Capture backends implement `ScreenSource` and hand BGRA/RGBA (cameras also YUY2/NV12) frames to one sink, which converts to I420 (libyuv), scales to the preset and feeds a `NativeVideoSource`.
   App audio (PipeWire app stream node, or WASAPI process loopback) goes out as a second, stereo `ScreenshareAudio` track.
-- Viewers subscribe to tracks themselves (`auto_subscribe` off): microphones always, a screen share and its audio only while it's on screen.
+- Viewers subscribe to tracks themselves (`auto_subscribe` off): microphones always, a screen share and its audio, or a camera, only while it's on screen.
   A viewer sets its LiveKit participant attribute `watching=<identity>`, and the sharer counts those for "N watching" (D22).
   Decoded frames go to the UI as I420 planes, and a wgpu paint callback converts them to RGB in a shader.
+- Webcam (D70): Camera portal + PipeWire on Linux, Media Foundation on Windows, into the screen share's encoder at 720p 30 fps, published as the `Camera` source with simulcast. One video is watched at a time, on the same stage as screen shares.

@@ -25,10 +25,17 @@ pub struct Cpal {
     devices: Mutex<(Option<Instant>, Devices)>,
     #[cfg(windows)]
     app: Mutex<Option<super::loopback::Capture>>,
+    /// Filled off the UI thread: MF enumeration can take a while.
+    #[cfg(windows)]
+    cameras: Arc<Mutex<Vec<Device>>>,
+    #[cfg(windows)]
+    notify: Arc<dyn Fn() + Send + Sync>,
 }
 
 impl Cpal {
     pub fn spawn(shared: Arc<Shared>) -> Self {
+        #[cfg(windows)]
+        let notify = shared.notify.clone();
         let (tx, rx) = channel();
         let restart = tx.clone();
         let spawned = std::thread::Builder::new()
@@ -63,6 +70,10 @@ impl Cpal {
             devices: Mutex::new((None, Devices::default())),
             #[cfg(windows)]
             app: Mutex::default(),
+            #[cfg(windows)]
+            cameras: Arc::default(),
+            #[cfg(windows)]
+            notify,
         }
     }
 }
@@ -103,10 +114,27 @@ impl Backend for Cpal {
                     host.output_devices()
                         .map(|i| i.collect::<Vec<_>>().into_iter()),
                 ),
+                cameras: Vec::new(),
             };
+            #[cfg(windows)]
+            {
+                let (cameras, notify) = (self.cameras.clone(), self.notify.clone());
+                let _ = std::thread::Builder::new()
+                    .name("irchad-cameras".into())
+                    .spawn(move || {
+                        *lock(&cameras) = super::mf::cameras();
+                        notify();
+                    });
+            }
             d.0 = Some(Instant::now());
         }
-        d.1.clone()
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut out = d.1.clone();
+        #[cfg(windows)]
+        {
+            out.cameras = lock(&self.cameras).clone();
+        }
+        out
     }
 
     #[cfg(windows)]

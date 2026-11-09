@@ -22,7 +22,9 @@ use livekit::webrtc::video_stream::native::NativeVideoStream;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::engine::{CUE_LEN, Cue, Kind, Mic, Shared, VAD_HANG, dbfs, lock};
+use crate::engine::{
+    CUE_LEN, Cue, Kind, Mic, PREVIEW_CAMERA, PREVIEW_SCREEN, Shared, VAD_HANG, dbfs, lock,
+};
 use crate::screen::{MAX_DIM, ScreenFrame};
 use crate::{CallState, Participant, Quality, RATE, Voice};
 
@@ -70,6 +72,7 @@ impl Drop for Call {
         let shared = &self.voice.shared;
         if shared.current(self.generation) {
             self.voice.stop_share();
+            self.voice.stop_camera();
             *lock(&shared.room) = None;
             *lock(&shared.watching) = None;
             *lock(&shared.screen) = None;
@@ -257,9 +260,13 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                 RoomEvent::TrackSubscribed {
                     track: RemoteTrack::Video(t),
                     publication,
-                    ..
+                    participant,
                 } => {
-                    let h = tokio::spawn(view(t, shared.clone()));
+                    let target = (
+                        short(&participant.identity().to_string()),
+                        publication.source() == TrackSource::Camera,
+                    );
+                    let h = tokio::spawn(view(t, target, shared.clone()));
                     if let Some(old) = streams.insert(publication.sid().to_string(), h) {
                         old.abort();
                     }
@@ -272,14 +279,23 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                     &publication,
                     &short(&participant.identity().to_string()),
                 ),
-                RoomEvent::TrackUnsubscribed { publication, .. } => {
+                RoomEvent::TrackUnsubscribed {
+                    publication,
+                    participant,
+                    ..
+                } => {
                     let sid = publication.sid().to_string();
                     if let Some(h) = streams.remove(&sid) {
                         h.abort();
                     }
                     talking.remove(&sid);
                     shared.remove_source(&sid);
-                    if publication.source() == TrackSource::Screenshare {
+                    // Only the video on the stage; switching already cleared it.
+                    let camera = publication.source() == TrackSource::Camera;
+                    if (camera || publication.source() == TrackSource::Screenshare)
+                        && *lock(&shared.watching)
+                            == Some((short(&participant.identity().to_string()), camera))
+                    {
                         *lock(&shared.screen) = None;
                     }
                 }
@@ -328,47 +344,61 @@ async fn play(
     }
 }
 
-/// Microphones always; a screen share and its audio only while watched.
+/// Microphones always; a screen share and its audio, or a camera, only while watched.
 fn subscribe(shared: &Shared, publication: &RemoteTrackPublication, identity: &str) {
+    let watched = |camera: bool| {
+        lock(&shared.watching)
+            .as_ref()
+            .is_some_and(|w| w.0 == identity && w.1 == camera)
+    };
     let want = match publication.source() {
         TrackSource::Microphone => true,
         TrackSource::Unknown => publication.name() == BOARD,
-        TrackSource::Screenshare | TrackSource::ScreenshareAudio => {
-            lock(&shared.watching).as_deref() == Some(identity)
-        }
-        _ => false,
+        TrackSource::Screenshare | TrackSource::ScreenshareAudio => watched(false),
+        TrackSource::Camera => watched(true),
     };
     if want != publication.is_subscribed() {
         publication.set_subscribed(want);
     }
 }
 
-pub fn watch(shared: &Shared, identity: Option<String>) {
-    let identity = identity.map(|i| short(&i));
+/// Watches (identity, their camera rather than their screen), or nothing.
+pub fn watch(shared: &Shared, target: Option<(String, bool)>) {
+    let target = target.map(|(i, camera)| (short(&i), camera));
     {
         let mut w = lock(&shared.watching);
-        if *w == identity {
+        if *w == target {
             return;
         }
-        w.clone_from(&identity);
+        w.clone_from(&target);
     }
     // Off before clearing, so the encoder can't put a frame of ours back.
-    shared.preview.store(false, Relaxed);
+    shared.preview.store(0, Relaxed);
     *lock(&shared.screen) = None;
     let Some(room) = lock(&shared.room).clone() else {
         return;
     };
-    let own = identity.as_deref()
-        == Some(short(&room.local_participant().identity().to_string()).as_str());
-    shared.preview.store(own, Relaxed);
+    let own = target
+        .as_ref()
+        .is_some_and(|t| t.0 == short(&room.local_participant().identity().to_string()));
+    let camera = target.as_ref().is_some_and(|t| t.1);
+    if own {
+        let kind = if camera {
+            PREVIEW_CAMERA
+        } else {
+            PREVIEW_SCREEN
+        };
+        shared.preview.store(kind, Relaxed);
+    }
     for p in room.remote_participants().values() {
         let id = short(&p.identity().to_string());
         for publication in p.track_publications().values() {
             subscribe(shared, publication, &id);
         }
     }
-    // Tells the sharer how many watch (D22). Previewing our own isn't watching.
-    let identity = identity.filter(|_| !own);
+    // Tells the sharer how many watch (D22). Previewing our own isn't
+    // watching, and cameras don't count watchers.
+    let identity = target.filter(|t| !own && !t.1).map(|t| t.0);
     tokio::spawn(async move {
         let attrs = HashMap::from([(WATCHING.to_owned(), identity.unwrap_or_default())]);
         if let Err(e) = room.local_participant().set_attributes(attrs).await {
@@ -378,8 +408,9 @@ pub fn watch(shared: &Shared, identity: Option<String>) {
     (shared.notify)();
 }
 
-/// Decodes the watched share into [`ScreenFrame`]s for the UI.
-async fn view(track: RemoteVideoTrack, shared: Arc<Shared>) {
+/// Decodes the watched share or camera, `target` (identity, camera), into
+/// [`ScreenFrame`]s for the UI while it's still the one watched.
+async fn view(track: RemoteVideoTrack, target: (String, bool), shared: Arc<Shared>) {
     let mut stream = NativeVideoStream::new(track.rtc_track());
     let mut seq = 0;
     while let Some(frame) = stream.next().await {
@@ -392,7 +423,7 @@ async fn view(track: RemoteVideoTrack, shared: Arc<Shared>) {
         let (sy, su, sv) = b.strides();
         let (y, u, v) = b.data();
         seq += 1;
-        *lock(&shared.screen) = Some(Arc::new(ScreenFrame {
+        let frame = Arc::new(ScreenFrame {
             width,
             height,
             y: y.to_vec(),
@@ -400,7 +431,14 @@ async fn view(track: RemoteVideoTrack, shared: Arc<Shared>) {
             v: v.to_vec(),
             strides: [sy, su, sv],
             seq,
-        }));
+        });
+        // Checked under the screen lock, like `watch` clears it.
+        let mut screen = lock(&shared.screen);
+        if lock(&shared.watching).as_ref() != Some(&target) {
+            continue;
+        }
+        *screen = Some(frame);
+        drop(screen);
         (shared.notify)();
     }
 }
@@ -456,7 +494,10 @@ fn snapshot(
         *others.entry(w).or_default() += 1;
     }
     // Our own preview doesn't count.
-    let ours = lock(&shared.watching).clone().filter(|w| *w != local_id);
+    let ours = lock(&shared.watching)
+        .clone()
+        .filter(|w| !w.1 && w.0 != local_id)
+        .map(|w| w.0);
     let mut watchers = others.clone();
     if let Some(w) = &ours {
         *watchers.entry(w.clone()).or_default() += 1;
@@ -467,6 +508,7 @@ fn snapshot(
         local: true,
         sharing: shared.sharing(),
         watchers: watchers.get(&local_id).copied().unwrap_or(0),
+        camera: shared.camera_on(),
         identity: local_id,
     }];
     let mut remote: Vec<Participant> = remotes
@@ -485,6 +527,9 @@ fn snapshot(
                 sharing: pubs
                     .values()
                     .any(|t| t.source() == TrackSource::Screenshare),
+                camera: pubs
+                    .values()
+                    .any(|t| t.source() == TrackSource::Camera && !t.is_muted()),
                 watchers: watchers.get(&identity).copied().unwrap_or(0),
                 identity,
             }

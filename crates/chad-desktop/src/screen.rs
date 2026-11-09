@@ -320,6 +320,7 @@ pub fn stage(
     tile: Option<usize>,
 ) -> Option<StageAction> {
     let who = voice.watching()?;
+    let camera = voice.watching_camera();
     let (watchers, own) = voice
         .call()
         .and_then(|c| c.participants.into_iter().find(|p| p.identity == who))
@@ -343,8 +344,8 @@ pub fn stage(
             if ui.button(icon).tip(tip).clicked() {
                 action = Some(StageAction::Fullscreen(!fullscreen));
             }
-            // Our own share's sound never plays here.
-            if !own {
+            // Our own share's sound never plays here; cameras have none.
+            if !own && !camera {
                 ui.menu_button(icons::SPEAKER_HIGH, |ui| {
                     let mut v = voice.screen_volume(&who);
                     let l = ui.label("Screen share volume");
@@ -366,10 +367,15 @@ pub fn stage(
             }
             // Whatever's left of the buttons, so a narrow tile truncates the title.
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let title = if own {
-                    format!("{} Your screen", icons::SCREENCAST)
+                let (icon, what) = if camera {
+                    (icons::VIDEO_CAMERA, "camera")
                 } else {
-                    format!("{} {who}'s screen", icons::SCREENCAST)
+                    (icons::SCREENCAST, "screen")
+                };
+                let title = if own {
+                    format!("{icon} Your {what}")
+                } else {
+                    format!("{icon} {who}'s {what}")
                 };
                 let title = RichText::new(title).strong();
                 match tile {
@@ -384,8 +390,11 @@ pub fn stage(
                         ui.add(egui::Label::new(title).truncate());
                     }
                 }
-                let watching = RichText::new(format!("{} {watchers} watching", icons::EYE)).weak();
-                ui.add(egui::Label::new(watching).truncate());
+                if !camera {
+                    let watching =
+                        RichText::new(format!("{} {watchers} watching", icons::EYE)).weak();
+                    ui.add(egui::Label::new(watching).truncate());
+                }
             });
         });
     });

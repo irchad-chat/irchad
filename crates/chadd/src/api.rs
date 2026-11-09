@@ -206,6 +206,7 @@ pub async fn voice_token(
             can_publish_data: Some(false),
             can_publish_sources: vec![
                 "microphone".into(),
+                "camera".into(),
                 "screen_share".into(),
                 "screen_share_audio".into(),
                 // The soundboard's own track, so listeners can turn it down.

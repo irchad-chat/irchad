@@ -23,7 +23,7 @@ use livekit::webrtc::video_frame::{I420Buffer, VideoBuffer, VideoFrame, VideoRot
 use livekit::webrtc::video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource};
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{Shared, lock};
+use crate::engine::{PREVIEW_SCREEN, Shared, lock};
 use crate::{RATE, Voice};
 
 /// Bigger than any real screen; D14 for what peers send us, sanity for what
@@ -139,12 +139,17 @@ pub struct AudioApp {
 pub enum PixelFormat {
     /// B, G, R, A/x bytes (libyuv "ARGB").
     Bgra,
-    /// R, G, B, A/x bytes (libyuv "ABGR"). Only the portal produces it.
+    /// R, G, B, A/x bytes (libyuv "ABGR"). Only PipeWire produces it.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Rgba,
+    /// Y0, U, Y1, V: what most webcams send uncompressed. Only PipeWire produces it.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Yuy2,
+    /// The Y plane, then interleaved U, V at half size, both `stride` wide.
+    Nv12,
 }
 
-/// A captured frame, 4 bytes per pixel.
+/// A captured frame. `stride` is the bytes per row (of the Y plane for NV12).
 pub struct Frame<'a> {
     pub data: &'a [u8],
     pub width: u32,
@@ -156,10 +161,25 @@ pub struct Frame<'a> {
 impl Frame<'_> {
     /// Sizes that libyuv can read without running off the end.
     pub(crate) fn valid(&self) -> bool {
-        (1..=MAX_DIM).contains(&self.width)
-            && (1..=MAX_DIM).contains(&self.height)
-            && self.stride >= self.width * 4
-            && self.data.len() >= self.stride as usize * self.height as usize
+        if !(1..=MAX_DIM).contains(&self.width) || !(1..=MAX_DIM).contains(&self.height) {
+            return false;
+        }
+        // YUV rows hold whole pixel pairs.
+        let row = match self.format {
+            PixelFormat::Bgra | PixelFormat::Rgba => self.width * 4,
+            PixelFormat::Yuy2 => self.width.next_multiple_of(2) * 2,
+            PixelFormat::Nv12 => self.width.next_multiple_of(2),
+        };
+        self.stride >= row && self.data.len() >= self.len()
+    }
+
+    /// The bytes [`Frame::valid`] vouched for.
+    fn len(&self) -> usize {
+        let rows = match self.format {
+            PixelFormat::Nv12 => self.height + self.height.div_ceil(2),
+            _ => self.height,
+        };
+        self.stride as usize * rows as usize
     }
 }
 
@@ -173,11 +193,11 @@ pub trait ScreenSource: Send {}
 /// A share in progress, owned by [`crate::engine::Shared`].
 pub(crate) struct Share {
     pub id: u64,
-    _capture: Box<dyn ScreenSource>,
-    room: Arc<Room>,
-    tracks: Vec<TrackSid>,
+    pub _capture: Box<dyn ScreenSource>,
+    pub room: Arc<Room>,
+    pub tracks: Vec<TrackSid>,
     /// Capture threads end shares too, outside the runtime.
-    rt: tokio::runtime::Handle,
+    pub rt: tokio::runtime::Handle,
 }
 
 impl Drop for Share {
@@ -236,9 +256,14 @@ pub(crate) async fn start(
         },
         true,
     );
-    let sink = encoder(source.clone(), settings.preset, shared.clone());
+    let sink = encoder(
+        source.clone(),
+        settings.preset,
+        shared.clone(),
+        PREVIEW_SCREEN,
+    );
     let v = voice.clone();
-    let on_end: OnEnd = Box::new(move || v.end_share(id));
+    let on_end: OnEnd = Box::new(move || v.end_share(id, false));
     let (capture, token): (Box<dyn ScreenSource>, Option<String>) = match target {
         #[cfg(target_os = "linux")]
         Target::Portal { restore_token } => {
@@ -320,13 +345,16 @@ pub(crate) async fn start(
         }
     }
 
-    shared.set_share(Share {
-        id,
-        _capture: capture,
-        room,
-        tracks,
-        rt: tokio::runtime::Handle::current(),
-    });
+    shared.set_share(
+        Share {
+            id,
+            _capture: capture,
+            room,
+            tracks,
+            rt: tokio::runtime::Handle::current(),
+        },
+        false,
+    );
     Ok(token)
 }
 
@@ -378,8 +406,13 @@ fn pattern(fps: u32, mut sink: FrameSink) -> Box<dyn ScreenSource> {
 }
 
 /// Captured frames → I420 at the preset's size and rate → the video source,
-/// and to our own preview while it's open.
-fn encoder(source: NativeVideoSource, preset: Preset, shared: Arc<Shared>) -> FrameSink {
+/// and to our own preview while it's open. `kind`: which preview that is.
+pub(crate) fn encoder(
+    source: NativeVideoSource,
+    preset: Preset,
+    shared: Arc<Shared>,
+    kind: u8,
+) -> FrameSink {
     let interval = Duration::from_micros(1_000_000 / u64::from(preset.fps()));
     let mut next = Instant::now();
     let mut seq = 0;
@@ -393,29 +426,27 @@ fn encoder(source: NativeVideoSource, preset: Preset, shared: Arc<Shared>) -> Fr
         let mut i420 = I420Buffer::new(f.width, f.height);
         let (sy, su, sv) = i420.strides();
         let (y, u, v) = i420.data_mut();
-        let convert = match f.format {
-            PixelFormat::Bgra => yuv_helper::argb_to_i420,
-            PixelFormat::Rgba => yuv_helper::abgr_to_i420,
-        };
-        let len = f.stride as usize * f.height as usize;
-        convert(
-            &f.data[..len],
-            f.stride,
-            y,
-            sy,
-            u,
-            su,
-            v,
-            sv,
-            f.width as i32,
-            f.height as i32,
-        );
+        let (w, h) = (f.width as i32, f.height as i32);
+        let data = &f.data[..f.len()];
+        match f.format {
+            PixelFormat::Bgra => {
+                yuv_helper::argb_to_i420(data, f.stride, y, sy, u, su, v, sv, w, h);
+            }
+            PixelFormat::Rgba => {
+                yuv_helper::abgr_to_i420(data, f.stride, y, sy, u, su, v, sv, w, h);
+            }
+            PixelFormat::Nv12 => {
+                let (py, puv) = data.split_at(f.stride as usize * f.height as usize);
+                yuv_helper::nv12_to_i420(py, f.stride, puv, f.stride, y, sy, u, su, v, sv, w, h);
+            }
+            PixelFormat::Yuy2 => yuy2_to_i420(&f, [y, u, v], [sy, su, sv]),
+        }
         if let Some((w, h)) = fit(f.width, f.height, preset.bounds()) {
             i420 = i420.scale(w as i32, h as i32);
         }
-        if shared.preview.load(Relaxed) {
+        if shared.preview.load(Relaxed) == kind {
             seq += 1;
-            preview(&shared, &i420, seq);
+            preview(&shared, &i420, seq, kind);
         }
         source.capture_frame(&VideoFrame {
             rotation: VideoRotation::VideoRotation0,
@@ -427,7 +458,7 @@ fn encoder(source: NativeVideoSource, preset: Preset, shared: Arc<Shared>) -> Fr
 }
 
 /// Our own share as we send it, for the preview.
-fn preview(shared: &Shared, b: &I420Buffer, seq: u64) {
+fn preview(shared: &Shared, b: &I420Buffer, seq: u64, kind: u8) {
     let (sy, su, sv) = b.strides();
     let (y, u, v) = b.data();
     let frame = Arc::new(ScreenFrame {
@@ -441,11 +472,67 @@ fn preview(shared: &Shared, b: &I420Buffer, seq: u64) {
     });
     let mut screen = lock(&shared.screen);
     // Checked again under the lock: watching someone else turns it off first.
-    if shared.preview.load(Relaxed) {
+    if shared.preview.load(Relaxed) == kind {
         *screen = Some(frame);
     }
     drop(screen);
     (shared.notify)();
+}
+
+/// libyuv's YUY2 → I420 isn't exported, so by hand: chroma from even rows.
+/// `f` is [`Frame::valid`].
+fn yuy2_to_i420(f: &Frame<'_>, [y, u, v]: [&mut [u8]; 3], [sy, su, sv]: [u32; 3]) {
+    let (w, stride) = (f.width as usize, f.stride as usize);
+    for row in 0..f.height as usize {
+        let src = &f.data[row * stride..][..w.next_multiple_of(2) * 2];
+        let dst = &mut y[row * sy as usize..][..w];
+        for (d, s) in dst.iter_mut().zip(src.iter().step_by(2)) {
+            *d = *s;
+        }
+        if row % 2 == 0 {
+            let (cu, cv) = (
+                &mut u[row / 2 * su as usize..][..w.div_ceil(2)],
+                &mut v[row / 2 * sv as usize..][..w.div_ceil(2)],
+            );
+            for ((px, cu), cv) in src.as_chunks::<4>().0.iter().zip(cu).zip(cv) {
+                (*cu, *cv) = (px[1], px[3]);
+            }
+        }
+    }
+}
+
+/// Hands an NV12 buffer to the sink. Its UV plane may start below a Y plane
+/// padded to 16 rows (1080 → 1088); then the planes are joined in `joined`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn nv12(
+    data: &[u8],
+    w: u32,
+    h: u32,
+    pitch: u32,
+    joined: &mut Vec<u8>,
+    sink: &mut FrameSink,
+) {
+    let frame = |data| Frame {
+        data,
+        width: w,
+        height: h,
+        stride: pitch,
+        format: PixelFormat::Nv12,
+    };
+    let (y, uv) = (
+        pitch as usize * h as usize,
+        pitch as usize * h.div_ceil(2) as usize,
+    );
+    let padded = pitch as usize * h.next_multiple_of(16) as usize;
+    if padded != y && data.len() >= padded + uv {
+        joined.clear();
+        joined.extend_from_slice(&data[..y]);
+        joined.extend_from_slice(&data[padded..padded + uv]);
+        sink(frame(joined));
+    } else {
+        // `Frame::valid` (in the encoder) checks the length.
+        sink(frame(data));
+    }
 }
 
 /// The size to scale to so `w`×`h` fits `bounds` (even, aspect kept), if smaller.
@@ -560,6 +647,51 @@ mod tests {
         // Ultrawide: width-bound.
         assert_eq!(fit(3440, 1440, b), Some((1920, 802)));
         assert_eq!(fit(5000, 1000, Preset::Source.bounds()), None);
+    }
+
+    #[test]
+    fn nv12_skips_padding() {
+        // 2x18: Y padded to 32 rows, then 9 UV rows.
+        let (w, h, pitch) = (2u32, 18u32, 2u32);
+        let mut data = vec![1u8; (pitch * 32) as usize];
+        data.extend(vec![7u8; (pitch * 9) as usize]);
+        let got = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let g = got.clone();
+        let mut sink: FrameSink = Box::new(move |f: Frame<'_>| {
+            assert!(f.valid());
+            *g.lock().unwrap() = f.data[f.data.len() - 2..].to_vec();
+        });
+        nv12(&data, w, h, pitch, &mut Vec::new(), &mut sink);
+        assert_eq!(*got.lock().unwrap(), vec![7, 7]);
+    }
+
+    #[test]
+    fn yuy2_converts() {
+        // 3x2: odd width, so the last pixel pair is half padding.
+        let row = [10, 100, 20, 200, 30, 101, 0, 201];
+        let data = [row, row.map(|b| b + 1)].concat();
+        let f = Frame {
+            data: &data,
+            width: 3,
+            height: 2,
+            stride: 8,
+            format: PixelFormat::Yuy2,
+        };
+        assert!(f.valid());
+        let mut b = I420Buffer::new(3, 2);
+        let (sy, su, sv) = b.strides();
+        let (y, u, v) = b.data_mut();
+        yuy2_to_i420(&f, [y, u, v], [sy, su, sv]);
+        let (y, u, v) = b.data();
+        assert_eq!(&y[..3], &[10, 20, 30]);
+        assert_eq!(&y[sy as usize..][..3], &[11, 21, 31]);
+        assert_eq!(&u[..2], &[100, 101]);
+        assert_eq!(&v[..2], &[200, 201]);
+        let short = Frame {
+            data: &data[..15],
+            ..f
+        };
+        assert!(!short.valid());
     }
 
     #[test]

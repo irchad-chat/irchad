@@ -264,7 +264,7 @@ fn run(
     Ok(())
 }
 
-fn serialize(obj: Object) -> Result<Vec<u8>, pw::Error> {
+pub(super) fn serialize(obj: Object) -> Result<Vec<u8>, pw::Error> {
     Ok(spa::pod::serialize::PodSerializer::serialize(
         std::io::Cursor::new(Vec::new()),
         &Value::Object(obj),

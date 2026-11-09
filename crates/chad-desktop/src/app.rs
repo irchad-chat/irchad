@@ -90,6 +90,8 @@ pub struct App {
     ptt: Option<Ptt>,
     binding_ptt: bool,
     share_dialog: Option<ShareDialog>,
+    /// Why turning the camera on failed, once it has.
+    camera_error: Option<std::sync::mpsc::Receiver<String>>,
     stage: Stage,
     picker: Option<Picker>,
     switcher: Option<Switcher>,
@@ -398,6 +400,7 @@ impl App {
             ptt: None,
             binding_ptt: false,
             share_dialog: None,
+            camera_error: None,
             stage: Stage::default(),
             picker: None,
             switcher: None,
@@ -649,7 +652,12 @@ impl App {
     /// The share in its own window. Closing the window stops watching.
     fn popout(&mut self, ctx: &egui::Context) {
         let id = egui::ViewportId::from_hash_of("screen-share");
-        let title = format!("{}'s screen", self.voice.watching().unwrap_or_default());
+        let what = if self.voice.watching_camera() {
+            "camera"
+        } else {
+            "screen"
+        };
+        let title = format!("{}'s {what}", self.voice.watching().unwrap_or_default());
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
             .with_app_id(platform::APP_ID)
@@ -828,6 +836,9 @@ impl eframe::App for App {
             n.ui.media.viewer(&ctx);
         }
 
+        if let Some(e) = self.camera_error.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.toast(e);
+        }
         let watching = self.voice.watching().is_some();
         let layout = self.settings.stage;
         if !watching && self.stage.fullscreen {

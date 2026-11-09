@@ -5,6 +5,7 @@
 //! with that mix as the echo canceller's far end (`docs/notes/livekit-sdk.md`).
 //! The mic is only open while in a call or testing the input.
 
+mod camera;
 mod engine;
 mod platform;
 mod room;
@@ -51,6 +52,8 @@ pub struct AudioSettings {
     pub bitrate_kbps: u32,
     /// Everyone's soundboard clips (ours too), 0.0..=2.0, apart from voices.
     pub soundboard_volume: f32,
+    /// A [`Devices::cameras`] id; `None` takes the first camera.
+    pub camera: Option<String>,
 }
 
 impl Default for AudioSettings {
@@ -68,6 +71,7 @@ impl Default for AudioSettings {
             input_gain: 1.0,
             bitrate_kbps: 64,
             soundboard_volume: 1.0,
+            camera: None,
         }
     }
 }
@@ -89,6 +93,7 @@ pub struct Device {
 pub struct Devices {
     pub inputs: Vec<Device>,
     pub outputs: Vec<Device>,
+    pub cameras: Vec<Device>,
 }
 
 /// The current call, for the UI.
@@ -114,6 +119,8 @@ pub struct Participant {
     pub sharing: bool,
     /// How many others watch that share.
     pub watchers: u32,
+    /// Has their camera on.
+    pub camera: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -279,7 +286,7 @@ impl Voice {
     }
 
     pub fn stop_share(&self) {
-        self.end(None);
+        self.end(None, false);
     }
 
     pub fn sharing(&self) -> bool {
@@ -287,19 +294,56 @@ impl Voice {
     }
 
     /// The capture behind share `id` ended by itself.
-    pub(crate) fn end_share(&self, id: u64) {
-        self.end(Some(id));
+    pub(crate) fn end_share(&self, id: u64, camera: bool) {
+        self.end(Some(id), camera);
     }
 
-    fn end(&self, id: Option<u64>) {
-        if let Some(share) = self.shared.take_share(id) {
-            self.backend.capture_app(None);
+    /// Sends the camera picked in [`AudioSettings::camera`] into the call.
+    /// Does nothing while another start is under way.
+    pub async fn start_camera(&self) -> Result<(), String> {
+        use std::sync::atomic::Ordering::Relaxed;
+        if self.shared.camera_starting.swap(true, Relaxed) {
+            return Ok(());
+        }
+        (self.shared.notify)();
+        let r = camera::start(self).await;
+        self.shared.camera_starting.store(false, Relaxed);
+        (self.shared.notify)();
+        r
+    }
+
+    /// [`Voice::start_camera`] is under way (the portal may be asking).
+    pub fn camera_starting(&self) -> bool {
+        self.shared
+            .camera_starting
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn stop_camera(&self) {
+        self.end(None, true);
+    }
+
+    pub fn camera_on(&self) -> bool {
+        self.shared.camera_on()
+    }
+
+    fn end(&self, id: Option<u64>, camera: bool) {
+        if let Some(share) = self.shared.take_share(id, camera) {
+            if !camera {
+                self.backend.capture_app(None);
+            }
             drop(share);
             self.shared.play_cue(engine::Cue::ShareEnd);
+            let kind = if camera {
+                engine::PREVIEW_CAMERA
+            } else {
+                engine::PREVIEW_SCREEN
+            };
             if self
                 .shared
                 .preview
                 .load(std::sync::atomic::Ordering::Relaxed)
+                == kind
             {
                 self.watch(None);
             }
@@ -310,14 +354,29 @@ impl Voice {
     /// Subscribes to `identity`'s screen share (and its audio), or stops
     /// watching. Only watch while the video is on screen: it costs bandwidth.
     pub fn watch(&self, identity: Option<String>) {
-        room::watch(&self.shared, identity);
+        room::watch(&self.shared, identity.map(|i| (i, false)));
     }
 
+    /// Like [`Voice::watch`], for `identity`'s camera instead.
+    pub fn watch_camera(&self, identity: String) {
+        room::watch(&self.shared, Some((identity, true)));
+    }
+
+    /// Whose video we watch.
     pub fn watching(&self) -> Option<String> {
-        engine::lock(&self.shared.watching).clone()
+        engine::lock(&self.shared.watching)
+            .as_ref()
+            .map(|w| w.0.clone())
     }
 
-    /// The latest frame of the share being watched.
+    /// The video we watch is a camera, not a screen share.
+    pub fn watching_camera(&self) -> bool {
+        engine::lock(&self.shared.watching)
+            .as_ref()
+            .is_some_and(|w| w.1)
+    }
+
+    /// The latest frame of the video being watched.
     pub fn screen(&self) -> Option<Arc<ScreenFrame>> {
         engine::lock(&self.shared.screen).clone()
     }

@@ -124,6 +124,18 @@ impl App {
                     self.share_dialog = Some(ShareDialog::new(&self.voice, ui.ctx()));
                 }
                 Some(voice::PanelAction::StopShare) => self.voice.stop_share(),
+                Some(voice::PanelAction::Camera) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let (v, ctx) = (self.voice.clone(), ui.ctx().clone());
+                    tokio::spawn(async move {
+                        if let Err(e) = v.start_camera().await {
+                            let _ = tx.send(e);
+                            ctx.request_repaint();
+                        }
+                    });
+                    self.camera_error = Some(rx);
+                }
+                Some(voice::PanelAction::StopCamera) => self.voice.stop_camera(),
                 Some(voice::PanelAction::Soundboard) => self.send(&net, NetCommand::Sounds),
                 Some(voice::PanelAction::Sound(file)) => {
                     match self.clips.get(&(net.clone(), file.clone())) {
@@ -460,8 +472,10 @@ impl App {
                 self.voice.watch(None);
             }
         }
-        if let Some(who) = watch {
-            self.voice.watch(Some(who));
+        match watch {
+            Some((who, true)) => self.voice.watch_camera(who),
+            Some((who, false)) => self.voice.watch(Some(who)),
+            None => {}
         }
         if let Some(channel) = part {
             self.send(&network, NetCommand::Part { channel });

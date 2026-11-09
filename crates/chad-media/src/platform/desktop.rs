@@ -43,7 +43,7 @@ pub fn sources() -> Vec<ShareSource> {
     out
 }
 
-struct Running(Arc<AtomicBool>);
+pub(crate) struct Running(pub Arc<AtomicBool>);
 
 impl ScreenSource for Running {}
 

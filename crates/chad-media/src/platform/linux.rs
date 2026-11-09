@@ -119,22 +119,18 @@ fn run(
     let core = context.connect_rc(None)?;
     let registry = core.get_registry_rc()?;
 
-    // id → (is input, device)
-    let nodes: Rc<RefCell<HashMap<u32, (bool, Device)>>> = Rc::default();
+    // id → (input 0, output 1 or camera 2, device)
+    let nodes: Rc<RefCell<HashMap<u32, (usize, Device)>>> = Rc::default();
     let publish = {
         let (nodes, devices, shared) = (nodes.clone(), devices.clone(), shared.clone());
         move || {
             let mut d = Devices::default();
-            for (input, dev) in nodes.borrow().values() {
-                if *input {
-                    &mut d.inputs
-                } else {
-                    &mut d.outputs
-                }
-                .push(dev.clone());
+            for (kind, dev) in nodes.borrow().values() {
+                [&mut d.inputs, &mut d.outputs, &mut d.cameras][*kind].push(dev.clone());
             }
-            d.inputs.sort_by(|a, b| a.name.cmp(&b.name));
-            d.outputs.sort_by(|a, b| a.name.cmp(&b.name));
+            for list in [&mut d.inputs, &mut d.outputs, &mut d.cameras] {
+                list.sort_by(|a, b| a.name.cmp(&b.name));
+            }
             *lock(&devices) = d;
             (shared.notify)();
         }
@@ -150,9 +146,11 @@ fn run(
                 let Some(props) = g.props.filter(|_| g.type_ == ObjectType::Node) else {
                     return;
                 };
-                let input = match props.get(*pw::keys::MEDIA_CLASS) {
-                    Some("Audio/Source") => true,
-                    Some("Audio/Sink") => false,
+                let kind = match props.get(*pw::keys::MEDIA_CLASS) {
+                    Some("Audio/Source") => 0,
+                    Some("Audio/Sink") => 1,
+                    // Screen casts are video sources too; cameras say so.
+                    Some("Video/Source") if props.get(*pw::keys::MEDIA_ROLE) == Some("Camera") => 2,
                     // An app playing something. Never our own voice output.
                     Some("Stream/Output/Audio")
                         if props.get(*pw::keys::APP_PROCESS_ID) != Some(me.as_str()) =>
@@ -192,7 +190,7 @@ fn run(
                     id: id.to_owned(),
                     name: name.to_owned(),
                 };
-                nodes.borrow_mut().insert(g.id, (input, dev));
+                nodes.borrow_mut().insert(g.id, (kind, dev));
                 publish();
             }
         })
