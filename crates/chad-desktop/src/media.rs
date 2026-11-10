@@ -114,7 +114,7 @@ impl Media {
             Some(Img::Ready(f)) => {
                 let scale = (max.x / f.size.x).min(max.y / f.size.y).min(1.0);
                 ui.add(
-                    egui::Image::new((frame_at(f, ui).id(), f.size * scale))
+                    egui::Image::new((frame_at(f, ui.ctx()).id(), f.size * scale))
                         .corner_radius(CornerRadius::same(4)),
                 );
             }
@@ -204,7 +204,7 @@ impl Media {
         // A wide one keeps its shape, up to a point.
         let width = (f.size.x * height / f.size.y.max(1.0)).min(height * 3.0);
         Some(egui::Image::new((
-            frame_at(f, ui).id(),
+            frame_at(f, ui.ctx()).id(),
             vec2(width, height),
         )))
     }
@@ -245,7 +245,7 @@ impl Media {
                 let scale = (MAX_SHOWN.x / f.size.x)
                     .min(MAX_SHOWN.y / f.size.y)
                     .min(1.0);
-                let tex = frame_at(f, ui);
+                let tex = frame_at(f, ui.ctx());
                 let r = ui
                     .add(
                         egui::Image::new((tex.id(), f.size * scale))
@@ -301,7 +301,10 @@ impl Media {
             let max = ctx.content_rect().size() * 0.85 - vec2(0.0, 40.0);
             // Upscale small images a little so a click shows something bigger.
             let scale = (max.x / f.size.x).min(max.y / f.size.y).min(2.0);
-            let r = ui.add(egui::Image::new((frame_at(f, ui).id(), f.size * scale)));
+            let r = ui.add(egui::Image::new((
+                frame_at(f, ui.ctx()).id(),
+                f.size * scale,
+            )));
             r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &url));
             ui.horizontal(|ui| {
                 if ui
@@ -339,7 +342,7 @@ impl Media {
         let radius = CornerRadius::same(4);
         match self.images.get(url) {
             Some(Img::Ready(f)) => {
-                egui::Image::new((frame_at(f, ui).id(), size))
+                egui::Image::new((frame_at(f, ui.ctx()).id(), size))
                     .corner_radius(radius)
                     .paint_at(ui, rect);
             }
@@ -423,22 +426,33 @@ impl Media {
     /// fetched otherwise). Returns whether it drew, so the caller can draw its
     /// own stand-in.
     pub fn avatar_image(&mut self, ui: &egui::Ui, rect: egui::Rect, url: &Url, auto: bool) -> bool {
-        if !auto {
+        let Some((id, uv)) = self.avatar_texture(ui.ctx(), url, auto) else {
             return false;
+        };
+        paint_avatar(ui, rect, id, uv);
+        true
+    }
+
+    /// An avatar's texture (its current frame, in `ctx`) and the square crop
+    /// of it to show, once loaded.
+    pub fn avatar_texture(
+        &mut self,
+        ctx: &egui::Context,
+        url: &Url,
+        auto: bool,
+    ) -> Option<(egui::TextureId, egui::Rect)> {
+        if !auto {
+            return None;
         }
         self.want_image(url.as_str());
         let Some(Img::Ready(f)) = self.images.get(url.as_str()) else {
-            return false;
+            return None;
         };
         // Centre-crop to a square so portraits aren't squashed.
         let side = f.size.min_elem();
         let (u, v) = (side / f.size.x, side / f.size.y);
         let uv = egui::Rect::from_center_size(egui::pos2(0.5, 0.5), vec2(u, v));
-        egui::Image::new((frame_at(f, ui).id(), rect.size()))
-            .uv(uv)
-            .corner_radius(CornerRadius::same(255))
-            .paint_at(ui, rect);
-        true
+        Some((frame_at(f, ctx).id(), uv))
     }
 
     /// A round avatar at `rect`: the image, or the nick's initial on its colour.
@@ -473,17 +487,24 @@ impl Media {
 }
 
 /// The frame to show now, scheduling a repaint for the next one.
-fn frame_at<'a>(f: &'a Frames, ui: &egui::Ui) -> &'a TextureHandle {
+/// A round avatar: texture `id`'s `uv` crop at `rect`.
+pub fn paint_avatar(ui: &egui::Ui, rect: egui::Rect, id: egui::TextureId, uv: egui::Rect) {
+    egui::Image::new((id, rect.size()))
+        .uv(uv)
+        .corner_radius(CornerRadius::same(255))
+        .paint_at(ui, rect);
+}
+
+fn frame_at<'a>(f: &'a Frames, ctx: &egui::Context) -> &'a TextureHandle {
     if f.frames.len() == 1 || f.period <= 0.0 {
         return &f.frames[0].0;
     }
-    let t = (ui.input(|i| i.time) as f32) % f.period;
+    let t = (ctx.input(|i| i.time) as f32) % f.period;
     let mut acc = 0.0;
     for (tex, delay) in &f.frames {
         acc += delay;
         if t < acc {
-            ui.ctx()
-                .request_repaint_after(Duration::from_secs_f32((acc - t).max(0.01)));
+            ctx.request_repaint_after(Duration::from_secs_f32((acc - t).max(0.01)));
             return tex;
         }
     }

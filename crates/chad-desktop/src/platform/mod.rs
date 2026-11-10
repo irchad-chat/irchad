@@ -9,6 +9,8 @@ mod idle_linux;
 #[cfg(windows)]
 mod idle_windows;
 pub mod overlay;
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+pub mod overlay_wayland;
 pub mod presence;
 #[cfg(target_os = "linux")]
 mod presence_linux;

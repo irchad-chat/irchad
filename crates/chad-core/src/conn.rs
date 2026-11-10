@@ -947,10 +947,13 @@ fn fetch(
                 }]);
             });
         }
-        NetCommand::Games => {
+        NetCommand::Games { etag } => {
             tokio::spawn(async move {
                 let result = client
-                    .call(|api, t| async move { chadd::games(&api, &t).await })
+                    .call(|api, t| {
+                        let etag = etag.clone();
+                        async move { chadd::games(&api, &t, etag.as_deref()).await }
+                    })
                     .await;
                 sink.send([Event::Games { network, result }]);
             });

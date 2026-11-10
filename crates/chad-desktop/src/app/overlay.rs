@@ -152,6 +152,10 @@ impl App {
     /// The overlay's own window, over the game, while it's up.
     pub(super) fn overlay_ui(&mut self, ctx: &egui::Context) {
         let Some(target) = self.overlay_target() else {
+            #[cfg(all(target_os = "linux", feature = "wayland"))]
+            {
+                self.overlay_layer = None;
+            }
             return;
         };
         let s = &self.settings.overlay;
@@ -240,6 +244,39 @@ impl App {
         }
         let now = Instant::now();
         let mut fading = false;
+        #[cfg(all(target_os = "linux", feature = "wayland"))]
+        if platform::overlay::wayland() {
+            // Avatars from the call's network's images, like the sidebar's.
+            let auto = self.settings.load_media;
+            let net = self.view.call.as_ref().and_then(|(n, _)| self.net_idx(n));
+            let faces: HashMap<url::Url, (egui::TextureId, egui::Rect)> = match net {
+                Some(i) => {
+                    let media = &mut self.view.nets[i].ui.media;
+                    voice
+                        .iter()
+                        .filter_map(|r| {
+                            let u = r.avatar.as_ref()?;
+                            Some((u.clone(), media.avatar_texture(ctx, u, auto)?))
+                        })
+                        .collect()
+                }
+                None => HashMap::new(),
+            };
+            let fading = overlay_wayland(
+                &mut self.overlay_layer,
+                self.wgpu.as_ref().zip(self.wl_display),
+                ctx,
+                &view,
+                &faces,
+                now,
+            );
+            if fading {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            } else if (view.fade.is_some() && !view.lines.is_empty()) || preview {
+                ctx.request_repaint_after(Duration::from_millis(500));
+            }
+            return;
+        }
         // Avatars come from the call's network's images, like the sidebar's.
         let auto = self.settings.load_media;
         let net = self.view.call.as_ref().and_then(|(n, _)| self.net_idx(n));
@@ -465,6 +502,63 @@ impl App {
             self.restart_ptt(ctx);
         }
     }
+}
+
+/// Draws `view` on the layer surface, made (again) when there's none, the
+/// compositor closed it, or the corner changed. `faces` are the voice rows'
+/// avatars in the main context, by URL. Returns whether lines are
+/// fading.
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+fn overlay_wayland(
+    layer: &mut Option<platform::overlay_wayland::Layer>,
+    gpu: Option<(
+        &eframe::egui_wgpu::RenderState,
+        eframe::egui_wgpu::wgpu::rwh::RawDisplayHandle,
+    )>,
+    ctx: &egui::Context,
+    view: &OverlayView,
+    faces: &HashMap<url::Url, (egui::TextureId, egui::Rect)>,
+    now: Instant,
+) -> bool {
+    let Some((rs, display)) = gpu else {
+        return false;
+    };
+    if layer
+        .as_ref()
+        .is_none_or(|l| l.closed() || l.corner != view.corner)
+    {
+        *layer = None;
+        let ppp = ctx.native_pixels_per_point().unwrap_or(1.0) * ctx.zoom_factor();
+        match platform::overlay_wayland::Layer::new(
+            rs,
+            display,
+            ctx,
+            view.corner,
+            overlay::SIZE,
+            ppp,
+        ) {
+            Ok(l) => *layer = Some(l),
+            Err(e) => {
+                tracing::warn!("overlay: layer surface: {e}");
+                return false;
+            }
+        }
+    }
+    let mut fading = false;
+    if let Some(l) = layer.as_mut() {
+        let ids: Vec<_> = faces.values().map(|(id, _)| *id).collect();
+        let ours = l.import(rs, &ids).clone();
+        let mut avatars = |ui: &egui::Ui, rect: egui::Rect, r: &VoiceRow| {
+            let face = r.avatar.as_ref().and_then(|u| faces.get(u));
+            let Some((id, uv)) = face.and_then(|(id, uv)| Some((ours.get(id)?, uv))) else {
+                return false;
+            };
+            crate::media::paint_avatar(ui, rect, *id, *uv);
+            true
+        };
+        l.paint(rs, |ui| fading = overlay::ui(ui, view, now, &mut avatars));
+    }
+    fading
 }
 
 /// The first key or side button pressed this frame that can be bound, with

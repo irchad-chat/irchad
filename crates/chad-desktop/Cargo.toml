@@ -31,7 +31,7 @@ url.workspace = true
 [features]
 # Linux display servers; build with --no-default-features --features x11 (or wayland) to drop one.
 default = ["wayland", "x11"]
-wayland = ["eframe/wayland", "dep:wayland-client", "dep:wayland-protocols"]
+wayland = ["eframe/wayland", "dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:wayland-backend"]
 x11 = ["eframe/x11", "dep:x11rb"]
 
 [lints]
@@ -43,8 +43,13 @@ futures-util = "0.3"
 ksni = "0.3.7"
 wayland-client = { version = "0.31.15", optional = true }
 wayland-protocols = { version = "0.32.13", features = ["client", "staging"], optional = true }
+# The overlay's layer surface (D75); `client_system` for the libwayland pointers wgpu needs.
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"], optional = true }
+wayland-backend = { version = "0.3.17", features = ["client_system"], optional = true }
 x11rb = { version = "0.13.2", features = ["xinput", "screensaver"], optional = true }
 zbus = "5"
+# The Wayland overlay's own egui context gets the system fallback fonts eframe gives its own (D75).
+egui_system_font_provider = "0.37.0"
 
 [target."cfg(windows)".dependencies]
 windows = { version = "0.62", features = ["Foundation_Collections", "Media_Control", "Win32_System_Com"] }

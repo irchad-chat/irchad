@@ -29,6 +29,13 @@ use url::Url;
 
 pub use chad_proto::chadd::{Game, Gif, GifPage, LinkPreview, Sound};
 pub use chad_proto::one_line;
+
+/// Discord's game list as chadd last sent it; clients keep it to send `etag` back.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GameList {
+    pub games: Vec<Game>,
+    pub etag: Option<String>,
+}
 pub use discovery::fetch_icon;
 pub use emoji::CustomEmoji;
 pub use manager::start;
@@ -260,7 +267,10 @@ pub enum NetCommand {
         on: bool,
     },
     /// Discord's game list from chadd, if `NetworkInfo::games`: `Event::Games`.
-    Games,
+    /// `etag` is the copy we already have, so an unchanged list isn't resent.
+    Games {
+        etag: Option<String>,
+    },
     /// `Some(reason)` to go away, `None` to come back. Kept across reconnects.
     SetAway {
         message: Option<String>,
@@ -454,9 +464,10 @@ pub enum Event {
         network: String,
         emoji: Vec<CustomEmoji>,
     },
+    /// `Ok(None)`: the copy asked about is still current.
     Games {
         network: String,
-        result: Result<Vec<Game>, String>,
+        result: Result<Option<GameList>, String>,
     },
     Sound {
         network: String,

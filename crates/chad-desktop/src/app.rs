@@ -102,6 +102,15 @@ pub struct App {
     focus: Option<platform::overlay::Focus>,
     /// When "Preview" was clicked in its settings.
     overlay_preview: Option<Instant>,
+    /// eframe's GPU, which the Wayland overlay draws with too.
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    wgpu: Option<eframe::egui_wgpu::RenderState>,
+    /// eframe's `wl_display`, which the overlay's layer surface shares.
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    wl_display: Option<eframe::egui_wgpu::wgpu::rwh::RawDisplayHandle>,
+    /// The overlay's layer surface on Wayland, while it's up (D75).
+    #[cfg(all(target_os = "linux", feature = "wayland"))]
+    overlay_layer: Option<platform::overlay_wayland::Layer>,
     share_dialog: Option<ShareDialog>,
     /// Why turning the camera on failed, once it has.
     camera_error: Option<std::sync::mpsc::Receiver<String>>,
@@ -131,6 +140,14 @@ pub struct App {
     games: tokio::sync::watch::Sender<Option<std::sync::Arc<crate::presence::Games>>>,
     /// When we last asked for it; it's asked again later if that failed.
     games_asked: Option<Instant>,
+    /// Where the last list chadd sent is kept, so games are spotted from launch.
+    games_cache: std::path::PathBuf,
+    /// Reading `games_cache`, at startup; chadd isn't asked until it's done.
+    games_load: Option<std::thread::JoinHandle<Option<chad_core::GameList>>>,
+    /// The ETag of the list we have, sent back so an unchanged one isn't resent.
+    games_etag: Option<String>,
+    /// Whether chadd has answered this run (a new list or "still current").
+    games_fresh: bool,
     /// Why the last ask for it failed, for the overlay's settings.
     games_error: Option<String>,
     /// The `chad/activity` we last sent everywhere (`None`: we leave it alone),
@@ -386,6 +403,7 @@ fn select(n: &mut Network, k: &str) {
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         core: Core,
@@ -394,7 +412,9 @@ impl App {
         tray: Tray,
         open: Option<String>,
         voice: Voice,
+        data_dir: &std::path::Path,
     ) -> Self {
+        let games_cache = data_dir.join("games.json");
         let settings: Settings = cc
             .storage
             .and_then(|s| eframe::get_value(s, settings::KEY))
@@ -445,6 +465,15 @@ impl App {
             overlay_lines: crate::overlay::Lines::default(),
             focus: None,
             overlay_preview: None,
+            #[cfg(all(target_os = "linux", feature = "wayland"))]
+            wgpu: cc.wgpu_render_state.clone(),
+            #[cfg(all(target_os = "linux", feature = "wayland"))]
+            wl_display: {
+                use eframe::egui_wgpu::wgpu::rwh::HasDisplayHandle as _;
+                cc.display_handle().ok().map(|h| h.as_raw())
+            },
+            #[cfg(all(target_os = "linux", feature = "wayland"))]
+            overlay_layer: None,
             share_dialog: None,
             camera_error: None,
             stage: Stage::default(),
@@ -465,6 +494,13 @@ impl App {
             poll: None,
             games: tokio::sync::watch::Sender::new(None),
             games_asked: None,
+            games_load: Some({
+                let path = games_cache.clone();
+                std::thread::spawn(move || serde_json::from_slice(&std::fs::read(path).ok()?).ok())
+            }),
+            games_cache,
+            games_etag: None,
+            games_fresh: false,
             games_error: None,
             activity_sent: (None, None),
             new_version: None,

@@ -86,7 +86,7 @@ fn main() -> eframe::Result {
             let repaint = ctx.clone();
             let voice = chad_media::Voice::new(Arc::new(move || repaint.request_repaint()));
             let (core, events) = chad_core::start(chad_core::Config {
-                data_dir,
+                data_dir: data_dir.clone(),
                 secrets: if profile.is_some() {
                     Arc::new(chad_core::secrets::MemorySecrets::default())
                 } else {
@@ -97,7 +97,7 @@ fn main() -> eframe::Result {
                 version: format!("IrChad {}", update::version()),
             });
             Ok(Box::new(app::App::new(
-                cc, core, events, os_rx, tray, open, voice,
+                cc, core, events, os_rx, tray, open, voice, &data_dir,
             )))
         }),
     )

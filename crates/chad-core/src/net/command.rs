@@ -96,7 +96,7 @@ impl Net {
                     result: Err("You're offline right now.".into()),
                 });
             }
-            NetCommand::Games => {
+            NetCommand::Games { .. } => {
                 let network = self.id();
                 self.events.push(Event::Games {
                     network,

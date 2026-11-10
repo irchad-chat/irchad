@@ -32,16 +32,32 @@ pub fn support() -> Result<(), &'static str> {
 /// Whether the overlay can work here, or why not.
 #[cfg(target_os = "linux")]
 pub fn support() -> Result<(), &'static str> {
-    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
-        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland");
-    if wayland {
-        // shortcut: the wlr-layer-shell backend isn't written yet (phase 9).
-        return Err("The overlay doesn't work on Wayland yet.");
+    // Focus comes from X11 either way: on Wayland, XWayland's (D75).
+    let x11 = cfg!(feature = "x11") && std::env::var_os("DISPLAY").is_some();
+    if wayland() {
+        #[cfg(feature = "wayland")]
+        let layer = super::overlay_wayland::available();
+        #[cfg(not(feature = "wayland"))]
+        let layer = false;
+        return match (layer, x11) {
+            (false, _) => {
+                Err("Your desktop can't show overlays (it has no wlr-layer-shell; GNOME doesn't).")
+            }
+            (true, false) => Err("The overlay needs XWayland to spot games on Wayland."),
+            (true, true) => Ok(()),
+        };
     }
-    if cfg!(feature = "x11") && std::env::var_os("DISPLAY").is_some() {
+    if x11 {
         return Ok(());
     }
     Err("No display server found.")
+}
+
+/// Whether this is a Wayland session; the overlay is a layer surface then.
+#[cfg(target_os = "linux")]
+pub fn wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland")
 }
 
 /// Whether the overlay can work here, or why not.
@@ -500,9 +516,50 @@ impl Foreground {
 }
 
 /// X11: `_NET_ACTIVE_WINDOW`'s `_NET_WM_PID`, over one connection kept
-/// between polls.
+/// between polls. On Wayland that's XWayland's, which KWin and wlroots clear
+/// while a Wayland window has focus. Hyprland doesn't (nor
+/// `_NET_WM_STATE_FOCUSED`), so there its own IPC is asked instead.
+///
+/// shortcut: native-Wayland games are spotted only on Hyprland; ask Sway's
+/// IPC or a KWin script when someone needs them.
 #[cfg(all(target_os = "linux", feature = "x11"))]
 struct Foreground(Option<X11>);
+
+/// Hyprland's IPC socket, when this is a Hyprland session.
+#[cfg(all(target_os = "linux", feature = "x11"))]
+fn hyprland_socket() -> Option<std::path::PathBuf> {
+    let sig = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    let run = std::env::var_os("XDG_RUNTIME_DIR")?;
+    Some(
+        std::path::Path::new(&run)
+            .join("hypr")
+            .join(sig)
+            .join(".socket.sock"),
+    )
+}
+
+/// The focused window's process, from Hyprland's `activewindow`.
+#[cfg(all(target_os = "linux", feature = "x11"))]
+fn hyprland(socket: &std::path::Path) -> Result<Option<Seen>, Box<dyn std::error::Error>> {
+    use std::io::{Read as _, Write as _};
+    /// Bounds the reply: another program writes it.
+    const MAX_REPLY: u64 = 64 * 1024;
+    let mut s = std::os::unix::net::UnixStream::connect(socket)?;
+    s.set_read_timeout(Some(Duration::from_secs(1)))?;
+    s.set_write_timeout(Some(Duration::from_secs(1)))?;
+    s.write_all(b"j/activewindow")?;
+    let mut reply = Vec::new();
+    s.take(MAX_REPLY).read_to_end(&mut reply)?;
+    // `{}` when nothing has focus.
+    let v: serde_json::Value = serde_json::from_slice(&reply)?;
+    let pid = v["pid"].as_u64().and_then(|p| u32::try_from(p).ok());
+    let Some(pid) = pid.filter(|p| *p != 0 && *p != std::process::id()) else {
+        return Ok(None);
+    };
+    let paths = super::presence_linux::paths(&std::path::Path::new("/proc").join(pid.to_string()));
+    // The rect isn't needed: the layer surface sits in the output's corner.
+    Ok((!paths.is_empty()).then_some((paths, None, None)))
+}
 
 #[cfg(all(target_os = "linux", feature = "x11"))]
 struct X11 {
@@ -519,6 +576,12 @@ impl Foreground {
     }
 
     fn get(&mut self) -> Option<Seen> {
+        if let Some(socket) = hyprland_socket() {
+            return hyprland(&socket)
+                .inspect_err(|e| tracing::info!("overlay: Hyprland: {e}"))
+                .ok()
+                .flatten();
+        }
         if self.0.is_none() {
             self.0 = X11::connect()
                 .inspect_err(|e| tracing::info!("overlay: X11: {e}"))

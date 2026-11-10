@@ -13,7 +13,7 @@ use chad_proto::chadd::{
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 
-use crate::discovery;
+use crate::{GameList, discovery};
 
 const MAX_BODY: usize = 16 << 10;
 /// A page of GIFs: a few URLs each, 40 at most.
@@ -307,18 +307,26 @@ pub async fn sounds(api: &Url, session: &str) -> Result<Vec<Sound>, Error> {
     Ok(sounds)
 }
 
-/// Discord's game list; ids and names checked (D14).
-pub async fn games(api: &Url, session: &str) -> Result<Vec<Game>, Error> {
-    let mut games: Vec<Game> = parse(
-        &request(
-            api,
-            chadd::GAMES,
-            Some(session),
-            Body::Json(b"{}".to_vec()),
-            chad_proto::MAX_GAMES_BYTES,
-        )
-        .await?,
-    )?;
+/// Discord's game list; ids and names checked (D14). `None` when the copy
+/// tagged `etag` is still current.
+pub async fn games(
+    api: &Url,
+    session: &str,
+    etag: Option<&str>,
+) -> Result<Option<GameList>, Error> {
+    let Some((body, etag)) = request_if(
+        api,
+        chadd::GAMES,
+        Some(session),
+        Body::Json(b"{}".to_vec()),
+        chad_proto::MAX_GAMES_BYTES,
+        etag,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let mut games: Vec<Game> = parse(&body)?;
     games.truncate(200_000);
     games.retain(|g| (1..=20).contains(&g.id.len()) && g.id.bytes().all(|b| b.is_ascii_digit()));
     for g in &mut games {
@@ -327,7 +335,7 @@ pub async fn games(api: &Url, session: &str) -> Result<Vec<Game>, Error> {
         g.executables
             .retain_mut(|e| chadd::executable(e).map(|n| *e = n).is_some());
     }
-    Ok(games)
+    Ok(Some(GameList { games, etag }))
 }
 
 /// One soundboard clip's bytes.
@@ -377,6 +385,20 @@ async fn request(
     body: Body,
     max: usize,
 ) -> Result<Vec<u8>, Error> {
+    let answer = request_if(api, path, bearer, body, max, None).await?;
+    Ok(answer.map(|(b, _)| b).unwrap_or_default())
+}
+
+/// [`request`] with `If-None-Match: etag`: `None` when the server answers 304
+/// Not Modified, else the body and its ETag.
+async fn request_if(
+    api: &Url,
+    path: &str,
+    bearer: Option<&str>,
+    body: Body,
+    max: usize,
+    etag: Option<&str>,
+) -> Result<Option<(Vec<u8>, Option<String>)>, Error> {
     let url = chadd::endpoint(api, path);
     let unreachable = |e: reqwest::Error| {
         tracing::warn!("chadd {url}: {e:?}");
@@ -397,13 +419,27 @@ async fn request(
     if let Some(t) = bearer {
         req = req.bearer_auth(t);
     }
+    if let Some(e) = etag {
+        req = req.header(reqwest::header::IF_NONE_MATCH, e);
+    }
     let resp = req.send().await.map_err(unreachable)?;
     let status = resp.status();
+    if status == reqwest::StatusCode::NOT_MODIFIED && etag.is_some() {
+        return Ok(None);
+    }
+    // An ETag is visible ASCII; anything else or oversized is dropped (D14).
+    let tag = resp
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| v.len() <= 128)
+        .map(str::to_owned);
     let bytes = discovery::body(resp, max.max(MAX_BODY))
         .await
         .map_err(unreachable)?;
     if status.is_success() {
-        return bytes.ok_or_else(|| Error::Other("That's too big.".into()));
+        let bytes = bytes.ok_or_else(|| Error::Other("That's too big.".into()))?;
+        return Ok(Some((bytes, tag)));
     }
     let bytes = bytes.unwrap_or_default();
     let message = serde_json::from_slice::<ApiError>(&bytes)

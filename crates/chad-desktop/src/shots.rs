@@ -47,13 +47,14 @@ impl Shots {
                 let (_tx, os) = mpsc::channel();
                 let voice = app_voice;
                 let (core, events) = chad_core::start(chad_core::Config {
-                    data_dir,
+                    data_dir: data_dir.clone(),
                     secrets: Arc::new(chad_core::secrets::MemorySecrets::default()),
                     notify: Arc::new(|| {}),
                     media: Some(Arc::new(voice::Glue(voice.clone()))),
                     version: "IrChad test".into(),
                 });
-                App::new(cc, core, events, os, platform::Tray::none(), open, voice)
+                let tray = platform::Tray::none();
+                App::new(cc, core, events, os, tray, open, voice, &data_dir)
             });
         drop(_guard);
         Self {

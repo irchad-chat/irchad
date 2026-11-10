@@ -186,10 +186,26 @@ impl App {
             }
             Event::Sounds { result: Err(e), .. } => tracing::info!("soundboard: {e}"),
             Event::Games { result, .. } => match result {
-                Ok(list) => {
-                    tracing::info!(games = list.len(), "game list loaded");
-                    let games = crate::presence::Games::new(list);
-                    self.games.send_replace(Some(std::sync::Arc::new(games)));
+                Ok(Some(list)) => {
+                    tracing::info!(games = list.games.len(), "game list loaded");
+                    let path = self.games_cache.clone();
+                    let json = serde_json::to_vec(&list);
+                    std::thread::spawn(move || {
+                        if let Err(e) = json.map_err(std::io::Error::from).and_then(|j| {
+                            // Through a temp file, so a crash never leaves half a list.
+                            let tmp = path.with_extension("json.tmp");
+                            std::fs::write(&tmp, j)?;
+                            std::fs::rename(tmp, path)
+                        }) {
+                            tracing::warn!("caching the game list: {e}");
+                        }
+                    });
+                    self.set_games(list);
+                    self.games_fresh = true;
+                }
+                Ok(None) => {
+                    tracing::info!("game list unchanged");
+                    self.games_fresh = true;
                     self.games_error = None;
                 }
                 Err(e) => {
@@ -500,6 +516,13 @@ impl App {
     /// Starts or stops the Rich Presence listener and the poller with the
     /// settings, and sends the best line to every network, at most every
     /// `ACTIVITY_EVERY`.
+    fn set_games(&mut self, list: chad_core::GameList) {
+        let games = crate::presence::Games::new(list.games);
+        self.games.send_replace(Some(std::sync::Arc::new(games)));
+        self.games_etag = list.etag;
+        self.games_error = None;
+    }
+
     fn activity(&mut self, ctx: &egui::Context) {
         const ACTIVITY_EVERY: Duration = Duration::from_secs(15);
         // chadd has no list for a while after it starts, or when Discord fails it.
@@ -525,9 +548,16 @@ impl App {
             });
         }
         let current = self.rpc.as_ref().and_then(|r| r.rx.borrow().clone());
+        if self.games_load.as_ref().is_some_and(|h| h.is_finished()) {
+            let cached = self.games_load.take().and_then(|h| h.join().ok().flatten());
+            if let Some(list) = cached.filter(|_| self.games.borrow().is_none()) {
+                tracing::info!(games = list.games.len(), "cached game list loaded");
+                self.set_games(list);
+            }
+        }
         let games_due = self.games_asked.is_none_or(|t| t.elapsed() >= GAMES_RETRY);
         let wants_games = self.rpc.is_some() || self.focus.is_some();
-        if wants_games && self.games.borrow().is_none() && games_due {
+        if wants_games && !self.games_fresh && self.games_load.is_none() && games_due {
             let net =
                 self.view.nets.iter().find(|n| {
                     n.info.games && matches!(n.info.state, chad_core::ConnState::Connected)
@@ -535,7 +565,8 @@ impl App {
             if let Some(n) = net {
                 self.games_asked = Some(Instant::now());
                 let network = n.info.network.clone();
-                self.send(&network, NetCommand::Games);
+                let etag = self.games_etag.clone();
+                self.send(&network, NetCommand::Games { etag });
             }
         }
         // Sharing off: `None`, so this client leaves `chad/activity` to other devices.

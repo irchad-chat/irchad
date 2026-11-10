@@ -30,16 +30,17 @@ const MAX_GAMES: usize = 200_000;
 const MAX_NAME: usize = 100;
 const MAX_EXECUTABLES: usize = 16;
 
-/// The trimmed list as JSON, ready to serve.
+/// The trimmed list as JSON, ready to serve, and its ETag.
 #[derive(Default)]
-pub struct Games(Mutex<Option<Bytes>>);
+pub struct Games(Mutex<Option<(Bytes, String)>>);
 
 /// Downloads the list now and daily after, keeping the last good copy.
 pub async fn refresh(state: Arc<AppState>) {
     loop {
         let wait = match download(&state.http).await {
             Ok(json) => {
-                *lock(&state.games.0) = Some(json);
+                let tag = etag(&json);
+                *lock(&state.games.0) = Some((json, tag));
                 EVERY
             }
             Err(e) => {
@@ -63,6 +64,16 @@ async fn download(http: &reqwest::Client) -> anyhow::Result<Bytes> {
     let games = trim(&body)?;
     tracing::info!(games = games.len(), "discord games downloaded");
     Ok(fit(games)?.into())
+}
+
+/// Same list, same tag, so clients skip the download after a daily refresh
+/// that changed nothing. shortcut: `DefaultHasher` may change across Rust
+/// releases, costing each client one extra download after a chadd rebuild.
+fn etag(json: &[u8]) -> String {
+    use std::hash::{DefaultHasher, Hasher};
+    let mut h = DefaultHasher::new();
+    h.write(json);
+    format!("\"{:016x}-{:x}\"", h.finish(), json.len())
 }
 
 /// The list as JSON, cut down until clients will take it: executables go
@@ -132,10 +143,18 @@ pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
     if !state.games_throttle.allow(account.to_ascii_lowercase()) {
         return fail(StatusCode::TOO_MANY_REQUESTS, "Slow down a little.").into_response();
     }
-    match lock(&state.games.0).clone() {
-        Some(json) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
-        None => fail(StatusCode::NOT_FOUND, "No game list here.").into_response(),
+    let Some((json, tag)) = lock(&state.games.0).clone() else {
+        return fail(StatusCode::NOT_FOUND, "No game list here.").into_response();
+    };
+    let etag = (header::ETAG, tag.clone());
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .is_some_and(|v| v.as_bytes() == tag.as_bytes())
+    {
+        return (StatusCode::NOT_MODIFIED, [etag]).into_response();
     }
+    let kind = (header::CONTENT_TYPE, "application/json".to_owned());
+    ([kind, etag], json).into_response()
 }
 
 #[cfg(test)]
@@ -172,6 +191,13 @@ mod tests {
             ]
         );
         assert!(trim(b"{}").is_err());
+    }
+
+    #[test]
+    fn etag_follows_content() {
+        assert_eq!(etag(b"[]"), etag(b"[]"));
+        assert_ne!(etag(b"[]"), etag(b"[{}]"));
+        assert!(etag(b"[]").starts_with('"') && etag(b"[]").ends_with('"'));
     }
 
     #[test]

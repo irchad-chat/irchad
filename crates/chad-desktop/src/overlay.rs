@@ -55,11 +55,11 @@ impl Corner {
         }
     }
 
-    fn right(self) -> bool {
+    pub(crate) fn right(self) -> bool {
         matches!(self, Corner::TopRight | Corner::BottomRight)
     }
 
-    fn bottom(self) -> bool {
+    pub(crate) fn bottom(self) -> bool {
         matches!(self, Corner::BottomLeft | Corner::BottomRight)
     }
 

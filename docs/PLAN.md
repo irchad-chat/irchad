@@ -15,7 +15,7 @@ Update the line above when a phase's "Done when" holds.
 | 6 | Android | [phases/6-android.md](phases/6-android.md) | in progress |
 | 7 | Later / parking lot | [phases/7-later.md](phases/7-later.md) | — |
 | 8 | iOS and iPadOS | [phases/8-ios.md](phases/8-ios.md) | in progress (alongside 6) |
-| 9 | Game overlay | [phases/9-overlay.md](phases/9-overlay.md) | in progress (alongside 6); Windows done, Linux unbuilt, Wayland not started |
+| 9 | Game overlay | [phases/9-overlay.md](phases/9-overlay.md) | in progress (alongside 6); Windows done, X11 and Wayland written, Linux unchecked on hardware |
 
 ## Ordering rules
 
