@@ -994,6 +994,7 @@ impl eframe::App for App {
             }
         }
 
+        self.update_banner(ui);
         egui::Panel::left("rail")
             .exact_size(68.0)
             .resizable(false)

@@ -12,7 +12,6 @@ impl App {
         self.email_code_dialog(ctx);
         self.remove_dialog(ctx);
         self.settings_window(ctx);
-        self.update_banner(ctx);
         self.toasts(ctx);
     }
 
@@ -498,32 +497,39 @@ impl App {
         self.verify_ui(ctx);
     }
 
-    /// A newer release is out.
-    fn update_banner(&mut self, ctx: &egui::Context) {
-        if let Some((version, url)) = self.new_version.clone() {
-            let mut close = false;
-            egui::Area::new(egui::Id::unique("update"))
-                .anchor(Align2::RIGHT_TOP, vec2(-16.0, 16.0))
-                .order(egui::Order::Foreground)
-                .show(ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("IrChad {version} is out."));
-                            ui.hyperlink_to("Get it", url);
-                            close = ui.small_button(icons::X).tip("Dismiss").clicked();
-                        });
+    /// A newer release is out: a green bar across the top until dismissed.
+    pub(super) fn update_banner(&mut self, ui: &mut egui::Ui) {
+        let Some((version, url)) = self.new_version.clone() else {
+            return;
+        };
+        // Catppuccin Mocha green and crust, like the logo, whatever the theme.
+        let (green, crust) = (
+            Color32::from_rgb(166, 227, 161),
+            Color32::from_rgb(17, 17, 27),
+        );
+        let mut close = false;
+        egui::Panel::top("update")
+            .resizable(false)
+            .frame(egui::Frame::new().fill(green).inner_margin(vec2(12.0, 6.0)))
+            .show(ui, |ui| {
+                ui.visuals_mut().override_text_color = Some(crust);
+                ui.visuals_mut().hyperlink_color = crust;
+                ui.horizontal(|ui| {
+                    ui.strong(format!("IrChad {version} is out."));
+                    ui.hyperlink_to("Get it", url);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = ui.small_button(icons::X).tip("Dismiss").clicked();
                     });
                 });
-            if close {
-                self.new_version = None;
-            }
+            });
+        if close {
+            self.new_version = None;
         }
-
-        self.toasts.retain(|(_, t)| t.elapsed() < TOAST_TTL);
     }
 
     /// Errors and notices, bottom right.
     fn toasts(&mut self, ctx: &egui::Context) {
+        self.toasts.retain(|(_, t)| t.elapsed() < TOAST_TTL);
         if !self.toasts.is_empty() {
             ctx.request_repaint_after(Duration::from_secs(1));
             egui::Area::new(egui::Id::unique("toasts"))
