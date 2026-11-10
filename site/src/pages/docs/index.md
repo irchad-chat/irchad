@@ -17,6 +17,7 @@ You don't need to know anything else to use it. Start with [Getting started](/do
 | [Chat](/docs/chat) | Channels, DMs, replies, reactions, uploads, GIFs, notifications, your profile |
 | [Voice](/docs/voice) | Voice channels, push to talk, whisper, the soundboard |
 | [Screen share and camera](/docs/screen-share) | Sharing a screen or window with sound, and watching |
+| [Game overlay](/docs/game-overlay) | Voice and messages over the game you're playing, and its show/hide shortcut |
 | [Encrypted DMs](/docs/encrypted-dms) | What's encrypted, and how to verify someone |
 | [Phones and tablets](/docs/mobile) | What's different on Android and iOS |
 | [Server settings](/docs/server-settings) | Every feature that depends on how the network is set up |
