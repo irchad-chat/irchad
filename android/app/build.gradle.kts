@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    // Gradle dependencies' licenses for Settings → Open-source licenses.
+    id("com.mikepenz.aboutlibraries.plugin.android")
 }
 
 val rustOut = layout.buildDirectory.dir("rust")
@@ -75,6 +77,7 @@ android {
     sourceSets["main"].apply {
         java.srcDir(rustOut.map { it.dir("kotlin") })
         jniLibs.srcDir(rustOut.map { it.dir("jniLibs") })
+        assets.srcDir(rustOut.map { it.dir("assets") })
     }
 }
 
@@ -106,6 +109,7 @@ dependencies {
         exclude(group = "com.google.crypto.tink", module = "tink")
     }
     implementation("com.google.crypto.tink:tink-android:1.23.0")
+    implementation("com.mikepenz:aboutlibraries-compose-m3:13.2.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

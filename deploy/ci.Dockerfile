@@ -50,7 +50,9 @@ ENV CC=clang-21 \
 # when a newer stable is out, so a stale image costs one toolchain update.
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal \
         --default-toolchain stable --component rustfmt,clippy \
-    && rustc --version
+    && rustc --version \
+    && cargo install --locked cargo-about@0.9.3 --features cli \
+    && rm -rf $CARGO_HOME/registry
 
 # Android (Phase 6): JDK 21 for Gradle (8.14 can't run on 25), and the SDK
 # pieces android/app needs: platform 36, AGP 8.13's default build-tools, and

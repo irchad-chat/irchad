@@ -10,3 +10,7 @@
 *.jks
 *.keystore
 /chadd
+
+# Generated license notices (packaging/licenses.sh).
+/dist/
+/packaging/windows/licenses/

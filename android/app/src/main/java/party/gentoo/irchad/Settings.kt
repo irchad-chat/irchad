@@ -205,6 +205,9 @@ fun SettingsDialog(app: IrChad, onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                var licenses by remember { mutableStateOf(false) }
+                TextButton(onClick = { licenses = true }) { Text("Open-source licenses") }
+                if (licenses) LicensesDialog { licenses = false }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },

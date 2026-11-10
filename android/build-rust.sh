@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds libchad_ffi.so for each ABI into app/build/rust/jniLibs and generates
-# the Kotlin bindings into app/build/rust/kotlin. Gradle runs this before
+# Builds libchad_ffi.so for each ABI into app/build/rust/jniLibs, generates
+# the Kotlin bindings into app/build/rust/kotlin and, for release, the license
+# notices into app/build/rust/assets. Gradle runs this before
 # every build.
 #
 #   ABIS="x86_64 arm64-v8a"  which ABIs (default: x86_64, for the emulator)
@@ -48,6 +49,11 @@ for abi in ${ABIS:-x86_64}; do
     cp "$root/target/$triple/$dir/libchad_ffi.so" "$out/jniLibs/$abi/"
     lib="$out/jniLibs/$abi/libchad_ffi.so"
 done
+
+# Release APKs carry the Rust crates' notices (Settings → Open-source licenses);
+# the crate set is the same for every Android ABI.
+rm -rf "$out/assets"
+[ "$profile" = dev ] || "$root/packaging/licenses.sh" "$out/assets" chad-ffi "$triple"
 
 rm -rf "$out/kotlin"
 (cd "$root" && cargo run -q -p chad-ffi --features cli --bin uniffi-bindgen -- \
