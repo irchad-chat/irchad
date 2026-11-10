@@ -1,0 +1,70 @@
+---
+// Layout for every Markdown page in src/pages/docs/. The nav builds itself from
+// those files' frontmatter (`title`, `order`), so adding a page is adding a file.
+const { frontmatter } = Astro.props;
+const site = "https://irchad.chat";
+const pages = (Object.values(import.meta.glob("../pages/docs/*.md", { eager: true })) as any[])
+  .sort((a, b) => a.frontmatter.order - b.frontmatter.order);
+const trim = (p: string) => p.replace(/\/$/, "");
+const here = trim(Astro.url.pathname);
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{`${frontmatter.title} · IrChad docs`}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  {frontmatter.description && <meta name="description" content={frontmatter.description} />}
+  <link rel="canonical" href={`${site}${here}`} />
+</head>
+<body>
+  <div class="wrap">
+    <nav aria-label="Docs">
+      <p><a href="/">← IrChad</a></p>
+      <ul>
+        {pages.map((p) => (
+          <li><a href={trim(p.url)} aria-current={trim(p.url) === here ? "page" : undefined}>{p.frontmatter.title}</a></li>
+        ))}
+      </ul>
+    </nav>
+    <main>
+      <h1>{frontmatter.title}</h1>
+      <slot />
+    </main>
+  </div>
+</body>
+</html>
+
+<style is:global>
+  /* The same Catppuccin tokens as index.astro. */
+  :root { color-scheme: light dark; --bg: #e6e9ef; --card: #eff1f5; --fg: #4c4f69; --muted: #6c6f85; --accent: #40a02b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #11111b; --card: #1e1e2e; --fg: #cdd6f4; --muted: #a6adc8; --accent: #a6e3a1; } }
+  :root { --line: color-mix(in srgb, var(--fg) 12%, transparent); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  .wrap { max-width: 64rem; margin: 0 auto; padding: 1.5rem 16px 4rem; display: grid; gap: 1rem 2.5rem; }
+  @media (min-width: 52rem) { .wrap { grid-template-columns: 12rem minmax(0, 1fr); } nav { position: sticky; top: 1.5rem; align-self: start; } }
+  nav ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .25rem; }
+  @media (min-width: 52rem) { nav ul { flex-direction: column; } }
+  nav li a { display: block; padding: .3rem .6rem; border-radius: 8px; text-decoration: none; color: var(--muted); }
+  nav li a:hover { color: var(--fg); }
+  nav li a[aria-current] { color: var(--fg); background: var(--card); font-weight: 600; }
+  main { min-width: 0; }
+  a { color: inherit; text-decoration-color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 2.25rem; margin: 0 0 1rem; line-height: 1.2; }
+  h2 { font-size: 1.4rem; margin: 2.5rem 0 .5rem; padding-top: 1.5rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.05rem; margin: 1.5rem 0 .25rem; }
+  li { margin: .3rem 0; }
+  code { font-size: .9em; background: var(--card); padding: .1em .3em; border-radius: 4px; overflow-wrap: anywhere; }
+  pre { background: var(--card); padding: .75rem 1rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  kbd { font: inherit; font-size: .85em; padding: .1em .4em; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--card); white-space: nowrap; }
+  /* "Server setting" notes: what the network's admin has to have configured. */
+  blockquote { margin: 1rem 0; padding: .6rem 1rem; border-left: 3px solid var(--accent); background: var(--card); border-radius: 0 8px 8px 0; color: var(--muted); font-size: .95rem; }
+  blockquote p { margin: .25rem 0; }
+  table { display: block; overflow-x: auto; border-collapse: collapse; margin: 1rem 0; }
+  th, td { padding: .5rem .75rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
+  thead th { border-top: 0; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+</style>

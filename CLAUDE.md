@@ -66,7 +66,7 @@ crates/chadd          server (binary: chadd)
 deploy/               docker compose: ergo + livekit + chadd + caddy
 android/              (Phase 6)
 iOS/                  (Phase 8)
-site/                 project website (Astro, static)
+site/                 project website (Astro, static); user docs are Markdown in site/src/pages/docs/
 docs/
 ```
 
