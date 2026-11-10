@@ -73,6 +73,35 @@ pub fn split<'a>(text: &'a str, set: &'a [CustomEmoji]) -> Vec<(&'a str, Option<
     out
 }
 
+/// Whether `text` is nothing but emoji (and spaces), standard or from `set`,
+/// to draw it big.
+pub fn only_emoji(text: &str, set: &[CustomEmoji]) -> bool {
+    let mut any = false;
+    for (piece, e) in split(text, set) {
+        if e.is_some() {
+            any = true;
+            continue;
+        }
+        for c in piece.chars() {
+            match c {
+                // Joiner, variation selectors, keycap, skin tones, tags.
+                '\u{200d}'
+                | '\u{fe0e}'
+                | '\u{fe0f}'
+                | '\u{20e3}'
+                | '\u{1f3fb}'..='\u{1f3ff}'
+                | '\u{e0020}'..='\u{e007f}' => {}
+                // Flag letters.
+                '\u{1f1e6}'..='\u{1f1ff}' => any = true,
+                c if c.is_whitespace() => {}
+                c if emojis::get(c.encode_utf8(&mut [0; 4])).is_some() => any = true,
+                _ => return false,
+            }
+        }
+    }
+    any
+}
+
 /// Replaces each complete `:shortcode:` in `text` with its Unicode emoji,
 /// except the network's `custom` ones, which stay as they are. `cursor` is a
 /// char index that is moved to stay after the same text.
@@ -197,5 +226,16 @@ mod tests {
         assert_eq!(pieces(":bigint"), [p(":bigint", false)]);
         assert!(pieces("").is_empty());
         assert_eq!(split(":bigint:", &[]), [(":bigint:", None)]);
+    }
+
+    #[test]
+    fn only_emoji_text() {
+        let set = set();
+        for t in ["😄", " 👍🏽 ❤️ ", "👨‍👩‍👧", "🇳🇱", ":bigint: 😄"] {
+            assert!(only_emoji(t, &set), "{t}");
+        }
+        for t in ["", "  ", "hi 😄", "1", ":nope:", ":bigint: x", "😄!"] {
+            assert!(!only_emoji(t, &set), "{t}");
+        }
     }
 }

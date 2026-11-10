@@ -638,7 +638,7 @@ fn row_ui(
                         .color(ui.visuals().error_fg_color),
                 );
             } else {
-                body_ui(ui, m, &parsed.lines, name, dark, extras);
+                ui.scope(|ui| body_ui(ui, m, &parsed.lines, name, dark, extras));
                 if m.edited {
                     ui.label(RichText::new("(edited)").weak().small());
                 }
@@ -849,6 +849,13 @@ fn body_ui(
 ) {
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
     let mut first = true;
+    let text: String = lines.iter().flatten().map(|s| s.text.as_str()).collect();
+    if m.kind != MessageKind::Action && chad_core::emoji::only_emoji(&text, extras.emoji) {
+        // Custom emoji size off Body too, so they grow with it.
+        if let Some(f) = ui.style_mut().text_styles.get_mut(&egui::TextStyle::Body) {
+            f.size += 8.0;
+        }
+    }
     for group in lines.chunk_by(|a, b| format::code_line(a) == format::code_line(b)) {
         if format::code_line(&group[0]) {
             egui::Frame::new()
