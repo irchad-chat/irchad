@@ -6,7 +6,7 @@
 
 use super::verify::device_row;
 use super::*;
-use crate::platform::ptt::PttBind;
+use crate::platform::ptt::Combo;
 
 type Buffer = chad_core::view::Buf<BufUi>;
 
@@ -35,7 +35,7 @@ struct ComposerOpts {
     uploads: bool,
     gifs: bool,
     /// Keys that aren't typing: push-to-talk's and whisper's, and any being bound.
-    ptt_keys: Vec<PttBind>,
+    ptt_keys: Vec<Combo>,
     binding_ptt: bool,
 }
 

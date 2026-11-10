@@ -480,11 +480,15 @@ impl App {
                 });
             });
         // "Hear yourself" and a key bind only last while their page is up.
-        if !open || self.settings_section != settings::Section::Voice {
+        let bind_page = match self.binding_ptt {
+            Some(KeyAction::Overlay) => settings::Section::Overlay,
+            _ => settings::Section::Voice,
+        };
+        if !open || self.settings_section != bind_page {
             self.binding_ptt = None;
-            if self.voice.testing() {
-                self.voice.set_testing(false);
-            }
+        }
+        if (!open || self.settings_section != settings::Section::Voice) && self.voice.testing() {
+            self.voice.set_testing(false);
         }
         self.show_settings = open;
 
@@ -557,6 +561,10 @@ impl App {
     ) {
         if section == settings::Section::Blocked {
             self.blocked_page(ui);
+            return;
+        }
+        if section == settings::Section::Overlay {
+            self.overlay_page(ctx, ui);
             return;
         }
         if section != settings::Section::Voice {

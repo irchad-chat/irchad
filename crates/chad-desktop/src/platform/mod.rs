@@ -8,6 +8,7 @@ pub mod idle;
 mod idle_linux;
 #[cfg(windows)]
 mod idle_windows;
+pub mod overlay;
 pub mod presence;
 #[cfg(target_os = "linux")]
 mod presence_linux;

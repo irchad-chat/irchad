@@ -45,7 +45,7 @@ pub fn programs() -> Vec<String> {
 }
 
 /// SAFETY: as above; the process handle is closed before returning.
-unsafe fn full_path(pid: u32) -> Option<String> {
+pub(super) unsafe fn full_path(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if h.is_null() {

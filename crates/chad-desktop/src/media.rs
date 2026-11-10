@@ -419,6 +419,28 @@ impl Media {
             });
     }
 
+    /// A round avatar image at `rect`, when `auto` and it's loaded (it's
+    /// fetched otherwise). Returns whether it drew, so the caller can draw its
+    /// own stand-in.
+    pub fn avatar_image(&mut self, ui: &egui::Ui, rect: egui::Rect, url: &Url, auto: bool) -> bool {
+        if !auto {
+            return false;
+        }
+        self.want_image(url.as_str());
+        let Some(Img::Ready(f)) = self.images.get(url.as_str()) else {
+            return false;
+        };
+        // Centre-crop to a square so portraits aren't squashed.
+        let side = f.size.min_elem();
+        let (u, v) = (side / f.size.x, side / f.size.y);
+        let uv = egui::Rect::from_center_size(egui::pos2(0.5, 0.5), vec2(u, v));
+        egui::Image::new((frame_at(f, ui).id(), rect.size()))
+            .uv(uv)
+            .corner_radius(CornerRadius::same(255))
+            .paint_at(ui, rect);
+        true
+    }
+
     /// A round avatar at `rect`: the image, or the nick's initial on its colour.
     pub fn avatar(
         &mut self,
@@ -429,20 +451,9 @@ impl Media {
         auto: bool,
     ) {
         if let Some(u) = url
-            && auto
+            && self.avatar_image(ui, rect, u, auto)
         {
-            self.want_image(u.as_str());
-            if let Some(Img::Ready(f)) = self.images.get(u.as_str()) {
-                // Centre-crop to a square so portraits aren't squashed.
-                let side = f.size.min_elem();
-                let (u, v) = (side / f.size.x, side / f.size.y);
-                let uv = egui::Rect::from_center_size(egui::pos2(0.5, 0.5), vec2(u, v));
-                egui::Image::new((frame_at(f, ui).id(), rect.size()))
-                    .uv(uv)
-                    .corner_radius(CornerRadius::same(255))
-                    .paint_at(ui, rect);
-                return;
-            }
+            return;
         }
         let p = ui.painter();
         p.circle_filled(

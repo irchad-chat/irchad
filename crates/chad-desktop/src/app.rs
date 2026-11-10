@@ -24,7 +24,7 @@ use crate::chatlog::{self, Action, ChatLog, Extras};
 use crate::icons::{self, Tip};
 use crate::media::{self, Media};
 use crate::platform::idle::Idle;
-use crate::platform::ptt::{Action as KeyAction, Ptt};
+use crate::platform::ptt::{Action as KeyAction, Ptt, Sink};
 use crate::platform::{self, Os, Tray};
 use crate::screen::{self, DialogOutcome, Layout, ShareDialog, StageAction};
 use crate::settings::{self, Notify, Settings};
@@ -36,6 +36,7 @@ use chad_core::format;
 mod chat;
 mod dialogs;
 mod events;
+mod overlay;
 mod sidebar;
 mod tiles;
 mod verify;
@@ -88,10 +89,19 @@ pub struct App {
     last_badge: (bool, u32),
     last_title: String,
     voice: Voice,
-    /// Listening for push-to-talk, while that's the input mode.
+    /// Listening for push-to-talk while that's the input mode, the whisper
+    /// key, and the overlay's combo.
     ptt: Option<Ptt>,
-    /// The key being bound in the voice settings.
+    /// The key being bound in the voice or overlay settings.
     binding_ptt: Option<KeyAction>,
+    /// The overlay is toggled on by its combo (D74).
+    overlay_on: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Recent messages for the overlay.
+    overlay_lines: crate::overlay::Lines,
+    /// Watching for a focused game, while the overlay is enabled.
+    focus: Option<platform::overlay::Focus>,
+    /// When "Preview" was clicked in its settings.
+    overlay_preview: Option<Instant>,
     share_dialog: Option<ShareDialog>,
     /// Why turning the camera on failed, once it has.
     camera_error: Option<std::sync::mpsc::Receiver<String>>,
@@ -121,6 +131,8 @@ pub struct App {
     games: tokio::sync::watch::Sender<Option<std::sync::Arc<crate::presence::Games>>>,
     /// When we last asked for it; it's asked again later if that failed.
     games_asked: Option<Instant>,
+    /// Why the last ask for it failed, for the overlay's settings.
+    games_error: Option<String>,
     /// The `chad/activity` we last sent everywhere (`None`: we leave it alone),
     /// and when.
     activity_sent: (Option<String>, Option<Instant>),
@@ -429,6 +441,10 @@ impl App {
             voice,
             ptt: None,
             binding_ptt: None,
+            overlay_on: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            overlay_lines: crate::overlay::Lines::default(),
+            focus: None,
+            overlay_preview: None,
             share_dialog: None,
             camera_error: None,
             stage: Stage::default(),
@@ -449,6 +465,7 @@ impl App {
             poll: None,
             games: tokio::sync::watch::Sender::new(None),
             games_asked: None,
+            games_error: None,
             activity_sent: (None, None),
             new_version: None,
             update: {
@@ -476,20 +493,31 @@ impl App {
         app
     }
 
-    /// (Re)starts the global push-to-talk and whisper listener for the
-    /// current binds.
+    /// (Re)starts the global push-to-talk, whisper and overlay key listener
+    /// for the current binds.
     fn restart_ptt(&mut self, ctx: &egui::Context) {
         self.ptt = None;
         let talk = self.settings.audio.mode == InputMode::PushToTalk;
+        let overlay = &self.settings.overlay;
         let binds: Vec<_> = talk
-            .then_some((KeyAction::Talk, self.settings.ptt))
+            .then_some((KeyAction::Talk, self.settings.ptt.into()))
             .into_iter()
-            .chain(self.settings.whisper.map(|b| (KeyAction::Whisper, b)))
+            .chain(
+                self.settings
+                    .whisper
+                    .map(|b| (KeyAction::Whisper, b.into())),
+            )
+            .chain(
+                overlay
+                    .enabled
+                    .then_some((KeyAction::Overlay, overlay.toggle)),
+            )
             .collect();
         if !binds.is_empty() {
             let ctx = ctx.clone();
             let wake = move || ctx.request_repaint();
-            self.ptt = Some(Ptt::start(self.voice.clone(), binds, wake));
+            let sink = Sink::new(self.voice.clone(), self.overlay_on.clone(), wake);
+            self.ptt = Some(Ptt::start(sink, binds));
         }
     }
 
@@ -856,6 +884,15 @@ impl eframe::App for App {
     /// notifications and "Show" still get through.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
+        // The overlay is drawn in `ui`, which doesn't run while the window is
+        // minimized or behind the game, unless asked. The ask holds for the
+        // next frame, so there has to be one: while hidden, that's 10 a second.
+        if self.overlay_logic(ctx) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaintWhileHidden);
+            if ctx.input(|i| i.viewport().visible()) != Some(true) {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+        }
         #[cfg(windows)]
         if ctx.input(|i| i.viewport().close_requested())
             && self.settings.tray_on_close
@@ -869,6 +906,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.overlay_ui(&ctx);
         for n in &mut self.view.nets {
             n.ui.media.viewer(&ctx);
         }
@@ -987,6 +1025,12 @@ impl eframe::App for App {
         self.dialogs(&ctx);
         // Picks made while drawing show next frame.
         self.tile(&ctx);
+    }
+
+    /// See-through where nothing's drawn: the overlay's window. The main
+    /// window is opaque and its panels cover it.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

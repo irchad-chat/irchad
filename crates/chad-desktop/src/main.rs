@@ -8,6 +8,7 @@ mod emoji;
 mod gifs;
 mod icons;
 mod media;
+mod overlay;
 mod platform;
 mod presence;
 mod screen;
@@ -66,8 +67,14 @@ fn main() -> eframe::Result {
             .with_app_id(platform::APP_ID)
             .with_icon(platform::window_icon())
             .with_inner_size([1100.0, 720.0])
-            .with_min_inner_size([640.0, 400.0]),
+            .with_min_inner_size([640.0, 400.0])
+            // egui-wgpu gives any window a see-through backbuffer only if the
+            // main one asked: the game overlay's needs it (D74). The main
+            // window's panels cover it, so it stays opaque.
+            .with_transparent(true),
         persistence_path: profile.is_some().then(|| data_dir.join("app.ron")),
+        #[cfg(windows)]
+        wgpu_options: see_through_dx12(),
         ..Default::default()
     };
     eframe::run_native(
@@ -94,4 +101,23 @@ fn main() -> eframe::Result {
             )))
         }),
     )
+}
+
+/// DX12 presenting through DirectComposition, the only way its windows can
+/// be see-through (the game overlay's, D74), and DX12 only: Vulkan on Windows
+/// has no see-through windows. `WGPU_BACKEND` and
+/// `WGPU_DX12_PRESENTATION_SYSTEM` still override both.
+#[cfg(windows)]
+fn see_through_dx12() -> eframe::WgpuConfiguration {
+    use eframe::egui_wgpu::{WgpuSetup, WgpuSetupCreateNew};
+    use eframe::wgpu;
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    let desc = &mut setup.instance_descriptor;
+    desc.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12);
+    desc.backend_options.dx12.presentation_system =
+        wgpu::Dx12SwapchainKind::from_env().unwrap_or(wgpu::Dx12SwapchainKind::DxgiFromVisual);
+    eframe::WgpuConfiguration {
+        wgpu_setup: WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
 }

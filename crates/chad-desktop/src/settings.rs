@@ -7,6 +7,7 @@ use egui::{FontId, ThemePreference, Visuals};
 use serde::{Deserialize, Serialize};
 
 use crate::catppuccin;
+use crate::overlay::OverlaySettings;
 use crate::platform::ptt::PttBind;
 use crate::screen::Layout;
 
@@ -59,6 +60,8 @@ pub struct Settings {
     /// `spotify`) on Linux, app ids (e.g. `Spotify.exe`) on Windows.
     /// Opt-in per player, so a browser tab's title never leaks by surprise.
     pub music_players: Vec<String>,
+    /// The game overlay (D74).
+    pub overlay: OverlaySettings,
 }
 
 impl Default for Settings {
@@ -87,6 +90,7 @@ impl Default for Settings {
             share_activity: false,
             share_music: false,
             music_players: Vec::new(),
+            overlay: OverlaySettings::default(),
         }
     }
 }
@@ -291,7 +295,7 @@ impl Settings {
                     ui.checkbox(&mut self.autostart, "Auto-start with Windows");
                     ui.end_row();
                 }
-                Section::Voice | Section::Blocked => {}
+                Section::Voice | Section::Overlay | Section::Blocked => {}
             });
         (*self != before && !dragging) || released
     }
@@ -304,6 +308,7 @@ pub enum Section {
     Appearance,
     Chat,
     Voice,
+    Overlay,
     General,
     Blocked,
     #[cfg(windows)]
@@ -315,6 +320,7 @@ impl Section {
         Section::Appearance,
         Section::Chat,
         Section::Voice,
+        Section::Overlay,
         Section::General,
         Section::Blocked,
         #[cfg(windows)]
@@ -326,6 +332,7 @@ impl Section {
             Section::Appearance => "Appearance",
             Section::Chat => "Chat",
             Section::Voice => "Voice",
+            Section::Overlay => "Game Overlay",
             Section::General => "General",
             Section::Blocked => "Blocked Users",
             #[cfg(windows)]

@@ -187,10 +187,15 @@ impl App {
             Event::Sounds { result: Err(e), .. } => tracing::info!("soundboard: {e}"),
             Event::Games { result, .. } => match result {
                 Ok(list) => {
+                    tracing::info!(games = list.len(), "game list loaded");
                     let games = crate::presence::Games::new(list);
                     self.games.send_replace(Some(std::sync::Arc::new(games)));
+                    self.games_error = None;
                 }
-                Err(e) => tracing::info!("game list: {e}"),
+                Err(e) => {
+                    tracing::warn!("game list: {e}");
+                    self.games_error = Some(e.to_string());
+                }
             },
             Event::Sound {
                 network,
@@ -321,6 +326,7 @@ impl App {
         let b = &mut n.buffers[bi];
         b.ui.older_asked = None;
         b.ui.log.apply(&applied.edits, messages);
+        let channel = (b.info.kind == BufferKind::Channel).then(|| b.info.target.clone());
         for &i in &applied.fresh {
             let m = &messages[i];
             if !viewing && should_notify(self.settings.notify, m) {
@@ -337,6 +343,11 @@ impl App {
         {
             b.ui.log.scroll_to_index(i, 60.0);
             b.ui.jump = None;
+        }
+        if let Some(channel) = channel {
+            for &i in &applied.fresh {
+                self.overlay_message(network, &channel, &messages[i]);
+            }
         }
     }
 
@@ -361,9 +372,9 @@ impl App {
         // No global shortcut: push-to-talk and whisper follow their keys
         // while we're focused.
         if let Some(p) = self.ptt.as_ref().filter(|p| p.focused_only()) {
-            for &(action, bind) in &p.binds {
-                let down = ctx.input(|i| i.focused && bind.down(i));
-                action.set(&self.voice, down && self.binding_ptt.is_none());
+            for &(action, combo) in &p.binds {
+                let down = ctx.input(|i| i.focused && combo.down(i));
+                p.sink.set(action, down && self.binding_ptt.is_none());
             }
         }
         for n in &mut self.view.nets {
@@ -515,7 +526,8 @@ impl App {
         }
         let current = self.rpc.as_ref().and_then(|r| r.rx.borrow().clone());
         let games_due = self.games_asked.is_none_or(|t| t.elapsed() >= GAMES_RETRY);
-        if self.rpc.is_some() && self.games.borrow().is_none() && games_due {
+        let wants_games = self.rpc.is_some() || self.focus.is_some();
+        if wants_games && self.games.borrow().is_none() && games_due {
             let net =
                 self.view.nets.iter().find(|n| {
                     n.info.games && matches!(n.info.state, chad_core::ConnState::Connected)

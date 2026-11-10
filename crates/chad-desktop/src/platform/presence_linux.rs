@@ -33,19 +33,26 @@ pub fn programs() -> Vec<String> {
     });
     let mut out = Vec::new();
     for e in ours.take(MAX_PROCESSES) {
-        let pid = e.path();
-        if let Ok(exe) = std::fs::read_link(pid.join("exe")) {
-            out.push(exe.to_string_lossy().into_owned());
-        }
-        let mut cmd = Vec::new();
-        let read = std::fs::File::open(pid.join("cmdline"))
-            .and_then(|f| f.take(MAX_CMDLINE).read_to_end(&mut cmd));
-        if read.is_ok() {
-            let arg0 = cmd.split(|b| *b == 0).next().unwrap_or_default();
-            let arg0 = String::from_utf8_lossy(arg0);
-            if arg0.to_ascii_lowercase().ends_with(".exe") {
-                out.push(arg0.into_owned());
-            }
+        out.extend(paths(&e.path()));
+    }
+    out
+}
+
+/// A process's executable, and its first argument when that looks like a
+/// Windows program. `pid` is its `/proc` directory.
+pub(super) fn paths(pid: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(exe) = std::fs::read_link(pid.join("exe")) {
+        out.push(exe.to_string_lossy().into_owned());
+    }
+    let mut cmd = Vec::new();
+    let read = std::fs::File::open(pid.join("cmdline"))
+        .and_then(|f| f.take(MAX_CMDLINE).read_to_end(&mut cmd));
+    if read.is_ok() {
+        let arg0 = cmd.split(|b| *b == 0).next().unwrap_or_default();
+        let arg0 = String::from_utf8_lossy(arg0);
+        if arg0.to_ascii_lowercase().ends_with(".exe") {
+            out.push(arg0.into_owned());
         }
     }
     out

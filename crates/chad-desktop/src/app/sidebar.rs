@@ -292,6 +292,7 @@ impl App {
         let mut close = None;
         let mut block: Option<(String, Option<String>)> = None;
         let mut join_voice = None;
+        let mut overlay_pick = None;
         let mut watch = None;
         egui::ScrollArea::vertical()
             .auto_shrink(false)
@@ -410,6 +411,13 @@ impl App {
                                 if b.info.voice && !in_call && ui.button("Join voice").clicked() {
                                     join_voice = Some(b.info.target.clone());
                                 }
+                                let mut shown = self.settings.overlay.shows(&network, &b.key);
+                                if ui
+                                    .checkbox(&mut shown, "Show in game overlay")
+                                    .clicked()
+                                {
+                                    overlay_pick = Some(b.key.clone());
+                                }
                                 if ui.button("Leave channel").clicked() {
                                     part = Some(b.info.target.clone());
                                 }
@@ -524,6 +532,9 @@ impl App {
         }
         if let Some(channel) = join_voice {
             self.send(&network, NetCommand::JoinVoice { channel });
+        }
+        if let Some(k) = overlay_pick {
+            self.settings.overlay.toggle_channel(&network, &k);
         }
     }
 

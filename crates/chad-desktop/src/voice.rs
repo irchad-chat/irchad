@@ -16,7 +16,7 @@ use crate::media::Media;
 use crate::platform::ptt::{Action, Ptt, PttBind, PttStatus, keymap};
 use crate::settings::{self, Settings};
 
-const SPEAKING: Color32 = Color32::from_rgb(35, 165, 90);
+pub const SPEAKING: Color32 = Color32::from_rgb(35, 165, 90);
 pub const ONLINE: Color32 = SPEAKING;
 pub const AWAY: Color32 = Color32::from_rgb(240, 178, 50);
 /// A voice member's avatar, and the speaking ring drawn inside its edge.
@@ -299,6 +299,19 @@ fn soundboard(
     play
 }
 
+/// The nick of a LiveKit identity, which is an account; profiles are keyed by nick.
+/// shortcut: ASCII-only account match, falls back to the account itself.
+pub fn nick_of(roster: &[Member], id: &str) -> String {
+    roster
+        .iter()
+        .find(|m| {
+            m.account
+                .as_deref()
+                .is_some_and(|a| a.eq_ignore_ascii_case(id))
+        })
+        .map_or_else(|| id.to_owned(), |m| m.nick.clone())
+}
+
 /// Who's in a channel's voice room, under its row in the sidebar. In our own
 /// call the live list (speaking, muted, sharing) replaces the metadata one.
 /// Volume changes land in `volumes` and `screen_volumes`, and whisper list
@@ -320,18 +333,7 @@ pub fn members(
 ) -> Option<(String, bool)> {
     let mut watch = None;
     let dark = ui.visuals().dark_mode;
-    // LiveKit identities are accounts; profiles are keyed by nick.
-    // shortcut: ASCII-only account match, falls back to the account itself.
-    let nick_of = |id: &'_ str| -> String {
-        roster
-            .iter()
-            .find(|m| {
-                m.account
-                    .as_deref()
-                    .is_some_and(|a| a.eq_ignore_ascii_case(id))
-            })
-            .map_or_else(|| id.to_owned(), |m| m.nick.clone())
-    };
+    let nick_of = |id: &str| nick_of(roster, id);
     // `note`: whispering, or on the whisper list. `reserve`: width kept free on
     // the right for the LIVE/camera badges, so the name truncates before them.
     let mut row = |ui: &mut egui::Ui,

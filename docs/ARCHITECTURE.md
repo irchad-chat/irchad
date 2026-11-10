@@ -154,8 +154,9 @@ Runtime detection goes through `XDG_SESSION_TYPE` and portal availability (query
 | Fallback fonts (CJK, emoji) | eframe `system_fonts` (fontique → fontconfig), on demand | same |
 | Idle → away | `ext-idle-notify-v1` (none: our own window's input) | XScreenSaver extension |
 | File drag-and-drop | Not in winit 0.30. Paste (`Ctrl+V` of files or images) and the FileChooser portal (the paperclip) instead. | XDND via winit |
+| Game overlay (D74) | `wlr-layer-shell` surface with its own egui-wgpu renderer (planned; none on GNOME). Shown while a listed game runs. | Always-on-top, click-through, see-through eframe viewport over the focused game (`_NET_ACTIVE_WINDOW` → `_NET_WM_PID`) |
 
-Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback for app audio), `GetAsyncKeyState` polling for PTT (raw input later), toast notifications, Credential Manager, and a named pipe for single instance.
+Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback for app audio), `GetAsyncKeyState` polling for PTT and the overlay combo (raw input later), toast notifications, Credential Manager, and a named pipe for single instance. The game overlay is an eframe viewport over the foreground game's window, on DX12 through DirectComposition with the redirection surface color-keyed out (D74).
 
 ## Media
 

@@ -61,6 +61,18 @@ impl Games {
     }
 }
 
+/// The first of `paths` whose file name is one of `custom` (executable names
+/// the user added, compared ignoring case), as that name.
+pub fn custom_game(paths: &[String], custom: &[String]) -> Option<String> {
+    paths.iter().find_map(|p| {
+        let file = p.rsplit(['/', '\\']).next()?;
+        custom
+            .iter()
+            .find(|c| !c.trim().is_empty() && c.trim().eq_ignore_ascii_case(file))
+            .map(|c| c.trim().to_owned())
+    })
+}
+
 /// The line to share, best source first; empty for nothing.
 pub fn line(rich: Option<String>, game: Option<&str>, music: Option<&str>) -> String {
     rich.or_else(|| game.map(|g| format!("Playing {g}")))
@@ -115,6 +127,22 @@ mod tests {
         assert_eq!(run(&["/opt/notdarksoulsiii.exe"]), None);
         assert_eq!(run(&[r"C:\windows\explorer.exe"]), None);
         assert_eq!(g.name("1"), Some("DARK SOULS III"));
+    }
+
+    #[test]
+    fn finds_custom_games_by_file_name() {
+        let custom = vec!["MyGame.exe ".to_owned(), String::new()];
+        let p = |s: &str| vec![s.to_owned()];
+        assert_eq!(
+            custom_game(&p(r"D:\Games\mygame.exe"), &custom).as_deref(),
+            Some("MyGame.exe")
+        );
+        assert_eq!(
+            custom_game(&p("/opt/x/mygame.exe"), &custom).as_deref(),
+            Some("MyGame.exe")
+        );
+        assert_eq!(custom_game(&p("/opt/x/notmygame.exe"), &custom), None);
+        assert_eq!(custom_game(&p("/usr/bin/"), &custom), None);
     }
 
     #[test]

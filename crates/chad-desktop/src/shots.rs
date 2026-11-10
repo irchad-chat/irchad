@@ -112,12 +112,104 @@ fn settings() {
     s.shot("settings_mocha");
     s.click("Latte");
     s.shot("settings_latte");
-    for page in ["Chat", "Voice", "General", "Blocked Users"] {
+    for page in ["Chat", "Voice", "Game Overlay", "General", "Blocked Users"] {
         s.click(page);
         s.shot(&format!(
             "settings_{}",
             page.to_lowercase().replace(' ', "_")
         ));
+    }
+}
+
+/// The overlay alone in each corner, over a busy "game" so the see-through
+/// backgrounds show.
+#[test]
+fn overlay() {
+    use std::time::{Duration, Instant};
+
+    use crate::overlay::{self, Corner, Line, View, VoiceRow};
+
+    let row = |name: &str, speaking, muted| VoiceRow {
+        nick: name.to_lowercase(),
+        name: name.into(),
+        speaking,
+        muted,
+        avatar: None,
+    };
+    let voice = [
+        row("Alice", true, false),
+        row("bob", false, true),
+        row("Carol", false, false),
+    ];
+    let now = Instant::now();
+    let line = |secs: u64, nick: &str, text: &str| Line {
+        at: now - Duration::from_secs(secs),
+        channel: "#games".into(),
+        nick: nick.into(),
+        name: nick.into(),
+        text: text.into(),
+        action: false,
+    };
+    let lines = [
+        line(8, "alice", "anyone up for another round?"),
+        line(5, "bob", "give me 5 minutes, finishing this match"),
+        line(
+            2,
+            "carol",
+            "the new map is wild, there's a whole secret area behind the waterfall",
+        ),
+        line(1, "dave", "gg"),
+    ];
+    for corner in Corner::ALL {
+        let view = View {
+            corner,
+            opacity: 0.55,
+            fade: Some(Duration::from_secs(9)),
+            voice: &voice,
+            lines: lines.iter().collect(),
+        };
+        // The App installs the icon font; here it lands a frame later.
+        let mut fonts = false;
+        let mut harness = Harness::builder()
+            .with_size(overlay::SIZE)
+            .wgpu()
+            .build_ui(|ui| {
+                if !std::mem::replace(&mut fonts, true) {
+                    crate::icons::install(ui.ctx());
+                    ui.ctx().request_repaint();
+                    return;
+                }
+                // Stripes stand in for a game.
+                let r = ui.max_rect();
+                for i in 0..24 {
+                    let x = r.left() + i as f32 * 20.0;
+                    let c = if i % 2 == 0 {
+                        egui::Color32::from_rgb(230, 200, 90)
+                    } else {
+                        egui::Color32::from_rgb(60, 120, 200)
+                    };
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(
+                            egui::pos2(x, r.top()),
+                            egui::vec2(20.0, r.height()),
+                        ),
+                        0.0,
+                        c,
+                    );
+                }
+                overlay::ui(ui, &view, now, &mut |_, _, _| false);
+            });
+        harness.run();
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/shots");
+        std::fs::create_dir_all(&dir).expect("shots dir");
+        let name = format!("overlay_{}", corner.name().to_lowercase().replace(' ', "_"));
+        let path = dir.join(format!("{name}.png"));
+        harness
+            .render()
+            .expect("render")
+            .save(&path)
+            .expect("save png");
+        println!("shot: {}", path.display());
     }
 }
 
