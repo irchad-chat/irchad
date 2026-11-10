@@ -463,6 +463,8 @@ impl App {
                                 self.settings_section = s;
                             }
                         }
+                        ui.add_space(8.0);
+                        ui.weak(format!("IrChad {}", crate::update::version()));
                     });
                     ui.separator();
                     ui.vertical(|ui| {
@@ -515,7 +517,7 @@ impl App {
                 ui.visuals_mut().override_text_color = Some(crust);
                 ui.visuals_mut().hyperlink_color = crust;
                 ui.horizontal(|ui| {
-                    ui.strong(format!("IrChad {version} is out."));
+                    ui.label(RichText::new(format!("IrChad {version} is out.")).strong().color(crust));
                     ui.hyperlink_to("Get it", url);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         close = ui.small_button(icons::X).tip("Dismiss").clicked();

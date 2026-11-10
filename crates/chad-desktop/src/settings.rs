@@ -277,10 +277,6 @@ impl Settings {
                     ui.label("Updates");
                     ui.checkbox(&mut self.check_updates, "Tell me when a new version is out");
                     ui.end_row();
-
-                    ui.label("Version");
-                    ui.label(format!("IrChad {}", crate::update::version()));
-                    ui.end_row();
                 }
                 #[cfg(windows)]
                 Section::Windows => {
