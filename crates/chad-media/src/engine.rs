@@ -112,12 +112,16 @@ pub enum Cue {
     Viewer,
     /// Someone starts whispering to us; plays before their voice (D71).
     Whisper,
+    /// We pressed or let go of the whisper key.
+    WhisperKeyDown,
+    WhisperKeyUp,
 }
 
 impl Cue {
     /// Two notes rising for a join and falling for a leave, two quick low
     /// ones for mute, three for a share, two high taps for a viewer, and a
-    /// tap leaping an octave for a whisper.
+    /// tap leaping an octave for a whisper, and a soft rising or falling
+    /// fifth for our own whisper key.
     pub(crate) fn samples(self) -> Vec<i16> {
         const HALF: usize = CUE_LEN / 2;
         const THIRD: usize = CUE_LEN / 3;
@@ -133,6 +137,8 @@ impl Cue {
             Cue::ShareEnd => &[(783.99, THIRD), (659.25, THIRD), (523.25, THIRD)],
             Cue::Viewer => &[(1174.66, TAP), (0.0, TAP / 2), (1174.66, TAP)],
             Cue::Whisper => &[(987.77, TAP), (0.0, TAP / 2), (1975.53, TAP)],
+            Cue::WhisperKeyDown => &[(659.25, TAP), (987.77, TAP)],
+            Cue::WhisperKeyUp => &[(987.77, TAP), (659.25, TAP)],
         };
         notes
             .iter()
@@ -321,7 +327,14 @@ impl Shared {
     }
 
     pub fn set_whisper(&self, down: bool) {
-        self.whisper_key.store(down, Relaxed);
+        // Key repeat sends `down` again: cue only on a change, and only in a call.
+        if self.whisper_key.swap(down, Relaxed) != down && lock(&self.mic).is_some() {
+            self.play_cue(if down {
+                Cue::WhisperKeyDown
+            } else {
+                Cue::WhisperKeyUp
+            });
+        }
     }
 
     pub fn muted(&self) -> bool {

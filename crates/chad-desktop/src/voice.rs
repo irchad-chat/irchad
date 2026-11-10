@@ -339,6 +339,7 @@ pub fn members(
     let mut row = |ui: &mut egui::Ui,
                    nick: &str,
                    speaking: bool,
+                   whispering: bool,
                    muted: bool,
                    note: Option<RichText>,
                    reserve: f32| {
@@ -351,8 +352,8 @@ pub fn members(
                 media.avatar(ui, r.shrink(RING), &name, avatar.as_ref(), auto);
                 if speaking {
                     let radius = (AVATAR - RING) / 2.0;
-                    ui.painter()
-                        .circle_stroke(r.center(), radius, (RING, SPEAKING));
+                    let ring = if whispering { WHISPER } else { SPEAKING };
+                    ui.painter().circle_stroke(r.center(), radius, (RING, ring));
                 }
                 let color = chatlog::nick_color(nick, dark);
                 let text = if muted {
@@ -399,6 +400,7 @@ pub fn members(
                     ui,
                     &nick_of(&p.identity),
                     p.speaking,
+                    p.whispering && p.local,
                     p.muted,
                     note,
                     reserve,
@@ -479,7 +481,7 @@ pub fn members(
         }
         None => {
             for n in nicks {
-                row(ui, n, false, false, None, 0.0);
+                row(ui, n, false, false, false, None, 0.0);
             }
         }
     }
