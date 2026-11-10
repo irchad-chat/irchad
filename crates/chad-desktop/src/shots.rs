@@ -237,6 +237,45 @@ fn live() {
     s.shot("live_light");
 }
 
+/// A custom emoji from `deploy/emoji` in a message and in the picker (D73).
+/// Same setup as `live`.
+#[test]
+#[ignore]
+fn live_emoji() {
+    let invite = std::env::var("IRCHAD_SHOTS_INVITE")
+        .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
+    let mut s = Shots::new(Some(&invite));
+    s.harness.run();
+    s.type_into("Username", "alice");
+    s.type_into("Password", "alicepass");
+    s.click("Log in");
+    s.wait_for("Your status and profile");
+    s.settle(2);
+    s.type_into("Message #general", "custom :chad: emoji");
+    s.harness.key_press(egui::Key::Enter);
+    s.settle(4);
+    s.shot("emoji_message");
+    s.click("Emoji");
+    s.settle(1);
+    s.shot("emoji_picker");
+    s.harness.key_press(egui::Key::Escape);
+    s.settle(1);
+    // React with it: searching for its name and Enter picks the custom one.
+    s.harness
+        .get_all_by_label("custom ")
+        .last()
+        .unwrap()
+        .hover();
+    s.harness.run_steps(4);
+    s.click("Add a reaction");
+    s.settle(1);
+    s.harness.get_by_label("Find an emoji").type_text("chad");
+    s.settle(1);
+    s.harness.key_press(egui::Key::Enter);
+    s.settle(3);
+    s.shot("emoji_reaction");
+}
+
 /// The soundboard menu in a call, listing `deploy/sounds`. Same setup as `live`.
 #[test]
 #[ignore]

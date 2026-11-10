@@ -25,6 +25,7 @@ This page is not a hosting guide. For that, see [Host your own network](https://
 | [Uploads](/docs/chat#files-images-and-links) and profile pictures | `[uploads]` → `dir` | "This network doesn't take uploads." |
 | Upload size limit | `[uploads]` → `max_bytes` | 25 MB |
 | [GIF search](/docs/chat#writing-messages) | `[gifs]` → `key` | "This network doesn't have GIFs." |
+| [Custom emoji](/docs/chat#custom-emoji) | `[emoji]` → `dir` | Only the standard emoji |
 | [Soundboard](/docs/voice#soundboard) | `[sounds]` → `dir` | "This server has no sounds yet." |
 | [Game names in activity](/docs/chat#activity) | `discord_games = true` | Only Rich Presence games show |
 | [Deleting your data with your account](/docs/getting-started#leaving-a-network-deleting-your-account) | `[delete]` | Only the account is removed |

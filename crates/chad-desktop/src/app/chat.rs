@@ -101,6 +101,7 @@ impl App {
         let connected = n.info.state == ConnState::Connected;
         let (b, profiles, media, devices) =
             (&mut n.buffers[bi], &n.profiles, &mut n.ui.media, &n.devices);
+        let (emoji, has_emoji) = (&n.emoji[..], n.info.emoji);
         let target = b.info.target.clone();
         let cx = Pane {
             network: &network,
@@ -126,12 +127,13 @@ impl App {
             .inner;
         b.ui.hide_members ^= toggle;
         let c = egui::Panel::bottom("composer")
-            .show(ui, |ui| composer(ui, &cx, b, profiles, media, &opts))
+            .show(ui, |ui| composer(ui, &cx, b, profiles, media, emoji, &opts))
             .inner;
         let extras = Extras {
             profiles,
             members: b.members.clone(),
             media,
+            emoji,
             network: &network,
             auto_media,
             guest_media,
@@ -150,6 +152,10 @@ impl App {
         }
         if l.refocus {
             self.view.nets[ni].ui.focus = true;
+        }
+        // The set may have changed since we connected.
+        if has_emoji && (l.pick_reaction.is_some() || c.emoji_at.is_some()) {
+            send(NetCommand::Emoji);
         }
         if let Some((msgid, at)) = l.pick_reaction {
             self.picker = Some(Picker {
@@ -363,6 +369,7 @@ fn composer(
     b: &mut Buffer,
     profiles: &HashMap<String, chatlog::Profile>,
     media: &mut Media,
+    emoji: &[chad_core::CustomEmoji],
     opts: &ComposerOpts,
 ) -> ComposerOut {
     let target = cx.target;
@@ -562,7 +569,7 @@ fn composer(
                 }
             }
         }
-        if changed && chad_core::emoji::replace_shortcodes(&mut b.ui.draft, &mut cursor) {
+        if changed && chad_core::emoji::replace_shortcodes(&mut b.ui.draft, &mut cursor, emoji) {
             moved = true;
         }
         if moved {

@@ -80,6 +80,9 @@ docs/
   To add a scenario, put a test in `crates/chad-desktop/src/shots.rs` that drives the UI through accesskit (`get_by_label(..).click()`) and then calls `shot("name")`.
 - Dev server stack: `docker compose -f deploy/compose.yaml up -d --build` (podman compose works).
   Then `python3 deploy/seed.py` creates the test accounts and channels. See `deploy/README.md`.
+- Android: `cd android && JAVA_HOME=/usr/lib/jvm/openjdk-bin-21 ./gradlew assembleFullDebug` (it runs `build-rust.sh` first). See `android/README.md`.
+- iOS builds on Linux with xtool, no Mac needed: `cd iOS && ./build-rust.sh && xtool dev build`. `xtool dev` also installs on a connected device. See `iOS/README.md`.
+  Run the iOS build after any change to `chad-ffi`'s API or to `iOS/`.
 - Project website: `cd site && pnpm install && pnpm dev` (or `pnpm build` → `site/dist/`).
 - Dev origin: `https://chat.localhost:8443` (Caddy internal CA, so pass `curl -k`). Raw IRC: `127.0.0.1:6667`.
 

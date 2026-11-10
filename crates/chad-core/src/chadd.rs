@@ -23,6 +23,8 @@ pub const MAX_MEDIA: usize = 8 << 20;
 /// chadd's own caps on soundboard clips and the list.
 const MAX_SOUND: usize = 4 << 20;
 const MAX_SOUNDS: usize = 64 << 10;
+/// Room for `chadd::MAX_EMOJI` of the longest names.
+const MAX_EMOJI: usize = 64 << 10;
 /// A full page of the longest msgids, as JSON.
 const MAX_REDACTED: usize = 256 << 10;
 /// Pages of tombstones per connect; the rest waits for the next one.
@@ -263,6 +265,21 @@ pub async fn gifs(
     }
     page.next = page.next.filter(|n| n.len() <= 128);
     Ok(page)
+}
+
+/// The network's custom emoji as chadd lists them, for `emoji::custom` to
+/// check. No session: guests see them too.
+pub async fn emoji(api: &Url) -> Result<Vec<chadd::Emoji>, Error> {
+    parse(
+        &request(
+            api,
+            chadd::EMOJI,
+            None,
+            Body::Json(b"{}".to_vec()),
+            MAX_EMOJI,
+        )
+        .await?,
+    )
 }
 
 /// The soundboard; names and files checked (D14).

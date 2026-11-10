@@ -20,6 +20,7 @@ fn net() -> Net {
         uploads: None,
         gifs: None,
         games: false,
+        emoji: false,
         receipts: false,
         oper: false,
     };

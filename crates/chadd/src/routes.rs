@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, cache, delete, fetch, files, games, gifs, sounds};
+use crate::{api, cache, delete, emoji, fetch, files, games, gifs, sounds};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -36,6 +36,8 @@ pub struct AppState {
     pub games: games::Games,
     /// Game list downloads, per account: it's 1.5 MB each.
     pub games_throttle: api::Throttle,
+    /// The emoji directory's listing, kept a few seconds: anyone may ask.
+    pub emoji: emoji::Listing,
     /// `redacted.log`: every msgid deleted with an account, in order (D69).
     pub redacted: std::sync::RwLock<Vec<String>>,
     /// Tombstone fetches, per IP.
@@ -68,6 +70,7 @@ impl AppState {
             cache,
             games: games::Games::default(),
             games_throttle: api::Throttle::new(5),
+            emoji: emoji::Listing::default(),
             redacted,
             redacted_throttle: api::Throttle::new(60),
             deletions: tokio::sync::Notify::new(),
@@ -81,6 +84,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         files = files
             .nest_service("/uploads", ServeDir::new(&u.dir))
             .layer(axum::middleware::from_fn(files::headers));
+    }
+    if let Some(e) = &state.config.emoji {
+        files = files.merge(
+            Router::new()
+                .nest_service("/emoji", ServeDir::new(&e.dir))
+                .layer(axum::middleware::from_fn(files::headers))
+                .layer(axum::middleware::from_fn(emoji::headers)),
+        );
     }
     if state.config.delete.is_some() {
         files = files
@@ -106,6 +117,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/gifs", post(gifs::search))
         .route("/api/sounds", post(sounds::list))
         .route("/api/sound", post(sounds::get))
+        .route("/api/emoji", post(emoji::list))
         .route("/api/games", post(games::list))
         .merge(files)
         .with_state(state)

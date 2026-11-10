@@ -7,6 +7,7 @@ mod api;
 mod cache;
 mod config;
 mod delete;
+mod emoji;
 mod fetch;
 mod files;
 mod games;

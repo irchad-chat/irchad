@@ -30,6 +30,7 @@ use url::Url;
 pub use chad_proto::chadd::{Game, Gif, GifPage, LinkPreview, Sound};
 pub use chad_proto::one_line;
 pub use discovery::fetch_icon;
+pub use emoji::CustomEmoji;
 pub use manager::start;
 
 /// File or image bytes; `Debug` shows only the length, so logging a command
@@ -279,6 +280,9 @@ pub enum NetCommand {
         query: String,
         pos: Option<String>,
     },
+    /// The network's custom emoji, asked again (they also come with every
+    /// connect), if `NetworkInfo::emoji`: `Event::Emoji`.
+    Emoji,
     /// The network's soundboard: `Event::Sounds`.
     Sounds,
     /// One soundboard clip's bytes: `Event::Sound`.
@@ -444,6 +448,12 @@ pub enum Event {
         network: String,
         result: Result<Vec<Sound>, String>,
     },
+    /// The network's custom emoji, sorted by name: `:name:` in a message or a
+    /// reaction is drawn as the image (`emoji::split`, `emoji::lookup`).
+    Emoji {
+        network: String,
+        emoji: Vec<CustomEmoji>,
+    },
     Games {
         network: String,
         result: Result<Vec<Game>, String>,
@@ -564,6 +574,8 @@ pub struct NetworkInfo {
     pub gifs: Option<String>,
     /// chadd serves Discord's game list (and we have an account).
     pub games: bool,
+    /// chadd has custom emoji (`Event::Emoji`).
+    pub emoji: bool,
     /// Our account sends read receipts in DMs, and shows theirs (D68).
     pub receipts: bool,
 }

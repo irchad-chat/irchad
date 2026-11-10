@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.Dp
 import io.livekit.android.room.participant.ConnectionQuality
 import party.gentoo.irchad.core.Device
 import party.gentoo.irchad.core.Reaction
-import party.gentoo.irchad.core.replaceShortcodes
 import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
@@ -124,7 +123,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
@@ -1002,16 +1006,22 @@ private fun MessageRow(
                 }
             }
             val faint = MaterialTheme.colorScheme.onSurfaceVariant
+            val inline = emojiInline(
+                app, network,
+                remember(m.spans, m.reactions) { m.spans.mapNotNull { it.emoji } + m.reactions.mapNotNull { it.image } },
+            )
             when {
                 m.redacted -> Text("Message deleted", fontStyle = FontStyle.Italic, color = faint)
                 m.undecryptable -> Text("Couldn't decrypt this message.", fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.error)
                 m.action -> Text(
-                    styled(m.spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} "),
+                    styled(m.spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} ", emoji = inline.keys),
                     fontStyle = FontStyle.Italic,
+                    inlineContent = inline,
                 )
                 else -> Text(
-                    styled(m.spans, MaterialTheme.colorScheme.primary),
+                    styled(m.spans, MaterialTheme.colorScheme.primary, emoji = inline.keys),
                     color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
+                    inlineContent = inline,
                 )
             }
             if (m.edited && !m.redacted) Text("(edited)", style = MaterialTheme.typography.labelSmall, color = faint)
@@ -1022,7 +1032,13 @@ private fun MessageRow(
                     for (r in m.reactions) {
                         val mine = r.nicks.any { it.equals(own, true) }
                         Text(
-                            "${r.emoji} ${r.nicks.size}",
+                            // A custom emoji's image, or its `:name:` until that has loaded.
+                            buildAnnotatedString {
+                                val image = r.image
+                                if (image != null && image in inline) appendInlineContent(image, r.emoji) else append(r.emoji)
+                                append(" ${r.nicks.size}")
+                            },
+                            inlineContent = inline,
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(10.dp))
@@ -1091,10 +1107,36 @@ private fun nickColor(nick: String): Color {
     return Color.hsv(hue, 0.55f, if (dark) 0.9f else 0.55f)
 }
 
-/** Message text with its IRC formatting, and its links tappable. */
-private fun styled(spans: List<Span>, link: Color, prefix: String = "") = buildAnnotatedString {
+/** What draws each of `urls`, custom emoji's images, in a line of text; only those that have loaded. */
+@Composable
+private fun emojiInline(app: IrChad, network: String, urls: List<String>): Map<String, InlineTextContent> {
+    if (urls.isEmpty()) return emptyMap()
+    val tick by app.media.tick.collectAsState()
+    val ready = remember(tick, network, urls) {
+        urls.filter { app.media.image(network, it, true) is Media.Img.Ready }.toSet()
+    }
+    return remember(ready, network) {
+        ready.associateWith { url ->
+            InlineTextContent(Placeholder(1.4.em, 1.4.em, PlaceholderVerticalAlign.Center)) { name ->
+                EmojiImage(app, network, url, name, Modifier.fillMaxSize())
+            }
+        }
+    }
+}
+
+/**
+ * Message text with its IRC formatting, and its links tappable. A custom
+ * emoji in `emoji` (`emojiInline`'s keys) is inline content; any other stays
+ * its `:name:`.
+ */
+private fun styled(spans: List<Span>, link: Color, prefix: String = "", emoji: Set<String> = emptySet()) = buildAnnotatedString {
     append(prefix)
     for (sp in spans) {
+        val image = sp.emoji
+        if (image != null && image in emoji) {
+            appendInlineContent(image, sp.text)
+            continue
+        }
         val deco = listOfNotNull(
             TextDecoration.Underline.takeIf { sp.underline || sp.link },
             TextDecoration.LineThrough.takeIf { sp.strike },
@@ -1224,7 +1266,7 @@ private fun Composer(
         if (v.text != draft.text) {
             // `:shortcode:` turns into its emoji as it's typed, like desktop.
             val at = v.text.codePointCount(0, v.selection.min.coerceIn(0, v.text.length))
-            replaceShortcodes(v.text, at.toUInt())?.let { r ->
+            c.replaceShortcodes(net.network, v.text, at.toUInt())?.let { r ->
                 val i = r.text.offsetByCodePoints(0, r.cursor.toInt().coerceAtMost(r.text.codePointCount(0, r.text.length)))
                 next = TextFieldValue(r.text, TextRange(i))
             }

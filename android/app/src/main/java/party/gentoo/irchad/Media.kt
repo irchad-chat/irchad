@@ -76,6 +76,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -295,6 +297,31 @@ fun RemoteImage(
     }
 }
 
+/**
+ * A custom emoji's image, fitted in `modifier`; nothing until it has loaded.
+ * It's fetched whatever the media settings say: it comes from the network itself.
+ */
+@Composable
+fun EmojiImage(app: IrChad, network: String, url: String, name: String, modifier: Modifier = Modifier) {
+    val tick by app.media.tick.collectAsState()
+    val img = remember(tick, network, url) { app.media.image(network, url, true) }
+    val shared = (img as? Media.Img.Ready)?.drawable ?: return
+    // One emoji is on screen many times, and a drawable belongs to one view.
+    // shortcut: an animated one has no constant state to copy, so it's shared and
+    // moves only in the last view it was set on; decode per view if that matters.
+    val d = remember(shared) { shared.constantState?.newDrawable() ?: shared }
+    AndroidView(
+        factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+        update = {
+            if (it.drawable !== d) {
+                it.setImageDrawable(d)
+                (d as? Animatable)?.start()
+            }
+        },
+        modifier = modifier.semantics { contentDescription = name },
+    )
+}
+
 /** Images inline, videos and files as cards, and a preview of the first page. */
 @Composable
 fun MessageLinks(app: IrChad, network: String, m: Message) {
@@ -434,20 +461,39 @@ fun Picker(
                     Tab(tab == 1, { tab = 1 }, text = { Text("GIFs") })
                 }
             }
-            if (tab == 1 && provider != null) GifTab(app, network, provider, gifQuery.orEmpty(), onGif) else EmojiTab(onEmoji)
+            if (tab == 1 && provider != null) GifTab(app, network, provider, gifQuery.orEmpty(), onGif) else EmojiTab(app, network, onEmoji)
         }
     }
 }
 
 @Composable
-private fun ColumnScope.EmojiTab(onEmoji: (String) -> Unit) {
+private fun ColumnScope.EmojiTab(app: IrChad, network: String, onEmoji: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     val list = remember(query) { emojis(query) }
+    // The network's own come first. The set may have changed since we connected.
+    LaunchedEffect(network) { app.client.refreshEmoji(network) }
+    val version by app.version.collectAsState()
+    val custom = remember(version, network, query) {
+        val q = query.trim().lowercase()
+        app.client.customEmoji(network).filter { q in it.name }
+    }
     OutlinedTextField(
         query, { query = it }, singleLine = true, placeholder = { Text("Find an emoji") },
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
     )
     LazyVerticalGrid(GridCells.Adaptive(48.dp), Modifier.weight(1f).padding(horizontal = 8.dp)) {
+        items(custom, key = { it.name }) { e ->
+            val code = ":${e.name}:"
+            Box(
+                Modifier.size(48.dp).clip(RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = code) { onEmoji(code) },
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                // Under the image until it loads.
+                Text(e.name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                EmojiImage(app, network, e.url, code, Modifier.size(32.dp).background(MaterialTheme.colorScheme.surfaceContainerLow))
+            }
+        }
         items(list) { e ->
             Box(
                 Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { onEmoji(e) },

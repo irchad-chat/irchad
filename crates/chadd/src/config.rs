@@ -38,6 +38,8 @@ pub struct Config {
     pub gifs: Option<Gifs>,
     /// Leave out for no soundboard.
     pub sounds: Option<Sounds>,
+    /// Leave out for no custom emoji.
+    pub emoji: Option<Emoji>,
     /// Leave out to keep nothing on disk; concurrent fetches are still shared.
     pub cache: Option<Cache>,
     /// Download Discord's list of detectable games at startup and daily, so
@@ -140,6 +142,15 @@ fn default_cache_item() -> u64 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sounds {
+    pub dir: std::path::PathBuf,
+}
+
+/// Custom emoji: every `<name>.png`, `.jpg`, `.gif` or `.webp` in `dir` is
+/// `:name:` (`chad_proto::chadd::emoji_name`). Admins add and remove files by
+/// hand; no restart needed. Everything in `dir` is served to anyone.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Emoji {
     pub dir: std::path::PathBuf,
 }
 
@@ -314,6 +325,7 @@ impl Config {
                     provider: "KLIPY".into(),
                 }),
                 games: self.discord_games,
+                emoji: self.emoji.is_some(),
                 delete: self.delete.is_some(),
             },
             livekit: discovery::Livekit {

@@ -411,3 +411,14 @@ Classic networks:
 - **"Browse channels…"** (`NetCommand::ListChannels` → `Event::ChannelList`) works on both kinds. It keeps at most 20k `322`s and shows the biggest 5k.
 
 Not done: presets, mobile UI for adding a classic network, a nick separate from the account, CertFP/SASL EXTERNAL, and per-network encodings.
+
+## D73: Custom emoji are plain `:name:` text, their images a directory on chadd (2026-11-09)
+A network has its own emoji. In a message one is just `:name:` in the body, and as a reaction it's `+draft/react=:name:`. Nothing else goes over IRC: no TAGMSG, no client tag, no id. Plain IRC clients see `:name:`, which is the readable fallback, and history, edits, replies, encrypted DMs and notifications need nothing new because the text is all there is.
+IrChad draws the image wherever a `:name:` is in the network's set (`chad_core::emoji::split` for text outside links and code, `lookup` for reactions), and shows the text until the image has loaded.
+The set is the files in chadd's `[emoji] dir`, like the soundboard (D37): `<name>.png`, `.jpg`, `.gif` or `.webp`, the name 2 to 32 of `a-z`, `0-9` and `_`, at most 1 MiB each and 500 in all. There's no upload UI (no admin UI yet).
+`POST /api/emoji` lists them and `/emoji/<file>` serves them, both without a session, so guests see them too; they're public chat content. chadd keeps the listing for 10 s because anyone can ask. Discovery's `chadd.emoji` says the network has them.
+Clients fetch the list on every connect and when an emoji picker opens. The list is server input (D14): the client checks each name and file again, builds the image URL itself on the network's origin. A name that is also a standard shortcode (`:parrot:`) is the network's emoji there: the composer leaves it as typed instead of turning it into the Unicode one. Images come through `NetCommand::Media`'s same-origin path, whatever the media settings say.
+Rejected: a TAGMSG beside each message (two messages to pair up in history, and a flicker or a loss when one is missing) and a tag naming an image URL (anyone could bind any name to any image, and every reader's client would fetch it).
+The cost: a new or removed file reaches a client at its next connect or picker, and removing a file turns old messages back into `:name:`. Emoji are per network, never per user, and classic networks (D72) have none.
+On iOS an animated emoji inside text is a still frame, because SwiftUI's `Text` takes an image but not a view; on Android an animated one moves in one place at a time.
+Not done: completing `:name` while typing (the picker's search finds them), and bigger emoji in a message that is nothing else.

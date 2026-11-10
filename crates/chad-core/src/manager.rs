@@ -206,6 +206,7 @@ fn spawn_with(
         uploads: None,
         gifs: None,
         games: false,
+        emoji: false,
         receipts: false,
         oper: false,
     };

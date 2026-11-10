@@ -189,6 +189,41 @@ impl Media {
         }
     }
 
+    /// A custom emoji's image `height` tall, once it's loaded. It's fetched
+    /// whatever the media settings say: it comes from the network itself.
+    pub fn emoji_image(
+        &mut self,
+        ui: &egui::Ui,
+        e: &chad_core::CustomEmoji,
+        height: f32,
+    ) -> Option<egui::Image<'static>> {
+        self.want_image(e.url.as_str());
+        let Some(Img::Ready(f)) = self.images.get(e.url.as_str()) else {
+            return None;
+        };
+        // A wide one keeps its shape, up to a point.
+        let width = (f.size.x * height / f.size.y.max(1.0)).min(height * 3.0);
+        Some(egui::Image::new((
+            frame_at(f, ui).id(),
+            vec2(width, height),
+        )))
+    }
+
+    /// A custom emoji in a line of text; its `:name:` until the image is there.
+    pub fn emoji(&mut self, ui: &mut egui::Ui, e: &chad_core::CustomEmoji) {
+        let code = format!(":{}:", e.name);
+        let height = ui.text_style_height(&egui::TextStyle::Body) * 1.3;
+        match self.emoji_image(ui, e, height) {
+            Some(img) => {
+                let r = ui.add(img).on_hover_text(&code);
+                r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &code));
+            }
+            None => {
+                ui.label(code);
+            }
+        }
+    }
+
     /// An inline image, or a button to load it when `auto` is off.
     pub fn image(&mut self, ui: &mut egui::Ui, url: &str, auto: bool) {
         if auto {

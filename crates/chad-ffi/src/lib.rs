@@ -263,11 +263,15 @@ pub struct Shortcoded {
     pub cursor: u32,
 }
 
-/// `None` when `text` has no complete `:shortcode:`.
-#[uniffi::export]
-pub fn replace_shortcodes(text: String, cursor: u32) -> Option<Shortcoded> {
+/// `None` when `text` has no complete `:shortcode:` to replace. `custom` are
+/// the network's own, which stay as typed.
+fn replace_shortcodes(
+    text: String,
+    cursor: u32,
+    custom: &[chad_core::CustomEmoji],
+) -> Option<Shortcoded> {
     let (mut text, mut cursor) = (text, cursor as usize);
-    chad_core::emoji::replace_shortcodes(&mut text, &mut cursor).then(|| Shortcoded {
+    chad_core::emoji::replace_shortcodes(&mut text, &mut cursor, custom).then(|| Shortcoded {
         text,
         cursor: u32::try_from(cursor).unwrap_or(u32::MAX),
     })
@@ -306,25 +310,37 @@ impl Denoiser {
 }
 
 /// `text` as spans, with each `@`-mention (outside links and code) its own
-/// span named by `name` (D66).
+/// span named by `name` (D66), and each custom emoji from `emoji` its own too.
 fn spans(
     text: &str,
     mentions: &[chad_core::Mention],
+    emoji: &[chad_core::CustomEmoji],
     name: impl Fn(&chad_core::Mention) -> String,
 ) -> Vec<Span> {
     let mut out = Vec::new();
     for s in format::parse(text) {
-        if mentions.is_empty() || s.link || s.mono {
+        if s.link || s.mono || (mentions.is_empty() && emoji.is_empty()) {
             out.push(Span::from(s));
             continue;
         }
-        for (piece, m) in chad_core::mention::split(&s.text, mentions) {
-            let mut sp = Span::from(format::Span {
-                text: piece.to_owned(),
+        let piece = |text: &str| {
+            Span::from(format::Span {
+                text: text.to_owned(),
                 ..s.clone()
-            });
-            sp.mention = m.map(&name);
-            out.push(sp);
+            })
+        };
+        for (text, m) in chad_core::mention::split(&s.text, mentions) {
+            if m.is_some() {
+                let mut sp = piece(text);
+                sp.mention = m.map(&name);
+                out.push(sp);
+                continue;
+            }
+            for (text, e) in chad_core::emoji::split(text, emoji) {
+                let mut sp = piece(text);
+                sp.emoji = e.map(|e| e.url.to_string());
+                out.push(sp);
+            }
         }
     }
     out

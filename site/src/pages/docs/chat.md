@@ -31,6 +31,7 @@ The member list shows who's online and away, and each person's role in the chann
 | New line | <kbd>Shift</kbd>+<kbd>Enter</kbd> |
 | Mention someone | Type `@` and pick them, or type the start of a name and press <kbd>Tab</kbd> |
 | Emoji | The emoji button, or a shortcode like `:smile:` |
+| [Custom emoji](#custom-emoji) | The top of the emoji picker, or its name like `:chad:` |
 | GIF | The **GIFs** tab of the emoji picker, or `/gif happy cat` |
 | Bold, italic, code | `**bold**`, `*italic*`, `` `code` ``, and ```` ``` ```` around a code block |
 | Edit your last message | <kbd>↑</kbd> in an empty message box |
@@ -41,6 +42,14 @@ The member list shows who's online and away, and each person's role in the chann
 > **Server setting:** GIF search needs `chadd.toml` → `[gifs]` with a `key`. Without it the app says "This network doesn't have GIFs."
 >
 > Long pasted text is sent as one message up to `ircd.yaml` → `limits.multiline.max-bytes` (4096 by default) and `max-lines`.
+
+### Custom emoji
+
+A network can have its own emoji. They're listed first in the emoji picker, in messages and for reactions, and searching the picker finds them by name. You can also just type the name between colons.
+
+People on ordinary IRC clients see the name, like `:chad:`, and so do you until the picture has loaded.
+
+> **Server setting:** `chadd.toml` → `[emoji]` with a `dir` of images. A file named `chad.png` is `:chad:`. Names are 2 to 32 lowercase letters, digits and `_`, the file a png, jpg, gif or webp of at most 1 MiB. Add or remove files at any time; people get the change when they next connect or open the picker. Everything in that directory is public.
 
 ## Replies, reactions, edits, deletes
 

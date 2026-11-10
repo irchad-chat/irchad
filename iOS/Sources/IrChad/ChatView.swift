@@ -329,12 +329,21 @@ struct MessageRow: View {
         } else if m.undecryptable {
             Text("Couldn't decrypt this message.").italic().foregroundStyle(.red)
         } else if m.action {
-            Text(styled(m.spans, prefix: "* \(m.shown) ")).italic()
+            styledText(m.spans, prefix: "* \(m.shown) ", network: network, media: model.media).italic()
         } else {
-            Text(styled(m.spans))
+            styledText(m.spans, network: network, media: model.media)
                 .foregroundStyle(m.pending || m.notice ? .secondary : .primary)
                 .textSelection(.enabled)
         }
+    }
+
+    /// A custom emoji's image, or its `:name:` until that has loaded.
+    private func reactionLabel(_ r: Reaction) -> Text {
+        let _ = model.media.tick
+        guard let url = r.image, let i = model.media.emojiImage(network: network, url: url, height: 16) else {
+            return Text("\(r.emoji) \(r.nicks.count)")
+        }
+        return Text(Image(uiImage: i)).baselineOffset(-3) + Text(" \(r.nicks.count)")
     }
 
     private var reactions: some View {
@@ -349,7 +358,7 @@ struct MessageRow: View {
                         model.client.react(network: network, target: target, msgid: id, emoji: r.emoji)
                     }
                 } label: {
-                    Text("\(r.emoji) \(r.nicks.count)")
+                    reactionLabel(r)
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
@@ -422,6 +431,29 @@ func nickColor(_ nick: String, dark: Bool) -> Color {
     var h: UInt32 = 2_166_136_261
     for b in nick.utf8 { h = (h ^ UInt32(b)) &* 16_777_619 }
     return Color(hue: Double(h % 360) / 360, saturation: 0.55, brightness: dark ? 0.9 : 0.55)
+}
+
+/// `styled`, with each custom emoji that has loaded as its image. `Text` takes
+/// an image only as another `Text`, so the runs between them are joined.
+@MainActor
+func styledText(_ spans: [Span], prefix: String = "", network: String, media: Media) -> Text {
+    guard spans.contains(where: { $0.emoji != nil }) else { return Text(styled(spans, prefix: prefix)) }
+    let _ = media.tick
+    let height = UIFont.preferredFont(forTextStyle: .body).lineHeight
+    var out = Text(verbatim: "")
+    var run: [Span] = []
+    var lead = prefix
+    for sp in spans {
+        guard let url = sp.emoji, let i = media.emojiImage(network: network, url: url, height: height) else {
+            run.append(sp)
+            continue
+        }
+        out = out + Text(styled(run, prefix: lead))
+            + Text(Image(uiImage: i)).baselineOffset(-height * 0.2).accessibilityLabel(sp.text)
+        run = []
+        lead = ""
+    }
+    return out + Text(styled(run, prefix: lead))
 }
 
 /// Message text with its IRC formatting, and its links tappable.

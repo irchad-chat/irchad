@@ -39,6 +39,9 @@ pub struct Chadd {
     /// Set when chadd serves Discord's game list (`POST <api>/games`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub games: bool,
+    /// Set when chadd has custom emoji (`POST <api>/emoji`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub emoji: bool,
     /// Set when chadd deletes accounts with their messages and uploads
     /// (`POST <api>/account/delete`) and serves `POST <api>/redacted` (D69).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

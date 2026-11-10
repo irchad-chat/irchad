@@ -19,6 +19,9 @@
 	handle /uploads/* {
 		reverse_proxy {args[1]}:8080
 	}
+	handle /emoji/* {
+		reverse_proxy {args[1]}:8080
+	}
 	# Network icon for the sidebar (chadd.toml `icon`).
 	handle /icon.png {
 		root * /srv

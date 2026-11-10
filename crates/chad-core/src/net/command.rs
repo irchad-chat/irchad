@@ -114,6 +114,8 @@ impl Net {
                 }
                 self.activity = text;
             }
+            // Offline: the set we have stays.
+            NetCommand::Emoji => {}
             NetCommand::Sounds => {
                 let network = self.id();
                 self.events.push(Event::Sounds {

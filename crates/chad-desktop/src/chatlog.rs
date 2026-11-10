@@ -34,6 +34,8 @@ pub struct Extras<'a> {
     /// The buffer's members, to name mentions by account (D66).
     pub members: Option<std::sync::Arc<[chad_core::Member]>>,
     pub media: &'a mut Media,
+    /// The network's custom emoji.
+    pub emoji: &'a [chad_core::CustomEmoji],
     /// The network's origin, to tell its own uploads apart.
     pub network: &'a str,
     /// Load images, previews and avatars without asking.
@@ -636,10 +638,7 @@ fn row_ui(
                         .color(ui.visuals().error_fg_color),
                 );
             } else {
-                let who = |x: &Mention| {
-                    mention_name(extras.profiles, extras.members.as_deref(), x).to_owned()
-                };
-                body_ui(ui, m, &parsed.lines, name, dark, &who);
+                body_ui(ui, m, &parsed.lines, name, dark, extras);
                 if m.edited {
                     ui.label(RichText::new("(edited)").weak().small());
                 }
@@ -656,10 +655,21 @@ fn row_ui(
                 ui.horizontal_wrapped(|ui| {
                     for r in &m.reactions {
                         let mine = r.nicks.iter().any(|n| n == own_nick);
-                        let chip = egui::Button::new(format!("{} {}", r.emoji, r.nicks.len()))
-                            .small()
-                            .selected(mine);
-                        let resp = ui.add(chip).on_hover_ui(|ui| {
+                        let label = format!("{} {}", r.emoji, r.nicks.len());
+                        let height = ui.text_style_height(&egui::TextStyle::Body);
+                        let chip = match chad_core::emoji::lookup(&r.emoji, extras.emoji)
+                            .and_then(|e| extras.media.emoji_image(ui, e, height))
+                        {
+                            Some(img) => {
+                                egui::Button::image_and_text(img, r.nicks.len().to_string())
+                            }
+                            None => egui::Button::new(&label),
+                        };
+                        let resp = ui.add(chip.small().selected(mine));
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, &label)
+                        });
+                        let resp = resp.on_hover_ui(|ui| {
                             let who: Vec<&str> =
                                 r.nicks.iter().map(|n| shown(extras.profiles, n)).collect();
                             ui.label(who.join(", "));
@@ -835,7 +845,7 @@ fn body_ui(
     lines: &[Vec<format::Span>],
     name: &str,
     dark: bool,
-    who: &dyn Fn(&Mention) -> String,
+    extras: &mut Extras,
 ) {
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
     let mut first = true;
@@ -870,22 +880,26 @@ fn body_ui(
                     ui.label(" ");
                 }
                 for span in spans {
-                    if m.mentions.is_empty() || span.link || span.mono {
-                        span_ui(ui, m, span, weak);
+                    if span.link || span.mono {
+                        span_ui(ui, m, span, &span.text, weak);
                         continue;
                     }
-                    for (text, x) in mention::split(&span.text, &m.mentions) {
-                        match x {
-                            Some(x) => mention_ui(ui, x, &who(x), dark),
-                            None => span_ui(
-                                ui,
-                                m,
-                                &format::Span {
-                                    text: text.to_owned(),
-                                    ..span.clone()
-                                },
-                                weak,
-                            ),
+                    let pieces = if m.mentions.is_empty() {
+                        vec![(span.text.as_str(), None)]
+                    } else {
+                        mention::split(&span.text, &m.mentions)
+                    };
+                    for (text, x) in pieces {
+                        if let Some(x) = x {
+                            let who = mention_name(extras.profiles, extras.members.as_deref(), x);
+                            mention_ui(ui, x, who, dark);
+                            continue;
+                        }
+                        for (text, e) in chad_core::emoji::split(text, extras.emoji) {
+                            match e {
+                                Some(e) => extras.media.emoji(ui, e),
+                                None => span_ui(ui, m, span, text, weak),
+                            }
                         }
                     }
                 }
@@ -905,8 +919,9 @@ fn mention_ui(ui: &mut egui::Ui, x: &Mention, name: &str, dark: bool) {
         .on_hover_text(format!("{} (account {})", x.nick, x.account));
 }
 
-fn span_ui(ui: &mut egui::Ui, m: &ChatMessage, span: &format::Span, weak: bool) {
-    let mut t = RichText::new(&span.text);
+/// `text`, all or a piece of `span`'s, in its style.
+fn span_ui(ui: &mut egui::Ui, m: &ChatMessage, span: &format::Span, text: &str, weak: bool) {
+    let mut t = RichText::new(text);
     if span.bold {
         t = t.strong();
     }

@@ -649,6 +649,13 @@ impl App {
             .as_ref()
             .and_then(|(n, _)| self.net_idx(n))
             .and_then(|i| Some((i, self.view.nets[i].info.gifs.clone()?)));
+        // Custom emoji are those of the network the message or composer is on.
+        let emoji_net = self
+            .picker
+            .as_ref()
+            .and_then(|p| p.react.as_ref().map(|r| r.0.clone()))
+            .or_else(|| here.as_ref().map(|(n, _)| n.clone()))
+            .and_then(|n| self.net_idx(&n));
         let Some(p) = &mut self.picker else { return };
         let gif_net = gif_net.filter(|_| p.react.is_none());
         let nets = &mut self.view.nets;
@@ -670,10 +677,10 @@ impl App {
                             if p.gif_tab {
                                 gif = p.gifs.ui(ui, &mut nets[*ni].ui.media, provider);
                             } else {
-                                picked = emoji::picker(ui, &mut p.query);
+                                picked = emoji_picker(ui, &mut p.query, nets, emoji_net);
                             }
                         }
-                        None => picked = emoji::picker(ui, &mut p.query),
+                        None => picked = emoji_picker(ui, &mut p.query, nets, emoji_net),
                     }
                 });
             });
@@ -932,5 +939,18 @@ impl App {
         if save || close || modal.should_close() {
             self.profile = None;
         }
+    }
+}
+
+/// `emoji::picker` with the custom emoji of network `net`.
+fn emoji_picker(
+    ui: &mut egui::Ui,
+    query: &mut String,
+    nets: &mut [Network],
+    net: Option<usize>,
+) -> Option<String> {
+    match net.and_then(|i| nets.get_mut(i)) {
+        Some(n) => emoji::picker(ui, query, &n.emoji, &mut n.ui.media),
+        None => emoji::picker(ui, query, &[], &mut crate::media::Media::default()),
     }
 }

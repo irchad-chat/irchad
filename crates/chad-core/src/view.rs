@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 use crate::{
-    Block, BufferInfo, BufferKind, ChatMessage, ConnState, DeviceInfo, Event, Member, NetworkInfo,
-    SendStatus, Sound, Typing, VoiceState,
+    Block, BufferInfo, BufferKind, ChatMessage, ConnState, CustomEmoji, DeviceInfo, Event, Member,
+    NetworkInfo, SendStatus, Sound, Typing, VoiceState,
 };
 
 /// Only messages this fresh notify; gap-fill after a restart stays quiet.
@@ -58,6 +58,8 @@ pub struct Net<N = (), B = ()> {
     pub devices: HashMap<String, Vec<DeviceInfo>>,
     /// The soundboard, as chadd last listed it.
     pub sounds: Vec<Sound>,
+    /// Custom emoji, sorted by name, as chadd last listed them.
+    pub emoji: Vec<CustomEmoji>,
     /// Blocked people, oldest first: their messages and reactions are hidden.
     pub blocks: Vec<Block>,
     pub ui: N,
@@ -343,6 +345,7 @@ impl<N: Default, B: Default> View<N, B> {
                         profiles: HashMap::new(),
                         devices: HashMap::new(),
                         sounds: Vec::new(),
+                        emoji: Vec::new(),
                         blocks: Vec::new(),
                         ui: N::default(),
                     });
@@ -496,6 +499,11 @@ impl<N: Default, B: Default> View<N, B> {
                     }
                 }
             }
+            Event::Emoji { network, emoji } => {
+                if let Some(i) = self.net(network) {
+                    self.nets[i].emoji.clone_from(emoji);
+                }
+            }
             Event::Sounds {
                 network,
                 result: Ok(list),
@@ -530,6 +538,7 @@ mod tests {
             uploads: None,
             gifs: None,
             games: false,
+            emoji: false,
             receipts: false,
             oper: false,
         })

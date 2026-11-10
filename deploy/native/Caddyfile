@@ -15,6 +15,9 @@
 	handle /uploads/* {
 		reverse_proxy 127.0.0.1:8080
 	}
+	handle /emoji/* {
+		reverse_proxy 127.0.0.1:8080
+	}
 	handle /irc {
 		reverse_proxy 127.0.0.1:8097
 	}

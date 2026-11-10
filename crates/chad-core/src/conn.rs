@@ -308,6 +308,7 @@ async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
         .filter(|_| !guest)
         .map(|g| g.provider.chars().take(40).collect());
     net.info.games = d.chadd.games && !guest;
+    net.info.emoji = d.chadd.emoji;
     Ok(d)
 }
 
@@ -329,6 +330,7 @@ fn classic_discovery(origin: &str) -> Result<Discovery, String> {
             uploads: None,
             gifs: None,
             games: false,
+            emoji: false,
             delete: false,
         },
         livekit: proto_discovery::Livekit { url },
@@ -601,6 +603,7 @@ async fn live(
         (!p.guest).then(|| password.to_owned()),
         p.session.clone(),
     ));
+    fetch(NetCommand::Emoji, net, &client, sink);
     // Dropping `call` hangs up.
     let mut call: Option<mpsc::UnboundedReceiver<MediaEvent>> = None;
     let mut token: Option<JoinHandle<TokenResult>> = None;
@@ -951,6 +954,17 @@ fn fetch(
                     .await;
                 sink.send([Event::Games { network, result }]);
             });
+        }
+        NetCommand::Emoji => {
+            if net.info.emoji {
+                tokio::spawn(async move {
+                    // On failure the set we have stays.
+                    if let Ok(list) = chadd::emoji(&client.api).await {
+                        let emoji = crate::emoji::custom(list, &network);
+                        sink.send([Event::Emoji { network, emoji }]);
+                    }
+                });
+            }
         }
         NetCommand::Sounds => {
             tokio::spawn(async move {

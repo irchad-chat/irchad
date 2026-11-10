@@ -85,9 +85,9 @@ fn finds_emoji() {
 
 #[test]
 fn shortcodes_and_denoiser() {
-    let r = replace_shortcodes("hi :smile: x".into(), 10).unwrap();
+    let r = replace_shortcodes("hi :smile: x".into(), 10, &[]).unwrap();
     assert_eq!((r.text.as_str(), r.cursor), ("hi 😄 x", 4));
-    assert!(replace_shortcodes("12:30".into(), 0).is_none());
+    assert!(replace_shortcodes("12:30".into(), 0, &[]).is_none());
 
     let d = Denoiser::new();
     assert_eq!(d.process(vec![1, 2, 3]), vec![1, 2, 3]);
@@ -185,11 +185,9 @@ fn mention_spans() {
         account: "b".into(),
     }];
     // Bold text around a mention keeps its style; a link that contains the nick isn't split.
-    let got = spans(
-        "\x02hi bob!\x02 https://x.example/bob",
-        &ms,
-        |m| format!("<{}>", m.account),
-    );
+    let got = spans("\x02hi bob!\x02 https://x.example/bob", &ms, &[], |m| {
+        format!("<{}>", m.account)
+    });
     let k: Vec<_> = got
         .iter()
         .map(|s| (s.text.as_str(), s.bold, s.mention.as_deref()))
@@ -202,6 +200,35 @@ fn mention_spans() {
             ("!", true, None),
             (" ", false, None),
             ("https://x.example/bob", false, None),
+        ]
+    );
+}
+
+#[test]
+fn custom_emoji_spans() {
+    let set = [chad_core::CustomEmoji {
+        name: "bigint".into(),
+        url: "https://chat.example/emoji/bigint.png".parse().unwrap(),
+    }];
+    // Not in code or links, and the text stays what plain clients see.
+    let got = spans("\x02a :bigint:\x02 \x11:bigint:\x11", &[], &set, |_| {
+        String::new()
+    });
+    let k: Vec<_> = got
+        .iter()
+        .map(|s| (s.text.as_str(), s.bold, s.emoji.as_deref()))
+        .collect();
+    assert_eq!(
+        k,
+        [
+            ("a ", true, None),
+            (
+                ":bigint:",
+                true,
+                Some("https://chat.example/emoji/bigint.png")
+            ),
+            (" ", false, None),
+            (":bigint:", false, None),
         ]
     );
 }

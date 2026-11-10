@@ -38,6 +38,11 @@ max_bytes = 26214400
 [sounds]
 dir = "/var/lib/chadd/sounds"
 
+# Custom emoji: every <name>.png/jpg/gif/webp in here is :name: (deploy/emoji,
+# mounted read-only). Names are 2 to 32 of a-z, 0-9 and _.
+[emoji]
+dir = "/var/lib/chadd/emoji"
+
 # Link previews and proxied images. Not under uploads (that dir is public).
 [cache]
 dir = "/var/lib/chadd/cache"

@@ -9,6 +9,7 @@
                  ├── everything else           → static  project website, if installed (D57)
                  ├── /api/*                    → chadd   auth, LiveKit tokens, uploads, link previews, account deletion
                  ├── /uploads/*                → chadd   uploaded files (D26)
+                 ├── /emoji/*                  → chadd   custom emoji images (D73)
                  ├── /irc                      → ergo    IRC over WebSocket
                  └── /livekit                  → livekit signalling (media: UDP direct / TURN)
 
@@ -74,6 +75,7 @@ The same client also joins ordinary IRC networks (Libera, Rizon, EFnet, …) fro
   `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
   `POST /api/gifs {query, pos}` searches the GIF provider set up in chadd.toml (KLIPY by default), and discovery's `chadd.gifs` says it's on (D30).
   `POST /api/sounds` lists the soundboard (the files in chadd.toml's `[sounds] dir`), and `POST /api/sound {file}` returns one clip (D37).
+  `POST /api/emoji`, with no session, lists the network's custom emoji (the files in `[emoji] dir`, served at `/emoji/<file>`), and discovery's `chadd.emoji` says there are some (D73).
   `POST /api/account/delete {account, password}` has chadd unregister the account, redact its messages and delete its uploads, and `POST /api/redacted {since}` lists the msgids deleted so far, which clients check after each connect (D69). Discovery's `chadd.delete` says both are on.
   Request and response types live in `chad_proto::chadd`. Calls share one session per network, and the client logs in again on a 401.
 
@@ -118,6 +120,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | Away | `AWAY`, from the status menu or desktop idle time (D28), re-sent after reconnects |
 | Images and link previews | Plain URLs in the message. The client shows images and video/file cards inline, and previews the first other link through chadd (D25). |
 | GIFs | The picker's GIF tab searches through chadd (D30) and sends the GIF's URL as a plain message, so it shows inline like any other image. |
+| Custom emoji | Plain `:name:` in the text or in `+draft/react`. The client draws the image when the name is in the set chadd lists (D73). |
 | Typing | `+typing` |
 | Replies / reactions | `+draft/reply`, `+draft/react` |
 | Mentions | The nick in the text, plus `+chad/mentions=<nick> <account>,...` for nicks picked from completion. IrChad shows them with the account's current name, and highlights on its own account, nick or display name (D66). |

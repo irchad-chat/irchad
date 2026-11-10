@@ -63,6 +63,7 @@ services:
       - chadd-state:/var/lib/chadd/state
       - ergo-export:/var/lib/chadd/export
       - ./sounds:/var/lib/chadd/sounds:ro
+      - ./emoji:/var/lib/chadd/emoji:ro
     networks: [chad]
 
   chadd2:
@@ -79,6 +80,7 @@ services:
       - chadd2-state:/var/lib/chadd/state
       - ergo2-export:/var/lib/chadd/export
       - ./sounds:/var/lib/chadd/sounds:ro
+      - ./emoji:/var/lib/chadd/emoji:ro
     networks: [chad]
 
   caddy:

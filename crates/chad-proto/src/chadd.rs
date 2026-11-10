@@ -28,6 +28,12 @@ pub const SOUNDS: &str = "sounds";
 /// `POST <api>/sound` with a [`Sound`] (only `file` matters) and a Bearer
 /// session token: the clip's bytes (mp3, ogg, wav or flac).
 pub const SOUND: &str = "sound";
+/// `POST <api>/emoji`, no auth: the network's custom emoji, a list of
+/// [`Emoji`]s. A message shows one as `:name:`, which is all plain IRC clients
+/// see. The images are at `<origin>/emoji/<file>`.
+pub const EMOJI: &str = "emoji";
+/// Most custom emoji a network has.
+pub const MAX_EMOJI: usize = 500;
 /// `POST <api>/games` with a Bearer session token: Discord's detectable games
 /// as [`Game`]s, which chadd downloads itself so clients never tell Discord
 /// what they play. `404` when the server doesn't offer it.
@@ -46,6 +52,18 @@ pub const REDACTED_PAGE: usize = 1000;
 /// tokens), with room to spare, and nothing that could break an IRC line.
 pub fn valid_msgid(s: &str) -> bool {
     (1..=128).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_graphic() && b != b':')
+}
+
+/// A custom emoji's file: `<name>.<png|jpg|gif|webp>`, the name 2 to 32 of
+/// `a-z`, `0-9` and `_`. Its name, if it is one.
+pub fn emoji_name(file: &str) -> Option<&str> {
+    let (name, ext) = file.rsplit_once('.')?;
+    let ok = (2..=32).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        && matches!(ext, "png" | "jpg" | "gif" | "webp");
+    ok.then_some(name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +167,14 @@ pub struct Sound {
     /// What the button says.
     pub name: String,
     /// For [`SOUND`].
+    pub file: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Emoji {
+    /// Written `:name:` in a message.
+    pub name: String,
+    /// Under `<origin>/emoji/`; see [`emoji_name`].
     pub file: String,
 }
 

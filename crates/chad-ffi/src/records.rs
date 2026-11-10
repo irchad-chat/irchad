@@ -169,6 +169,17 @@ pub struct Span {
     /// An `@`-mention (D66): `text` is the nick as written, this the name to
     /// show (the person's current display name or nick).
     pub mention: Option<String>,
+    /// A custom emoji: `text` is its `:name:`, this its image's URL
+    /// (`Client::media`). Show the text until the image is there.
+    pub emoji: Option<String>,
+}
+
+/// One of a network's custom emoji; `:name:` in a message or as a reaction.
+#[derive(uniffi::Record)]
+pub struct CustomEmoji {
+    pub name: String,
+    /// Its image, for `Client::media`.
+    pub url: String,
 }
 
 /// Someone in the `@` list.
@@ -194,13 +205,17 @@ impl From<chad_core::format::Span> for Span {
             bg: s.bg.map(rgb),
             link: s.link,
             mention: None,
+            emoji: None,
         }
     }
 }
 
 #[derive(uniffi::Record)]
 pub struct Reaction {
+    /// The character, or a custom emoji's `:name:`.
     pub emoji: String,
+    /// The custom emoji's image, if `emoji` names one.
+    pub image: Option<String>,
     pub nicks: Vec<String>,
 }
 

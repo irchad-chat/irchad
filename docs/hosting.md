@@ -100,6 +100,12 @@ From a checkout of this repo, copy the files over and fill them in:
   export_dir = "/var/lib/ergo/export"
   state_dir = "/var/lib/chadd"
 
+  # Optional: custom emoji. Every <name>.png, .jpg, .gif or .webp in here is
+  # :name: (2 to 32 of a-z, 0-9 and _; 1 MiB at most). Add and remove files
+  # at will. Everything in the directory is public.
+  [emoji]
+  dir = "/var/lib/chadd/emoji"
+
   # Optional: the GIF picker. Get a key at https://partner.klipy.com/api-keys
   # (a test key allows 100 searches an hour across the whole network).
   [gifs]

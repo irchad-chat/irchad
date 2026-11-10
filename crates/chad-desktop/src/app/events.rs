@@ -241,6 +241,7 @@ impl App {
             | Event::Profile { .. }
             | Event::Devices { .. }
             | Event::Sounds { .. }
+            | Event::Emoji { .. }
             | Event::PushAvailable { .. } => {}
         }
     }

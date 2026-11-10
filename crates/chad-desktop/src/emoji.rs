@@ -3,12 +3,20 @@
 
 use egui::{RichText, vec2};
 
+use crate::media::Media;
+
 const PER_ROW: usize = 9;
 /// The picker's width, shared by the emoji and GIF tabs.
 pub const PICKER_WIDTH: f32 = PER_ROW as f32 * 36.0;
 
-/// The picker's grid with a search box. Returns the emoji clicked.
-pub fn picker(ui: &mut egui::Ui, query: &mut String) -> Option<String> {
+/// The picker's grid with a search box. Returns the emoji clicked: the
+/// character, or `:name:` for one of the network's `custom` ones.
+pub fn picker(
+    ui: &mut egui::Ui,
+    query: &mut String,
+    custom: &[chad_core::CustomEmoji],
+    media: &mut Media,
+) -> Option<String> {
     let search = ui.add(
         egui::TextEdit::singleline(query)
             .hint_text("Find an emoji")
@@ -37,12 +45,48 @@ pub fn picker(ui: &mut egui::Ui, query: &mut String) -> Option<String> {
             })
             .collect()
     });
+    let custom: Vec<&chad_core::CustomEmoji> =
+        custom.iter().filter(|e| e.name.contains(&q)).collect();
     let mut picked = None;
     if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-        picked = list.first().map(|e| e.as_str().to_owned());
+        // A search that names a custom one means it.
+        picked = match custom.first().filter(|_| !q.is_empty()) {
+            Some(e) => Some(format!(":{}:", e.name)),
+            None => list.first().map(|e| e.as_str().to_owned()),
+        };
     }
     let rows = list.len().div_ceil(PER_ROW);
     let size = ui.text_style_height(&egui::TextStyle::Body) * 1.6;
+    let any_custom = !custom.is_empty();
+    if any_custom {
+        egui::ScrollArea::vertical()
+            .id_salt("custom")
+            .max_height(size * 3.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                    let cell = ui.available_width() / PER_ROW as f32;
+                    for e in custom {
+                        let code = format!(":{}:", e.name);
+                        let b = match media.emoji_image(ui, e, size * 0.75) {
+                            Some(img) => egui::Button::image(img),
+                            None => egui::Button::new(RichText::new(&e.name).small()).truncate(),
+                        };
+                        let r = ui
+                            .add_sized([cell, size], b.frame(false))
+                            .on_hover_text(&code);
+                        r.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, &code)
+                        });
+                        if r.clicked() {
+                            picked = Some(code);
+                        }
+                    }
+                });
+            });
+        ui.separator();
+    }
     egui::ScrollArea::vertical()
         .max_height(260.0)
         .auto_shrink([false, true])
@@ -67,7 +111,7 @@ pub fn picker(ui: &mut egui::Ui, query: &mut String) -> Option<String> {
                 });
             }
         });
-    if list.is_empty() {
+    if list.is_empty() && !any_custom {
         ui.label(RichText::new("No emoji found.").weak());
     }
     picked

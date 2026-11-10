@@ -46,6 +46,8 @@ final class Media {
         return c
     }()
     @ObservationIgnored private var previews: [String: Prev] = [:]
+    /// Custom emoji at the size text wants them, by "network url height".
+    @ObservationIgnored private var emoji: [String: UIImage] = [:]
     @ObservationIgnored private let monitor = NWPathMonitor()
 
     init() {
@@ -75,6 +77,25 @@ final class Media {
         images.setObject(Box(.loading), forKey: key, cost: 1)
         model.client.media(network: network, url: url)
         return .loading
+    }
+
+    /// A custom emoji's image `height` points tall, for a line of text, once
+    /// it has loaded. It's fetched whatever the media settings say: it comes
+    /// from the network itself. An animated one is its first frame, because
+    /// `Text` can't hold a view.
+    func emojiImage(network: String, url: String, height: CGFloat) -> UIImage? {
+        let key = "\(network) \(url) \(Int(height))"
+        if let i = emoji[key] { return i }
+        guard case let .ready(full)? = image(network: network, url: url, ask: true) else { return nil }
+        let still = full.images?.first ?? full
+        let h = max(1, height.rounded())
+        // A wide one keeps its shape, up to a point.
+        let w = min(h * 3, (still.size.width * h / max(still.size.height, 1)).rounded())
+        let size = CGSize(width: max(1, w), height: h)
+        let scaled = UIGraphicsImageRenderer(size: size).image { _ in still.draw(in: CGRect(origin: .zero, size: size)) }
+        if emoji.count >= 512 { emoji.removeAll() }
+        emoji[key] = scaled
+        return scaled
     }
 
     /// `nil` when it isn't loaded and `ask` is off.
@@ -396,7 +417,7 @@ struct EmojiGifPicker: View {
                 if tab == 1, let gifs {
                     GifTab(network: network, provider: gifs, onGif: onGif)
                 } else {
-                    EmojiTab(onEmoji: onEmoji)
+                    EmojiTab(network: network, onEmoji: onEmoji)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -406,11 +427,17 @@ struct EmojiGifPicker: View {
 }
 
 private struct EmojiTab: View {
+    @Environment(AppModel.self) private var model
+    let network: String
     let onEmoji: (String) -> Void
     @State private var query = ""
 
     var body: some View {
         let list = emojis(query: query)
+        // The network's own come first.
+        let _ = (model.tick, model.media.tick)
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let custom = model.client.customEmoji(network: network).filter { q.isEmpty || $0.name.contains(q) }
         VStack(spacing: 0) {
             TextField("Find an emoji", text: $query)
                 .textFieldStyle(.roundedBorder)
@@ -418,6 +445,19 @@ private struct EmojiTab: View {
                 .padding()
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 44))], spacing: 4) {
+                    ForEach(custom, id: \.name) { e in
+                        let code = ":\(e.name):"
+                        Button { onEmoji(code) } label: {
+                            if let i = model.media.emojiImage(network: network, url: e.url, height: 32) {
+                                Image(uiImage: i)
+                            } else {
+                                Text(e.name).font(.caption2).lineLimit(1)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .frame(width: 44, height: 44)
+                        .accessibilityLabel(code)
+                    }
                     ForEach(list, id: \.self) { e in
                         Button { onEmoji(e) } label: { Text(e).font(.title) }
                             .buttonStyle(.plain)
@@ -427,6 +467,8 @@ private struct EmojiTab: View {
                 .padding(.horizontal, 8)
             }
         }
+        // The set may have changed since we connected.
+        .task { model.client.refreshEmoji(network: network) }
     }
 }
 

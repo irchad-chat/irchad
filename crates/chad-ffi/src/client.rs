@@ -293,6 +293,12 @@ impl Client {
         );
     }
 
+    /// Asks for the network's custom emoji again, as when a picker opens;
+    /// `changed()` follows if the set did.
+    pub fn refresh_emoji(&self, network: String) {
+        self.net(network, NetCommand::Emoji);
+    }
+
     /// The network's soundboard: `Listener::sounds`.
     pub fn sounds(&self, network: String) {
         self.net(network, NetCommand::Sounds);
@@ -663,7 +669,7 @@ impl Client {
             .iter()
             .map(|m| {
                 let profile = n.profiles.get(&chad_core::view::key(&m.nick));
-                let spans = spans(&m.text, &m.mentions, |x| {
+                let spans = spans(&m.text, &m.mentions, &n.emoji, |x| {
                     chad_core::view::mention_name(&n.profiles, b.members.as_deref(), x).to_owned()
                 });
                 Message {
@@ -700,12 +706,44 @@ impl Client {
                         .reactions
                         .iter()
                         .map(|r| Reaction {
+                            image: chad_core::emoji::lookup(&r.emoji, &n.emoji)
+                                .map(|e| e.url.to_string()),
                             emoji: r.emoji.clone(),
                             nicks: r.nicks.clone(),
                         })
                         .collect(),
                     mentions: m.mentions.iter().map(|x| x.nick.clone()).collect(),
                 }
+            })
+            .collect()
+    }
+
+    /// A composer's text with each standard `:shortcode:` as its emoji, or
+    /// `None` when there's none to replace. The network's custom emoji stay
+    /// as typed.
+    pub fn replace_shortcodes(
+        &self,
+        network: String,
+        text: String,
+        cursor: u32,
+    ) -> Option<Shortcoded> {
+        let v = self.view();
+        let custom = v.net(&network).map_or(&[][..], |i| &v.nets[i].emoji);
+        crate::replace_shortcodes(text, cursor, custom)
+    }
+
+    /// The network's custom emoji, sorted by name.
+    pub fn custom_emoji(&self, network: String) -> Vec<CustomEmoji> {
+        let v = self.view();
+        let Some(i) = v.net(&network) else {
+            return Vec::new();
+        };
+        v.nets[i]
+            .emoji
+            .iter()
+            .map(|e| CustomEmoji {
+                name: e.name.clone(),
+                url: e.url.to_string(),
             })
             .collect()
     }
