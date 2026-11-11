@@ -54,6 +54,12 @@ jobs:
       - name: Tarball
         run: packaging/linux/tarball.sh
 
+      # UPDATE_SIGNING_KEY: the updater's zipsign private key, base64 (D76).
+      - name: Sign
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: packaging/sign.sh irchad-linux-x86_64.tar.gz
+
       - name: Upload asset
         run: |
           curl -fsS -X POST -H "Authorization: token ${{ github.token }}" -F "attachment=@irchad-linux-x86_64.tar.gz" \
@@ -109,6 +115,8 @@ jobs:
 
       - name: Installer and upload
         shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           # License notices for the installer (packaging/licenses.sh's Windows twin).
           cargo about --version 2>$null; if ($LASTEXITCODE) { cargo install --locked cargo-about@0.9.3 --features cli }
@@ -126,7 +134,13 @@ jobs:
           }
           $v = "${{ needs.release.outputs.version }}"
           makensis /DVERSION=$v "/DEXE=${env:CARGO_TARGET_DIR}\release\irchad.exe" packaging\windows\irchad.nsi
+          # The signed zip the in-app updater installs from (D76).
+          packaging\windows\update-zip.ps1 "${env:CARGO_TARGET_DIR}\release\irchad.exe" $v
+          if ($LASTEXITCODE) { exit 1 }
           $url = "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets"
+          curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
+            -F "attachment=@irchad-windows-x86_64.zip" "${url}?name=irchad-windows-x86_64.zip"
+          if ($LASTEXITCODE) { exit 1 }
           curl.exe -fsS -X POST -H "Authorization: token ${{ github.token }}" `
             -F "attachment=@packaging/windows/irchad-setup.exe" "${url}?name=irchad-windows-x86_64-setup.exe"
 

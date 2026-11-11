@@ -52,6 +52,7 @@ RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile mini
         --default-toolchain stable --component rustfmt,clippy \
     && rustc --version \
     && cargo install --locked cargo-about@0.9.3 --features cli \
+    && cargo install --locked zipsign@0.2.2 \
     && rm -rf $CARGO_HOME/registry
 
 # Android (Phase 6): JDK 21 for Gradle (8.14 can't run on 25), and the SDK

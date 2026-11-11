@@ -16,7 +16,9 @@
 5. **Build:** `.gitea/workflows/release.yml` builds everything into a draft release and publishes it once every job passes:
    - `irchad-linux-x86_64.tar.gz` (binary plus `install.sh`; the name is unversioned so `latest/` links work)
    - `irchad-windows-x86_64-setup.exe` (per-user, no admin)
+   - `irchad-windows-x86_64.zip` (`irchad.exe` for the in-app updater)
+   - the tarball and the zip are signed for the updater with `UPDATE_SIGNING_KEY` (D76); the job fails if the signature doesn't verify against `packaging/update.pub`
    - the image `git.gentoo.party/sam/chadd:<v>` and `:latest`
 
 The Flatpak job is disabled for now (`if: false`); re-enabling it needs the Linux act_runner to allow privileged job containers (flatpak-builder).
-Runner prerequisites: the Windows runner needs NSIS (or Chocolatey to install it), the repo needs a `REGISTRY_TOKEN` secret with package write access, and the Linux job container `192.0.2.7:3000/sam/irchad-ci` must exist (`ci-image.yml`, D32).
+Runner prerequisites: the Windows runner needs NSIS (or Chocolatey to install it), the repo needs a `REGISTRY_TOKEN` secret with package write access and an `UPDATE_SIGNING_KEY` secret (D76), and the Linux job container `192.0.2.7:3000/sam/irchad-ci` must exist (`ci-image.yml`, D32).
