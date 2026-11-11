@@ -153,9 +153,9 @@ pub struct App {
     /// The `chad/activity` we last sent everywhere (`None`: we leave it alone),
     /// and when.
     activity_sent: (Option<String>, Option<Instant>),
-    update: mpsc::Receiver<(String, String)>,
-    /// A newer release: (version, page).
-    new_version: Option<(String, String)>,
+    update: mpsc::Receiver<update::Status>,
+    /// A newer build, for the banner.
+    new_version: Option<update::Status>,
 }
 
 /// The emoji picker, for the composer or a reaction. The composer's has a
@@ -431,6 +431,7 @@ impl App {
         }
         voice.set_whisper_targets(settings.whisper_to.clone());
         let settings_check_updates = settings.check_updates;
+        let auto_update = settings.auto_update && update::blocker().is_none();
         let mut app = Self {
             core,
             events,
@@ -507,13 +508,12 @@ impl App {
             update: {
                 let (tx, rx) = mpsc::channel();
                 if settings_check_updates {
-                    let ctx = cc.egui_ctx.clone();
-                    tokio::spawn(async move {
-                        if let Some(r) = update::check().await {
-                            let _ = tx.send(r);
-                            ctx.request_repaint();
-                        }
-                    });
+                    tokio::spawn(update::run(
+                        auto_update,
+                        data_dir.join("update"),
+                        tx,
+                        cc.egui_ctx.clone(),
+                    ));
                 }
                 rx
             },

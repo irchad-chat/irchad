@@ -419,8 +419,8 @@ impl App {
                 Err(e) => self.toast(format!("{name}: {e}")),
             }
         }
-        if let Ok((version, url)) = self.update.try_recv() {
-            self.new_version = Some((version, url));
+        if let Ok(status) = self.update.try_recv() {
+            self.new_version = Some(status);
         }
         let input = ctx.input(|i| {
             i.raw.events.iter().any(|e| {

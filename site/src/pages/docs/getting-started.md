@@ -16,7 +16,8 @@ Downloads are on the [home page](/#download).
 | Android | Install the APK, or add it to Obtainium to get updates. See [Phones and tablets](/docs/mobile). |
 | iOS | Not released yet. |
 
-The desktop app tells you when a new version is out. It never downloads or installs anything itself. Turn the notice off in **Settings → General → Updates**.
+The desktop app tells you when a new version is out. If you installed it from the Linux tarball or the Windows installer, it downloads the new version in the background, checks that we signed it, and then offers **Restart to update**. Nothing changes until you click that.
+If your package manager installed IrChad, or the app can't replace its own file for some other reason, it only shows the notice, and you update it the usual way. You can turn either one off in **Settings → General → Updates**.
 
 ## 2. Get an invite link
 

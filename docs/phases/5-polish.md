@@ -28,6 +28,7 @@
 - [x] **Flatpak** first. Portals come naturally. Mind the manifest permissions: PipeWire socket, D-Bus names for SNI and notifications.
 - [x] AppImage or a plain tarball for non-Flatpak users.
 - [x] Windows installer (MSI via `cargo-wix` or NSIS) with scheme handler registration. Update checks, at least a notification.
+- [x] Self-update for the tarball and Windows installs: signed archives in CI, download, verify and "Restart to update" (D76, D77).
 - [x] Release CI (Gitea Actions on `git.gentoo.party`): tagged builds attach the Flatpak bundle and the Windows installer to a Gitea release, and push a chadd container image to the Gitea container registry.
 - [x] Pre-release checklist: run every `cargo fuzz` target (e.g. `crates/chad-irc/fuzz`) for a while before tagging. Fuzzing stays out of CI.
 - [x] Operator docs: "host your own network in 15 minutes" (compose, DNS, ports for LiveKit UDP/TURN, ergo admin basics).

@@ -505,9 +505,10 @@ impl App {
         self.verify_ui(ctx);
     }
 
-    /// A newer release is out: a green bar across the top until dismissed.
+    /// A newer build is out, or downloaded and ready: a green bar across the
+    /// top until dismissed.
     pub(super) fn update_banner(&mut self, ui: &mut egui::Ui) {
-        let Some((version, url)) = self.new_version.clone() else {
+        let Some(status) = self.new_version.clone() else {
             return;
         };
         // Catppuccin Mocha green and crust, like the logo, whatever the theme.
@@ -515,7 +516,7 @@ impl App {
             Color32::from_rgb(166, 227, 161),
             Color32::from_rgb(17, 17, 27),
         );
-        let mut close = false;
+        let (mut close, mut restart) = (false, false);
         egui::Panel::top("update")
             .resizable(false)
             .frame(egui::Frame::new().fill(green).inner_margin(vec2(12.0, 6.0)))
@@ -523,12 +524,24 @@ impl App {
                 ui.visuals_mut().override_text_color = Some(crust);
                 ui.visuals_mut().hyperlink_color = crust;
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("IrChad {version} is out."))
-                            .strong()
-                            .color(crust),
-                    );
-                    ui.hyperlink_to("Get it", url);
+                    match &status {
+                        update::Status::Out { version, page } => {
+                            ui.label(
+                                RichText::new(format!("IrChad {version} is out."))
+                                    .strong()
+                                    .color(crust),
+                            );
+                            ui.hyperlink_to("Get it", page);
+                        }
+                        update::Status::Ready { version, .. } => {
+                            ui.label(
+                                RichText::new(format!("IrChad {version} is ready."))
+                                    .strong()
+                                    .color(crust),
+                            );
+                            restart = ui.button("Restart to update").clicked();
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         close = ui.small_button(icons::X).tip("Dismiss").clicked();
                     });
@@ -536,6 +549,20 @@ impl App {
             });
         if close {
             self.new_version = None;
+        }
+        if restart && let update::Status::Ready { version, page, exe } = status {
+            match update::install(&exe) {
+                // `main` starts the new one once we're closed.
+                Ok(()) => {
+                    self.quitting = true;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                Err(e) => {
+                    tracing::warn!("couldn't install {version}: {e}");
+                    self.toast(format!("Couldn't update: {e}"));
+                    self.new_version = Some(update::Status::Out { version, page });
+                }
+            }
         }
     }
 

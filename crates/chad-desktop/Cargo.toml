@@ -21,6 +21,11 @@ jiff = "0.2.38"
 notify-rust = "4.18.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+# Updates (D76): signature check, unpacking and the swap. Downloads go
+# through reqwest above; `ureq` is only there because it won't build without
+# an HTTP client.
+self_update = { version = "1.3.3", default-features = false, features = ["ureq", "rustls", "signatures", "archive-tar", "compression-tar-gz", "archive-zip", "compression-zip-deflate"] }
+self-replace = "1.5"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -57,6 +62,10 @@ windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_Sy
 
 [dev-dependencies]
 egui_kittest = { version = "0.37.0", features = ["eframe", "wgpu"] }
+# Signed test archives for update.rs.
+flate2 = "1.1"
+tar = "0.4"
+zipsign-api = { version = "0.2.2", default-features = false, features = ["sign-tar"] }
 egui_system_font_provider = "0.37.0"
 livekit.workspace = true
 livekit-api.workspace = true

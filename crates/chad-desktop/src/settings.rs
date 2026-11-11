@@ -43,6 +43,9 @@ pub struct Settings {
     /// Away by choice, on every network.
     pub away: bool,
     pub check_updates: bool,
+    /// Download a newer build and offer to restart into it, where IrChad
+    /// can replace itself (`update::blocker`, D76).
+    pub auto_update: bool,
     /// Opening a channel splits the window instead of replacing the one on screen.
     pub panes: bool,
     /// Where a watched screen share goes.
@@ -83,6 +86,7 @@ impl Default for Settings {
             away_after: 10,
             away: false,
             check_updates: true,
+            auto_update: true,
             panes: true,
             stage: Layout::default(),
             tray_on_close: true,
@@ -276,6 +280,17 @@ impl Settings {
 
                     ui.label("Updates");
                     ui.checkbox(&mut self.check_updates, "Tell me when a new version is out");
+                    ui.end_row();
+                    ui.label("");
+                    let blocker = crate::update::blocker();
+                    ui.add_enabled(
+                        self.check_updates && blocker.is_none(),
+                        egui::Checkbox::new(
+                            &mut self.auto_update,
+                            "Download it, then offer to restart into it",
+                        ),
+                    )
+                    .on_disabled_hover_text(blocker.unwrap_or("Needs the option above."));
                     ui.end_row();
                 }
                 #[cfg(windows)]

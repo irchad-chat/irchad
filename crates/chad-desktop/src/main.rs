@@ -77,7 +77,7 @@ fn main() -> eframe::Result {
         wgpu_options: see_through_dx12(),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "IrChad",
         options,
         Box::new(move |cc| {
@@ -100,7 +100,18 @@ fn main() -> eframe::Result {
                 cc, core, events, os_rx, tray, open, voice, &data_dir,
             )))
         }),
-    )
+    );
+    // "Restart to update": let go of the single-instance name (or pipe) and
+    // everything on the runtime first, or the new one hands over to us.
+    if update::installed() {
+        // Holds the D-Bus name on Linux; the pipe on Windows is on the runtime.
+        #[allow(clippy::drop_non_drop)]
+        drop(_instance);
+        drop(_guard);
+        rt.shutdown_timeout(std::time::Duration::from_secs(3));
+        update::relaunch();
+    }
+    result
 }
 
 /// DX12 presenting through DirectComposition, the only way its windows can
