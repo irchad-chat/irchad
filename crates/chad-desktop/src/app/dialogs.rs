@@ -523,7 +523,11 @@ impl App {
                 ui.visuals_mut().override_text_color = Some(crust);
                 ui.visuals_mut().hyperlink_color = crust;
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("IrChad {version} is out.")).strong().color(crust));
+                    ui.label(
+                        RichText::new(format!("IrChad {version} is out."))
+                            .strong()
+                            .color(crust),
+                    );
                     ui.hyperlink_to("Get it", url);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         close = ui.small_button(icons::X).tip("Dismiss").clicked();
