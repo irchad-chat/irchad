@@ -468,15 +468,21 @@ impl App {
                     });
                     ui.separator();
                     ui.vertical(|ui| {
-                        // Fixed, so switching pages doesn't resize the window.
-                        ui.set_min_size(egui::vec2(560.0, 420.0));
+                        // Fixed, so switching pages doesn't resize the window:
+                        // as tall as the screen comfortably allows.
+                        let height = (ctx.content_rect().height() - 200.0).clamp(420.0, 560.0);
                         ui.set_max_width(560.0);
                         let section = self.settings_section;
                         ui.heading(section.name());
                         ui.add_space(4.0);
                         egui::ScrollArea::vertical()
-                            .max_height(420.0)
-                            .show(ui, |ui| self.settings_page(ctx, ui, section));
+                            .min_scrolled_height(height)
+                            .max_height(height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                self.settings_page(ctx, ui, section);
+                            });
                     });
                 });
             });

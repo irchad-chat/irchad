@@ -70,7 +70,12 @@ pub fn find<'a>(text: &'a str, name: &str) -> impl Iterator<Item = Range<usize>>
             .match_indices(&name)
             .map(|(i, _)| i)
             .filter(|&i| {
-                !word(lower[..i].chars().next_back()) && !word(lower[i + len..].chars().next())
+                let (before, after) = (
+                    lower[..i].chars().next_back(),
+                    lower[i + len..].chars().next(),
+                );
+                // `:name:` is an emoji shortcode, not a mention.
+                !word(before) && !word(after) && !(before == Some(':') && after == Some(':'))
             })
             .collect()
     };
@@ -134,6 +139,14 @@ mod tests {
         assert_eq!(decode(&many, "x").len(), 1);
         let long = format!("{} a", "b".repeat(65));
         assert_eq!(decode(&long, &"b".repeat(65)), []);
+    }
+
+    #[test]
+    fn shortcodes_are_not_mentions() {
+        assert_eq!(find("lol :poops: ok", "poops").count(), 0);
+        assert_eq!(find(":poops:", "poops").count(), 0);
+        assert_eq!(find("poops: hi", "poops").count(), 1);
+        assert_eq!(find("hi :poops", "poops").count(), 1);
     }
 
     #[test]
