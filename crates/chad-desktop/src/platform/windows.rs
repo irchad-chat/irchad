@@ -258,8 +258,10 @@ fn notify(hwnd: HWND, msg: NOTIFY_ICON_MESSAGE) {
     let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.clamp(16, 256) as usize;
     // ARGB → BGRA, the byte order of a 32-bit DIB.
     let bgra: Vec<u8> = super::tray_icon(size, unread, mentions > 0)
-        .chunks_exact(4)
-        .flat_map(|p| [p[3], p[2], p[1], p[0]])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|&[a, r, g, b]| [b, g, r, a])
         .collect();
     // AND mask rows are WORD aligned; all zero since alpha does the masking.
     let mask = vec![0u8; size.div_ceil(16) * 2 * size];
