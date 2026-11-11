@@ -523,6 +523,17 @@ impl App {
             .show(ui, |ui| {
                 ui.visuals_mut().override_text_color = Some(crust);
                 ui.visuals_mut().hyperlink_color = crust;
+                // Buttons in darker greens, not the theme's (dark in dark themes).
+                let w = &mut ui.visuals_mut().widgets;
+                for (v, fill) in [
+                    (&mut w.inactive, Color32::from_rgb(140, 200, 135)),
+                    (&mut w.hovered, Color32::from_rgb(120, 180, 115)),
+                    (&mut w.active, Color32::from_rgb(100, 160, 95)),
+                ] {
+                    v.weak_bg_fill = fill;
+                    v.bg_fill = fill;
+                    v.bg_stroke.color = crust.gamma_multiply(0.4);
+                }
                 ui.horizontal(|ui| {
                     match &status {
                         update::Status::Out { version, page } => {
