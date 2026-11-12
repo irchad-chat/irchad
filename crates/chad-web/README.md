@@ -9,6 +9,7 @@ This crate is only the browser's driver:
 - `src/api.rs`: chadd through chad-core's `chadd` client (D79): `upload`, `preview`, `media`, `gifs` return Promises. Custom emoji and D69 tombstones are fetched on every connect.
 - `src/irc.rs`: the browser's WebSocket, standing in for `chad_irc::ws::Connection`.
 - `src/timer.rs`: `setTimeout`, for keepalive and reconnects.
+- `src/voice.rs`: `joinVoice` (chad-core's checks, then chadd's LiveKit token), `voiceConnected`, `leaveVoice`. The room itself is `web/src/stores/voice.ts` with `livekit-client` (D80).
 
 Socket and timer callbacks never do the work themselves: they queue it with `spawn_local`, because the work may drop the socket or timer whose closure is still running.
 
@@ -45,6 +46,6 @@ On native targets this crate compiles to nothing.
 - **Cache**: none, by choice. `Store::memory()`, so each page load replays history from chathistory.
 - **Saved password**: none, there's no keyring. A chadd session token is the likely answer.
 - **E2EE DMs**: needs a pickle key, which needs somewhere to keep it (the same question).
-- **Voice, soundboard, games, avatars and display names**: chadd's client is here now, so these are UI work (voice via `livekit-client`).
+- **Publishing a screen or camera, soundboard, whisper, games, avatars and display names**: chadd's client is here now, so these are UI work.
 - **`/me`**: chad-core has no way to send an action yet.
 - **Several networks**: one `Client` is one network.

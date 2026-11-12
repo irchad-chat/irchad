@@ -23,6 +23,8 @@ export const useClient = defineStore('client', () => {
   const buffers = shallowRef<Buffer[]>([])
   const messages = shallowRef<Msg[]>([])
   const members = shallowRef<Member[] | null>(null)
+  // The voice call's channel's members, to name who's in the call.
+  const callMembers = shallowRef<Member[] | null>(null)
   const emoji = shallowRef<CustomEmoji[]>([])
   const selected = ref<string>()
   const error = ref<string>()
@@ -63,11 +65,9 @@ export const useClient = defineStore('client', () => {
     // Member lists go with the connection; ask again once back.
     if (!connected.value) asked.clear()
     const b = buffer.value
-    members.value = b?.kind === 'channel' ? client.members(b.target) : null
-    if (b?.kind === 'channel' && connected.value && members.value === null && !asked.has(b.target)) {
-      asked.add(b.target)
-      client.fetchMembers(b.target)
-    }
+    members.value = b?.kind === 'channel' ? membersOf(b.target) : null
+    const call = state.value.call?.channel
+    callMembers.value = call ? membersOf(call) : null
 
     const key = `${b?.target}:${b?.unread}`
     if (b?.unread && document.hasFocus() && key !== marked) {
@@ -80,6 +80,16 @@ export const useClient = defineStore('client', () => {
     // Typing indicators expire on their own; look again while any are up.
     clearTimeout(typingTimer)
     if (buffers.value.some((b) => b.typing.length)) typingTimer = setTimeout(refresh, 3000)
+  }
+
+  // A channel's members, asking for them once per connection if not there yet.
+  function membersOf(channel: string): Member[] | null {
+    const m = client.members(channel)
+    if (m === null && connected.value && !asked.has(channel)) {
+      asked.add(channel)
+      client.fetchMembers(channel)
+    }
+    return m
   }
 
   function notify(text: string) {
@@ -146,6 +156,10 @@ export const useClient = defineStore('client', () => {
   const nicks = (query: string) => (selected.value ? client.nicks(selected.value, query) : [])
   const replaceShortcodes = (text: string, cursor: number) => client.replaceShortcodes(text, cursor)
   const refreshEmoji = () => client.refreshEmoji()
+  // Voice: the call runs in stores/voice.ts; chad-core only hears how it went.
+  const joinVoice = (channel: string) => client.joinVoice(channel)
+  const voiceConnected = () => client.voiceConnected()
+  const leaveVoice = (error: string | null) => client.leaveVoice(error)
 
   async function upload(file: File) {
     const target = selected.value
@@ -203,6 +217,7 @@ export const useClient = defineStore('client', () => {
     buffer,
     messages,
     members,
+    callMembers,
     emoji,
     selected,
     error,
@@ -230,6 +245,9 @@ export const useClient = defineStore('client', () => {
     nicks,
     replaceShortcodes,
     refreshEmoji,
+    joinVoice,
+    voiceConnected,
+    leaveVoice,
     upload,
     gifs,
     mediaUrl,

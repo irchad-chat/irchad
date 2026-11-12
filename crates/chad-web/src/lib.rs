@@ -8,6 +8,7 @@ mod client;
 mod irc;
 mod snapshot;
 mod timer;
+mod voice;
 
 use wasm_bindgen::prelude::*;
 

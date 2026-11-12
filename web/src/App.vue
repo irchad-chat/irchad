@@ -8,6 +8,7 @@ import MessageList from './components/MessageList.vue'
 import Composer from './components/Composer.vue'
 import MemberList from './components/MemberList.vue'
 import Toasts from './components/Toasts.vue'
+import Stage from './components/Stage.vue'
 
 const client = useClient()
 const showMembers = ref(true)
@@ -22,6 +23,7 @@ const showMembers = ref(true)
       <p v-if="client.state && client.state.state !== 'connected'" class="banner small">
         {{ client.state.error ? `${client.state.error} ` : '' }}Reconnecting…
       </p>
+      <Stage />
       <MessageList />
       <Composer />
     </main>
@@ -42,6 +44,8 @@ const showMembers = ref(true)
   --ok: #a6e3a1;
   --warn: #f9e2af;
   --err: #f38ba8;
+  /* The sidebar and chat headers, so their borders line up. */
+  --header-height: 52px;
   color-scheme: dark;
 }
 html,

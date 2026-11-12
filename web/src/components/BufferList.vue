@@ -1,11 +1,14 @@
 <!-- Channels and DMs, joining or messaging someone, and who we are. -->
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { Buffer } from '../wasm/chad_web'
 import { useClient } from '../stores/client'
 import SignUpDialog from './SignUpDialog.vue'
+import VoiceMembers from './VoiceMembers.vue'
+import VoiceBar from './VoiceBar.vue'
+import { useVoice } from '../stores/voice'
 
 const client = useClient()
+const voice = useVoice()
 const opening = ref('')
 const signingUp = ref(false)
 const channels = computed(() => client.buffers.filter((b) => b.kind !== 'dm'))
@@ -14,11 +17,6 @@ const dms = computed(() => client.buffers.filter((b) => b.kind === 'dm'))
 function open() {
   if (!opening.value.trim()) return
   if (client.open(opening.value)) opening.value = ''
-}
-
-function close(b: Buffer) {
-  if (b.kind === 'channel' && !confirm(`Leave ${b.target}?`)) return
-  client.close(b)
 }
 
 const toggleAway = () => client.setAway(client.away ? null : 'Away')
@@ -40,7 +38,8 @@ const status = computed(() => {
     <div class="list">
       <template v-for="group in [channels, dms]" :key="group === dms ? 'dms' : 'channels'">
         <h3 v-if="group.length" class="dim small">{{ group === dms ? 'Direct messages' : 'Channels' }}</h3>
-        <div v-for="b in group" :key="b.target" class="buf" :class="{ on: b.target === client.selected, unread: b.unread }">
+        <template v-for="b in group" :key="b.target">
+        <div class="buf" :class="{ on: b.target === client.selected, unread: b.unread }">
           <button class="name" :title="b.topic" @click="client.select(b.target)">
             <span v-if="b.kind === 'dm'" class="dot" :class="{ online: b.online, away: b.away }" />
             <span v-else class="dim">#</span>
@@ -48,21 +47,34 @@ const status = computed(() => {
             <span v-if="b.mentions" class="badge">{{ b.mentions }}</span>
           </button>
           <button
-            v-if="b.kind !== 'server'"
+            v-if="b.voice && !client.state?.guest && voice.call?.channel !== b.target"
+            class="join"
+            title="Join voice"
+            :aria-label="`Join voice in ${b.target}`"
+            :disabled="!client.connected"
+            @click="voice.join(b.target)"
+          >
+            <i class="ph ph-speaker-high" />
+          </button>
+          <button
+            v-if="b.kind === 'dm'"
             class="x"
-            :title="b.kind === 'channel' ? 'Leave' : 'Close'"
-            :aria-label="`${b.kind === 'channel' ? 'Leave' : 'Close'} ${b.target}`"
-            @click="close(b)"
+            title="Close"
+            :aria-label="`Close ${b.target}`"
+            @click="client.close(b)"
           >
             <i class="ph ph-x" />
           </button>
         </div>
+        <VoiceMembers v-if="b.kind === 'channel'" :buffer="b" />
+        </template>
       </template>
     </div>
     <form @submit.prevent="open">
       <input v-model="opening" aria-label="Join a channel or message someone" placeholder="#channel or nick" />
     </form>
     <p v-if="client.error" class="err small">{{ client.error }}</p>
+    <VoiceBar />
     <footer>
       <div class="me">
         <b class="ellipsis">{{ client.state?.nick }}</b>
@@ -87,7 +99,11 @@ const status = computed(() => {
   min-height: 0;
 }
 header {
-  padding: 14px 16px;
+  box-sizing: border-box;
+  height: var(--header-height);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
   border-bottom: 1px solid var(--border);
 }
 .list {
@@ -123,6 +139,10 @@ h3 {
   align-items: center;
   gap: 6px;
   text-align: left;
+  background: none;
+  border: none;
+}
+.join {
   background: none;
   border: none;
 }

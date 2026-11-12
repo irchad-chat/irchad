@@ -26,6 +26,8 @@ export type NetState = {
   uploads: number | null;
   /** Who GIF search comes from, if the network has it. */
   gifs: string | null;
+  /** Our voice call: joining, then in. */
+  call: { channel: string; connected: boolean } | null;
 };
 export type Buffer = {
   target: string; kind: "channel" | "dm" | "server"; topic: string; unread: number; mentions: number;
@@ -36,7 +38,12 @@ export type Buffer = {
   historyStart: boolean;
   /** DMs: the msgid of ours to show "Seen" under (D68). */
   seen: string | null;
+  /** Channels: voice is on here. */
+  voice: boolean;
+  /** Channels: nicks in its voice room, per `chad/voice`. */
+  inVoice: string[];
 };
+export type VoiceJoin = { url: string; token: string };
 export type Reaction = { emoji: string; image: string | null; nicks: string[]; own: boolean };
 export type Link = { url: string; kind: "image" | "video" | "file" | "page" };
 export type Msg = {
@@ -75,6 +82,13 @@ struct State<'a> {
     guest: bool,
     uploads: Option<u64>,
     gifs: Option<&'a str>,
+    call: Option<Call<'a>>,
+}
+
+#[derive(Serialize)]
+struct Call<'a> {
+    channel: &'a str,
+    connected: bool,
 }
 
 #[derive(Serialize)]
@@ -90,6 +104,8 @@ struct Buffer<'a> {
     away: bool,
     history_start: bool,
     seen: Option<&'a str>,
+    voice: bool,
+    in_voice: &'a [String],
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -222,6 +238,10 @@ impl Client {
             guest: info.guest,
             uploads: info.uploads,
             gifs: info.gifs.as_deref(),
+            call: i.net.voice.as_ref().map(|v| Call {
+                channel: &v.channel,
+                connected: v.connected,
+            }),
         })
     }
 
@@ -249,6 +269,8 @@ impl Client {
                 away: b.info.away,
                 history_start: b.history_start,
                 seen: b.seen().and_then(|s| b.msgs[s].msgid.as_deref()),
+                voice: b.info.voice,
+                in_voice: &b.voice,
             })
             .collect();
         to_js(&list)
