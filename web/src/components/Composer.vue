@@ -1,5 +1,5 @@
-<!-- Writing a message: @ completion, :shortcodes:, replies and edits, slash
-     commands, uploads (button, paste, drop), emoji and GIFs. -->
+<!-- Writing a message: @ completion, :shortcodes:, replies and edits,
+     uploads (button, paste, drop), emoji and GIFs. -->
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { Nick } from '../wasm/chad_web'
@@ -151,55 +151,13 @@ function submit() {
   if (client.editing) {
     // Emptied out: that's a delete, which `Delete` already does with a confirm.
     if (text && text !== client.editing.text) client.edit(client.editing, text, mentions)
-  } else if (text.startsWith('/') && !text.startsWith('//')) {
-    if (!command(text)) return
   } else {
-    client.send(text.replace(/^\/\//, '/'), client.replying?.msgid ?? null, mentions)
+    client.send(text, client.replying?.msgid ?? null, mentions)
   }
   draft.value = ''
   mentions = []
   client.replying = client.editing = null
   client.typing(false)
-}
-
-const HELP =
-  '/join #channel · /msg nick [text] · /part [#channel] · /away [reason] · /back · //text sends “/text”'
-
-// A slash command; false keeps the draft (it didn't work).
-function command(text: string): boolean {
-  const [, name, rest = ''] = /^\/(\S+)\s*([\s\S]*)$/.exec(text) ?? []
-  const arg = rest.trim()
-  switch (name?.toLowerCase()) {
-    case 'join':
-    case 'j':
-      return !!arg && client.open(arg)
-    case 'msg':
-    case 'query': {
-      const [, nick, body] = /^(\S+)\s*([\s\S]*)$/.exec(arg) ?? []
-      if (!nick || !client.open(nick)) return false
-      if (body?.trim()) client.sendTo(nick, body.trim())
-      return true
-    }
-    case 'part':
-    case 'leave':
-    case 'close': {
-      const b = arg ? client.buffers.find((x) => x.target.toLowerCase() === arg.toLowerCase()) : client.buffer
-      if (b) client.close(b)
-      return !!b
-    }
-    case 'away':
-      client.setAway(arg || 'Away')
-      return true
-    case 'back':
-      client.setAway(null)
-      return true
-    case 'help':
-      client.notify(HELP)
-      return true
-    default:
-      client.notify(`There's no /${name}. ${HELP}`)
-      return false
-  }
 }
 
 function upload(files: FileList | null | undefined) {
@@ -232,7 +190,7 @@ function gif(url: string) {
       <span v-else
         >Replying to <b>{{ client.replying!.shown }}</b></span
       >
-      <button class="link" aria-label="Cancel" @click="cancel">✕</button>
+      <button class="link" aria-label="Cancel" @click="cancel"><i class="ph ph-x" /></button>
     </div>
     <ul v-if="suggestions.length" class="suggest" role="listbox">
       <li
@@ -247,7 +205,7 @@ function gif(url: string) {
       </li>
     </ul>
     <div class="bar">
-      <button v-if="canUpload" title="Upload a file" aria-label="Upload a file" @click="file?.click()">＋</button>
+      <button v-if="canUpload" title="Upload a file" aria-label="Upload a file" @click="file?.click()"><i class="ph ph-paperclip" /></button>
       <input ref="file" type="file" multiple hidden @change="upload(file?.files); file!.value = ''" />
       <textarea
         ref="box"
@@ -273,7 +231,7 @@ function gif(url: string) {
           GIF
         </button>
         <button title="Emoji" aria-label="Emoji" :disabled="!enabled" @click="picker = picker === 'emoji' ? null : 'emoji'">
-          🙂
+          <i class="ph ph-smiley" />
         </button>
         <EmojiPicker v-if="picker === 'emoji'" @pick="insert" @close="picker = null" />
         <GifPicker v-if="picker === 'gif'" @pick="gif" @close="picker = null" />
@@ -308,6 +266,10 @@ function gif(url: string) {
   border: none;
   min-width: 36px;
   height: 36px;
+}
+.bar .ph {
+  font-size: 18px;
+  vertical-align: middle;
 }
 textarea {
   flex: 1;

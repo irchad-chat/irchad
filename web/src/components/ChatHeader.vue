@@ -21,7 +21,7 @@ const client = useClient()
       aria-label="Members"
       @click="emit('toggleMembers')"
     >
-      👥
+      <i class="ph ph-users" />
     </button>
   </header>
 </template>

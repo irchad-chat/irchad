@@ -122,7 +122,6 @@ export const useClient = defineStore('client', () => {
 
   const send = (text: string, replyTo: string | null, mentions: string[]) =>
     selected.value && client.send(selected.value, text, replyTo, mentions)
-  const sendTo = (target: string, text: string) => client.send(target, text, null, [])
   const edit = (m: Msg, text: string, mentions: string[]) =>
     selected.value && m.msgid && client.edit(selected.value, m.msgid, text, mentions)
   const redact = (m: Msg) => selected.value && m.msgid && client.redact(selected.value, m.msgid)
@@ -132,6 +131,7 @@ export const useClient = defineStore('client', () => {
     if (own) client.unreact(selected.value, m.msgid, emoji)
     else client.react(selected.value, m.msgid, emoji)
   }
+  const block = (nick: string, account: string | null) => client.block(nick, account)
   const typing = (active: boolean) => selected.value && client.typing(selected.value, active)
   const loadOlder = () => selected.value && client.loadOlder(selected.value)
   const loadAround = (msgid: string) => selected.value && client.loadAround(selected.value, msgid)
@@ -219,10 +219,10 @@ export const useClient = defineStore('client', () => {
     select,
     close,
     send,
-    sendTo,
     edit,
     redact,
     react,
+    block,
     typing,
     loadOlder,
     loadAround,

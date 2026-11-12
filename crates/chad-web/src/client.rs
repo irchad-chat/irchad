@@ -262,6 +262,11 @@ impl Client {
         self.cmd(NetCommand::Redact { target, msgid });
     }
 
+    /// Hide everything from someone, on this device only.
+    pub fn block(&self, nick: String, account: Option<String>) {
+        self.cmd(NetCommand::Block { nick, account });
+    }
+
     /// The composer holds text (`true`) or was emptied or sent. The core
     /// throttles what goes out.
     pub fn typing(&self, target: String, active: bool) {

@@ -9,12 +9,12 @@ import Spans from './Spans.vue'
 import Embeds from './Embeds.vue'
 import MediaImg from './MediaImg.vue'
 import EmojiPicker from './EmojiPicker.vue'
+import Avatar from './Avatar.vue'
 
 const props = defineProps<{ msg: Msg; continued: boolean; parent?: Msg; seen: boolean }>()
 const emit = defineEmits<{ reply: []; edit: []; jump: [msgid: string] }>()
 const client = useClient()
 const picking = ref(false)
-const avatarFailed = ref(false)
 
 const m = computed(() => props.msg)
 const canAct = computed(() => !!m.value.msgid && !m.value.redacted && client.connected)
@@ -41,20 +41,17 @@ function remove() {
       :title="parent ? 'Jump to the message' : 'Load the message'"
       @click="emit('jump', m.replyTo)"
     >
-      ↪
+      <i class="ph ph-arrow-bend-down-right" />
       <template v-if="parent">
         <b :style="{ color: nickColor(parent.nick) }">{{ parent.shown }}</b>
         {{ parent.redacted ? 'deleted message' : snippet(parent.text) }}
       </template>
-      <i v-else>a message from earlier</i>
+      <i v-else>Earlier message</i>
     </button>
     <div class="row">
       <div class="gutter">
         <template v-if="!continued">
-          <MediaImg v-if="m.avatar && !avatarFailed" class="avatar" :url="m.avatar" @failed="avatarFailed = true" />
-          <div v-else class="avatar letter" :style="{ background: nickColor(m.nick) }">
-            {{ m.shown.slice(0, 1).toUpperCase() }}
-          </div>
+          <Avatar :nick="m.nick" :shown="m.shown" :url="m.avatar" :size="40" />
         </template>
         <span v-else class="hover-time dim">{{ time(m.time) }}</span>
       </div>
@@ -90,14 +87,14 @@ function remove() {
             {{ r.nicks.length }}
           </button>
         </div>
-        <div v-if="seen" class="dim small">Seen</div>
+        <div v-if="seen" class="dim small"><i class="ph ph-eye" /> Seen</div>
       </div>
     </div>
     <div v-if="canAct" class="actions" :class="{ open: picking }">
-      <button title="React" aria-label="React" @click="picking = !picking">🙂</button>
-      <button title="Reply" aria-label="Reply" @click="emit('reply')">↩</button>
-      <button v-if="m.own" title="Edit" aria-label="Edit" @click="emit('edit')">✏️</button>
-      <button v-if="m.own" title="Delete" aria-label="Delete" @click="remove">🗑</button>
+      <button title="React" aria-label="React" @click="picking = !picking"><i class="ph ph-smiley" /></button>
+      <button title="Reply" aria-label="Reply" @click="emit('reply')"><i class="ph ph-arrow-bend-up-left" /></button>
+      <button v-if="m.own" title="Edit" aria-label="Edit" @click="emit('edit')"><i class="ph ph-pencil-simple" /></button>
+      <button v-if="m.own" title="Delete" aria-label="Delete" @click="remove"><i class="ph ph-trash" /></button>
       <EmojiPicker v-if="picking" below @pick="react" @close="picking = false" />
     </div>
   </div>
@@ -133,18 +130,6 @@ function remove() {
   width: 40px;
   flex: none;
   text-align: right;
-}
-.avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-.letter {
-  display: grid;
-  place-items: center;
-  color: var(--bg);
-  font-weight: bold;
 }
 .hover-time {
   visibility: hidden;

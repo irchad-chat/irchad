@@ -3,6 +3,7 @@
 
 {$IRCHAD_HOST} {
 	handle /.well-known/irchad.json {
+		header Access-Control-Allow-Origin *
 		reverse_proxy 127.0.0.1:8080
 	}
 	handle /invite* {
@@ -10,6 +11,14 @@
 	}
 	handle /api/* {
 		# Uploads are capped by chadd's uploads.max_bytes.
+		# chadd takes bearer tokens, never cookies, so any page may call it:
+		# the web client in dev (Vite's origin) or served from elsewhere.
+		header Access-Control-Allow-Origin *
+		header Access-Control-Allow-Headers "Authorization, Content-Type, Content-Disposition, If-None-Match"
+		header Access-Control-Expose-Headers ETag
+		header Access-Control-Max-Age 86400
+		@preflight method OPTIONS
+		respond @preflight 204
 		reverse_proxy 127.0.0.1:8080
 	}
 	handle /uploads/* {

@@ -51,7 +51,12 @@ export type Msg = {
   /** The nicks it @-mentions (D66), to pass back when editing it. */
   mentions: string[];
 };
-export type Member = { nick: string; shown: string; prefix: string; away: boolean; oper: boolean; account: string | null };
+export type Member = {
+  nick: string; shown: string; prefix: string; away: boolean; oper: boolean; account: string | null;
+  avatar: string | null;
+  /** Their `chad/activity` ("Playing Celeste"). */
+  activity: string | null;
+};
 export type Nick = { nick: string; shown: string };
 export type CustomEmoji = { name: string; url: string };
 export type Emoji = { emoji: string; name: string };
@@ -168,6 +173,8 @@ struct Member<'a> {
     away: bool,
     oper: bool,
     account: Option<&'a str>,
+    avatar: Option<String>,
+    activity: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -329,13 +336,18 @@ impl Client {
         let n = &v.nets[ni];
         let list: Vec<_> = ms
             .iter()
-            .map(|m| Member {
-                nick: &m.nick,
-                shown: n.shown(&m.nick),
-                prefix: &m.prefix,
-                away: m.away,
-                oper: m.oper,
-                account: m.account.as_deref(),
+            .map(|m| {
+                let p = n.profiles.get(&view::key(&m.nick));
+                Member {
+                    nick: &m.nick,
+                    shown: n.shown(&m.nick),
+                    prefix: &m.prefix,
+                    away: m.away,
+                    oper: m.oper,
+                    account: m.account.as_deref(),
+                    avatar: p.and_then(|p| p.avatar.as_ref()).map(ToString::to_string),
+                    activity: p.and_then(|p| p.activity.as_deref()),
+                }
             })
             .collect();
         to_js(&list)

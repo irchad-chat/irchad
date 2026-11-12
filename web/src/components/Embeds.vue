@@ -35,7 +35,7 @@ const fail = (url: string) => (failed.value = new Set(failed.value).add(url))
         <MediaImg class="embed-img" :url="l.url" @failed="fail(l.url)" />
       </a>
       <video v-else-if="l.kind === 'video'" class="embed-img" :src="l.url" controls preload="metadata" />
-      <a v-else class="file" :href="l.url" target="_blank" rel="noopener noreferrer" download>📄 {{ fileName(l.url) }}</a>
+      <a v-else class="file" :href="l.url" target="_blank" rel="noopener noreferrer" download><i class="ph ph-file" /> {{ fileName(l.url) }}</a>
     </template>
     <a v-if="card && page" class="card" :href="page.url" target="_blank" rel="noopener noreferrer">
       <div>

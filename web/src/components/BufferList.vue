@@ -54,7 +54,7 @@ const status = computed(() => {
             :aria-label="`${b.kind === 'channel' ? 'Leave' : 'Close'} ${b.target}`"
             @click="close(b)"
           >
-            ✕
+            <i class="ph ph-x" />
           </button>
         </div>
       </template>

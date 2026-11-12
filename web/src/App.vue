@@ -138,6 +138,9 @@ dialog::backdrop {
   vertical-align: middle;
   object-fit: contain;
 }
+.ph {
+  vertical-align: -0.125em;
+}
 .mention {
   background: #89b4fa33;
   color: var(--accent);
