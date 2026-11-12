@@ -5,13 +5,18 @@
 //! Networks are keyed by origin (`https://chat.example.com`); buffers by name
 //! as the server spells it, compared under the network's casemapping.
 
+// The IO half (sockets, HTTP, the tokio task) isn't ported to the browser yet; chad-web drives `Net` itself.
+#[cfg(not(target_arch = "wasm32"))]
 mod chadd;
 pub mod complete;
+#[cfg(not(target_arch = "wasm32"))]
 mod conn;
 mod discovery;
 pub mod emoji;
 pub mod format;
 pub mod invite;
+pub mod login;
+#[cfg(not(target_arch = "wasm32"))]
 mod manager;
 pub mod mention;
 mod net;
@@ -36,9 +41,14 @@ pub struct GameList {
     pub games: Vec<Game>,
     pub etag: Option<String>,
 }
+#[cfg(not(target_arch = "wasm32"))]
 pub use discovery::fetch_icon;
+pub use discovery::parse as parse_discovery;
 pub use emoji::CustomEmoji;
+#[cfg(not(target_arch = "wasm32"))]
 pub use manager::start;
+pub use net::Net;
+pub use store::Store;
 
 /// File or image bytes; `Debug` shows only the length, so logging a command
 /// never dumps a file.

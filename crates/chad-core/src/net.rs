@@ -3,13 +3,14 @@
 //! `conn` does the I/O, registration and reconnects around it.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chad_irc::Message;
 use chad_irc::batch::{Assembler, Batch, Item, Overflow};
 use chad_irc::cap::{Negotiator, WANTED};
 use chad_irc::isupport::{Casemapping, Isupport};
 use chad_irc::label::Labels;
+use web_time::Instant;
 
 use crate::store::{Store, StoredBuffer};
 use crate::view::Profile;
@@ -33,6 +34,8 @@ use url::Url;
 /// Messages per CHATHISTORY request (ergo allows 1000).
 const PAGE: u32 = 100;
 /// Store meta: where we are in chadd's `redacted` log (D69).
+// shortcut: the web has no chadd client yet, so no D69 tombstones; drop once it has.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) const REDACTED_CURSOR: &str = "redacted_cursor";
 /// `CHATHISTORY AFTER` pages per buffer when filling a gap on reconnect.
 const MAX_GAP_PAGES: u8 = 10;

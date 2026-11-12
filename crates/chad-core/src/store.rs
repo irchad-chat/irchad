@@ -96,9 +96,9 @@ impl Store {
         Self::init(Connection::open(path)?)
     }
 
-    #[cfg(test)]
-    pub fn memory() -> Self {
-        Self::init(Connection::open_in_memory().unwrap()).unwrap()
+    /// Nothing on disk: tests, and the browser (for now).
+    pub fn memory() -> rusqlite::Result<Self> {
+        Self::init(Connection::open_in_memory()?)
     }
 
     fn init(db: Connection) -> rusqlite::Result<Self> {
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn messages_dedupe_count_and_react() {
-        let s = Store::memory();
+        let s = Store::memory().unwrap();
         s.put_buffer("#a", "#A", BufferKind::Channel);
         assert!(s.insert("#a", &msg("m1", 10, "bob", "hi")));
         assert!(!s.insert("#a", &msg("m1", 10, "bob", "hi")));
@@ -704,7 +704,7 @@ mod tests {
 
     #[test]
     fn transactions_never_stay_open() {
-        let s = Store::memory();
+        let s = Store::memory().unwrap();
         s.batch(|| {
             s.batch(|| s.insert("#a", &msg("m1", 1, "bob", "x")));
             s.remove_buffer("#a");
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn recent_carries_reactions() {
-        let s = Store::memory();
+        let s = Store::memory().unwrap();
         for i in 0..3 {
             s.insert("#a", &msg(&format!("m{i}"), i, "bob", "x"));
         }

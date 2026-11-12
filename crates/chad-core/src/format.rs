@@ -7,7 +7,7 @@ use url::Url;
 /// An sRGB colour.
 pub type Rgb = [u8; 3];
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
 pub struct Span {
     pub text: String,
     pub bold: bool,

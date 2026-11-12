@@ -5,6 +5,8 @@ use super::*;
 impl Net {
     /// Msgids chadd deleted with their accounts (D69): forget our copies, and
     /// keep `next` for the next connect.
+    // shortcut: the web has no chadd client yet, so no D69 tombstones; drop once it has.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn chadd_redacted(&mut self, ids: &[String], next: u64) {
         let began = self.store.begin();
         for id in ids {

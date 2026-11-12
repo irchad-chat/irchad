@@ -1,0 +1,38 @@
+[package]
+name = "chad-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Browser-only: on native targets this crate is empty, so `cargo build` of the
+# workspace never pulls these in or unifies their features with chad-desktop's.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+chad-proto.workspace = true
+chad-irc = { path = "../chad-irc", default-features = false }
+chad-e2ee.workspace = true
+chad-core.workspace = true
+# rusqlite's browser sqlite needs its host functions (sleep, random, time) from JS.
+sqlite-wasm-rs = { version = "0.6", features = ["wasm-bindgen"] }
+js-sys = "0.3"
+serde.workspace = true
+serde-wasm-bindgen = "0.6"
+# Both getrandom majors are in the tree (vodozemac pulls 0.4); each needs its browser backend.
+getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom4 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+tracing.workspace = true
+tracing-wasm = "0.2"
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["WebSocket", "MessageEvent", "CloseEvent", "Window", "Storage"] }
+wasm-bindgen-futures = "0.4"
+# The browser's fetch underneath; only for the discovery document.
+reqwest = { version = "0.12", default-features = false }
+url.workspace = true
+
+[lints]
+workspace = true

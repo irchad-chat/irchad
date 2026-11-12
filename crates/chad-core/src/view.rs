@@ -7,9 +7,10 @@
 //! buffer they belong to, and follow a buffer through a rename.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use url::Url;
+use web_time::Instant;
 
 use crate::{
     Block, BufferInfo, BufferKind, ChatMessage, ConnState, CustomEmoji, DeviceInfo, Event, Member,

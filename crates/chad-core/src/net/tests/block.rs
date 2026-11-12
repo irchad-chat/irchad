@@ -83,7 +83,7 @@ fn hides_cached_messages_and_reactions() {
         nick: "al".into(),
     });
     n = Net::new(
-        std::mem::replace(&mut n.store, Store::memory()),
+        std::mem::replace(&mut n.store, Store::memory().unwrap()),
         n.info.clone(),
     );
     n.load_cache();

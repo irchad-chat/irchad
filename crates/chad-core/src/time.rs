@@ -1,6 +1,7 @@
 //! IRCv3 `server-time` (`2026-10-28T01:54:21.178Z`) ⇄ Unix milliseconds.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+// std's clock panics in the browser; on native this is std's.
+use web_time::{SystemTime, UNIX_EPOCH};
 
 pub fn now_ms() -> i64 {
     SystemTime::now()

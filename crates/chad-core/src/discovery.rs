@@ -1,14 +1,22 @@
-//! `GET <origin>/.well-known/irchad.json`, bounded per D14.
+//! `GET <origin>/.well-known/irchad.json`, bounded per D14. In the browser
+//! only [`parse`] is here: the page fetches it itself.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use chad_proto::discovery::{Discovery, VERSION, WELL_KNOWN_PATH};
+#[cfg(not(target_arch = "wasm32"))]
+use chad_proto::discovery::WELL_KNOWN_PATH;
+use chad_proto::discovery::{Discovery, VERSION};
+#[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 
 /// The real document is ~300 bytes.
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_BODY: usize = 64 << 10;
+#[cfg(not(target_arch = "wasm32"))]
 const MAX_ICON: usize = 1 << 20;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch(origin: &str) -> Result<Discovery, String> {
     let host = origin.trim_start_matches("https://");
     let unreachable = |e: reqwest::Error| {
@@ -23,6 +31,7 @@ pub async fn fetch(origin: &str) -> Result<Discovery, String> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The discovery document's `icon`, at most 1 MiB. Decoding is the UI's job.
 pub async fn fetch_icon(url: &Url) -> Result<Vec<u8>, String> {
     match get(url.as_str(), MAX_ICON).await {
@@ -32,12 +41,14 @@ pub async fn fetch_icon(url: &Url) -> Result<Vec<u8>, String> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// `Ok(None)` when the body is over `max`.
 pub async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
     let resp = client(url)?.get(url).send().await?.error_for_status()?;
     body(resp, max).await
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// HTTPS only, short timeouts, and `*.localhost` resolved by hand.
 pub fn client(url: &str) -> Result<reqwest::Client, reqwest::Error> {
     let mut client = reqwest::Client::builder()
@@ -60,6 +71,7 @@ pub fn client(url: &str) -> Result<reqwest::Client, reqwest::Error> {
     client.build()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The body, or `Ok(None)` past `max` bytes (D14).
 pub async fn body(
     mut resp: reqwest::Response,
@@ -75,6 +87,7 @@ pub async fn body(
     Ok(Some(body))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn not_irchad(host: &str) -> String {
     format!("{host} isn't an IrChad server.")
 }

@@ -4,10 +4,12 @@
 pub mod batch;
 pub mod cap;
 pub mod isupport;
+pub mod keepalive;
 pub mod label;
 pub mod message;
 pub mod register;
 pub mod sasl;
+#[cfg(feature = "ws")]
 pub mod ws;
 
 pub use message::Message;

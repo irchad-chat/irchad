@@ -8,6 +8,8 @@
 	tls internal
 
 	handle /.well-known/irchad.json {
+		# Public anyway; lets a web client served from elsewhere read it.
+		header Access-Control-Allow-Origin *
 		reverse_proxy {args[1]}:8080
 	}
 	handle /invite* {

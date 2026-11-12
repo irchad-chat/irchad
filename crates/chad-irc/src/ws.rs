@@ -1,15 +1,15 @@
 //! IRC over WebSocket (`text.ircv3.net`, one line per text frame, no CRLF), or
 //! classic IRC over TCP/TLS (CRLF lines) for non-IrChad networks (D72).
 //!
-//! This is the one place in the crate that does I/O. It answers server `PING`s,
-//! pings an idle server and fails with [`Error::Timeout`] if it stays silent.
-//! Reconnecting is the caller's loop; [`Backoff`] spaces the attempts.
+//! This is the one place in the crate that does I/O. [`Keepalive`] answers
+//! server `PING`s, pings an idle server and fails with [`Error::Timeout`] if it
+//! stays silent. Reconnecting is the caller's loop; [`crate::keepalive::Backoff`]
+//! spaces the attempts.
 //!
 //! TLS is rustls with the OS roots (`SSL_CERT_FILE` is honoured, which is how the
 //! dev stack's Caddy CA gets trusted). Frames are capped per D14.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use rustls::pki_types::ServerName;
@@ -22,12 +22,10 @@ use tokio_tungstenite::tungstenite::{self, Message as Frame};
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
 use crate::Message;
+use crate::keepalive::Keepalive;
 
 /// 8191 bytes of tags plus 512 for the rest, with headroom. Bigger is hostile.
 const MAX_FRAME: usize = 16 << 10;
-/// Silence before we PING, then how long we wait for anything at all.
-const IDLE: Duration = Duration::from_secs(90);
-const PONG_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -58,7 +56,7 @@ enum Inner {
 
 pub struct Connection {
     inner: Inner,
-    pinged: bool,
+    alive: Keepalive,
 }
 
 impl Connection {
@@ -72,7 +70,7 @@ impl Connection {
         };
         Ok(Self {
             inner,
-            pinged: false,
+            alive: Keepalive::new(),
         })
     }
 
@@ -89,12 +87,10 @@ impl Connection {
     /// Unparsable lines are logged and skipped.
     pub async fn recv(&mut self) -> Result<Option<Message>, Error> {
         loop {
-            let wait = if self.pinged { PONG_WAIT } else { IDLE };
-            let text = match tokio::time::timeout(wait, self.next_text()).await {
-                Err(_) if self.pinged => return Err(Error::Timeout),
+            let text = match tokio::time::timeout(self.alive.wait(), self.next_text()).await {
                 Err(_) => {
-                    self.pinged = true;
-                    self.send(&Message::new("PING", ["keepalive"])).await?;
+                    let ping = self.alive.silence().map_err(|_| Error::Timeout)?;
+                    self.send(&ping).await?;
                     continue;
                 }
                 Ok(r) => match r? {
@@ -102,13 +98,15 @@ impl Connection {
                     None => return Ok(None),
                 },
             };
-            self.pinged = false;
             match Message::parse(&text) {
-                Ok(m) if m.command == "PING" => {
-                    self.send(&Message::new("PONG", m.params)).await?;
+                Ok(m) => match self.alive.line(&m) {
+                    Some(pong) => self.send(&pong).await?,
+                    None => return Ok(Some(m)),
+                },
+                Err(e) => {
+                    self.alive.heard();
+                    tracing::warn!("skipping bad line from server: {e}");
                 }
-                Ok(m) => return Ok(Some(m)),
-                Err(e) => tracing::warn!("skipping bad line from server: {e}"),
             }
         }
     }
@@ -288,32 +286,6 @@ pub fn tls_config() -> Arc<rustls::ClientConfig> {
     Arc::new(builder.with_no_client_auth())
 }
 
-/// Exponential reconnect delay, 1 s doubling to 60 s, with jitter so a server
-/// restart doesn't get every client back in the same second.
-#[derive(Debug, Default)]
-pub struct Backoff {
-    attempt: u32,
-}
-
-impl Backoff {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn next_delay(&mut self) -> Duration {
-        let base = Duration::from_secs(1 << self.attempt.min(6)).min(Duration::from_secs(60));
-        self.attempt = self.attempt.saturating_add(1);
-        // Somewhere in [base/2, base].
-        let jitter = f64::from(getrandom::u32().unwrap_or(0)) / f64::from(u32::MAX);
-        base.mul_f64(0.5 + jitter / 2.0)
-    }
-
-    /// Call once a connection got through registration.
-    pub fn reset(&mut self) {
-        self.attempt = 0;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,17 +303,6 @@ mod tests {
         for h in ["localhost.com", "notlocalhost", "example.com", ""] {
             assert!(!is_localhost(h), "{h}");
         }
-    }
-
-    #[test]
-    fn backoff_grows_caps_and_resets() {
-        let mut b = Backoff::new();
-        let d: Vec<Duration> = (0..10).map(|_| b.next_delay()).collect();
-        assert!(d[0] >= Duration::from_millis(500) && d[0] <= Duration::from_secs(1));
-        assert!(d[3] >= Duration::from_secs(4) && d[3] <= Duration::from_secs(8));
-        assert!(d[9] >= Duration::from_secs(30) && d[9] <= Duration::from_secs(60));
-        b.reset();
-        assert!(b.next_delay() <= Duration::from_secs(1));
     }
 
     #[tokio::test]

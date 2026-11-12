@@ -6,7 +6,7 @@ use super::*;
 fn classic() -> Net {
     let mut info = net().info;
     info.network = "ircs://irc.x:6697".into();
-    let mut n = Net::new(Store::memory(), info);
+    let mut n = Net::new(Store::memory().unwrap(), info);
     n.caps
         .handle(&line("CAP * LS :echo-message server-time multi-prefix"));
     n.caps

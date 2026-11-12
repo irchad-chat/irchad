@@ -1,14 +1,14 @@
-//! One task per network: discovery, connect, CAP/SASL/REGISTER, then pump lines
+//! One task per network: discovery, connect, [`Login`], then pump lines
 //! between the socket and [`Net`]; reconnect with backoff when it drops.
+//! The IRC is in [`login`] and [`Net`]; this is the tokio half, shared with
+//! nothing (chad-web has its own).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use chad_irc::Message;
-use chad_irc::cap::Negotiator;
-use chad_irc::register::{self, Reply};
-use chad_irc::sasl::{self, Progress, Sasl};
-use chad_irc::ws::{self, Backoff, Connection};
+use chad_irc::keepalive::Backoff;
+use chad_irc::ws::{self, Connection};
 use chad_proto::chadd::VoiceTokenResponse;
 use chad_proto::discovery::{self as proto_discovery, Discovery, Registration};
 use tokio::sync::mpsc;
@@ -16,11 +16,9 @@ use tokio::task::JoinHandle;
 use url::Url;
 
 use crate::chadd::{self, Session};
+use crate::login::{self, Account, Login, Step};
 use crate::manager::Sink;
-use crate::net::{
-    ACTIVITY_KEY, AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, RECEIPTS_KEY,
-    VOICE_KEY, failure,
-};
+use crate::net::Net;
 use crate::secrets::SecretStore;
 use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
 
@@ -292,23 +290,7 @@ async fn discover(net: &mut Net, guest: bool) -> Result<Discovery, String> {
         }
         Err(e) => cached.ok_or(e)?,
     };
-    net.info.name.clone_from(&d.name);
-    net.info.icon.clone_from(&d.icon);
-    net.home = d.home.clone().filter(|h| net.is_home_name(h));
-    net.info.uploads = d
-        .chadd
-        .uploads
-        .as_ref()
-        .filter(|_| !guest)
-        .map(|u| u.max_bytes);
-    net.info.gifs = d
-        .chadd
-        .gifs
-        .as_ref()
-        .filter(|_| !guest)
-        .map(|g| g.provider.chars().take(40).collect());
-    net.info.games = d.chadd.games && !guest;
-    net.info.emoji = d.chadd.emoji;
+    login::discovered(net, &d, guest);
     Ok(d)
 }
 
@@ -355,9 +337,18 @@ async fn session(
         Err(e) if p.joining.is_some() => return End::Fatal(e),
         Err(e) => return End::Lost(e),
     };
-    if p.register.is_some() && d.registration == Registration::Closed {
-        return End::Fatal(format!("{} isn't taking sign-ups.", d.name));
-    }
+    let acct = Account {
+        name: p.account.clone(),
+        password: password.to_owned(),
+        guest: p.guest,
+        device: p.device.clone(),
+        sign_up: p.register.clone(),
+        verifying: p.verifying.is_some(),
+    };
+    let login = match Login::start(net, &d, acct) {
+        Ok(l) => l,
+        Err(e) => return End::Fatal(e),
+    };
     let mut ws = match Connection::connect(d.irc.websocket.as_str()).await {
         Ok(ws) => ws,
         Err(e) => {
@@ -365,21 +356,7 @@ async fn session(
             return End::Lost(format!("Couldn't connect to {}.", d.name));
         }
     };
-
-    net.caps = Negotiator::new();
-    net.isupport.clear();
-    let account = p.account.clone();
-    for m in [
-        Negotiator::start(),
-        Message::new("NICK", [account.as_str()]),
-        Message::new("USER", [account.as_str(), "0", "*", account.as_str()]),
-    ] {
-        if let Err(e) = ws.send(&m).await {
-            return lost(e);
-        }
-    }
-
-    let nick = match register(net, p, password, rx, sink, backoff, &d, &mut ws).await {
+    let nick = match register(net, p, password, rx, sink, backoff, login, &mut ws).await {
         Ok(nick) => nick,
         Err(end) => return end,
     };
@@ -388,7 +365,7 @@ async fn session(
     live(net, p, password, rx, sink, &d, ws).await
 }
 
-/// CAP, SASL or sign-up, until the end of the MOTD. Returns our nick.
+/// Feeds the connection to [`Login`] until it's done. Returns our nick.
 #[allow(clippy::too_many_arguments)]
 async fn register(
     net: &mut Net,
@@ -397,15 +374,16 @@ async fn register(
     rx: &mut mpsc::UnboundedReceiver<ToNet>,
     sink: &Sink,
     backoff: &mut Backoff,
-    d: &Discovery,
+    mut login: Login,
     ws: &mut Connection,
 ) -> Result<String, End> {
-    let account = p.account.clone();
-    let mut auth_started = false;
-    let mut nick_tries = 0;
-    let mut sasl: Option<Sasl> = None;
-    let mut sasl_ok = false;
     loop {
+        for m in std::mem::take(&mut login.out) {
+            if let Err(e) = send(ws, &m).await {
+                return Err(lost(e));
+            }
+        }
+        sink.send(net.drain_events());
         let m = tokio::select! {
             r = ws.recv() => match r {
                 Ok(Some(m)) => m,
@@ -414,9 +392,7 @@ async fn register(
             },
             cmd = rx.recv() => {
                 match cmd {
-                    Some(ToNet::Cmd(NetCommand::Verify { code })) => {
-                        let _ = ws.send(&register::verify(&account, code.trim())).await;
-                    }
+                    Some(ToNet::Cmd(NetCommand::Verify { code })) => login.verify(&code),
                     Some(ToNet::Cmd(c)) => offline(net, c, sink),
                     // Paused once logged in, so a sign-up isn't cut short.
                     Some(ToNet::Background(on)) => p.background = on,
@@ -426,165 +402,31 @@ async fn register(
                 continue;
             }
         };
-        let mut out = net.caps.handle(&m);
-        net.isupport.handle(&m);
-
-        if net.caps.ready() && !auth_started {
-            auth_started = true;
-            sasl = start_auth(net, p, password, d, &mut out)?;
-        }
-        if let Some(s) = &mut sasl {
-            match s.handle(&m) {
-                Progress::Continue(more) => out.extend(more),
-                Progress::LoggedIn => {
-                    sasl = None;
-                    sasl_ok = true;
-                    out.push(net.caps.end());
-                    logged_in(net, p, password, sink).await;
-                }
-                Progress::Failed(e) => return Err(End::Fatal(sasl_error(e))),
-            }
-        }
-        match Reply::parse(&m) {
-            Some(Reply::Registered { .. } | Reply::Verified { .. }) => {
-                let _ = ws.send(&Message::new("QUIT", ["signed up"])).await;
-                return Err(End::Registered);
-            }
-            Some(Reply::NeedsVerification { message, .. }) => {
-                p.verifying = Some(message.clone());
+        match login.handle(net, m) {
+            Step::Continue => {}
+            Step::LoggedIn => logged_in(net, p, password, sink).await,
+            Step::NeedsVerification(message) => {
+                p.verifying = Some(message);
                 // The server's fine; only its registration timeout drops us.
                 backoff.reset();
-                net.set_state(ConnState::NeedsVerification { message });
-                sink.send(net.drain_events());
             }
-            Some(Reply::Failed { command, .. }) if command == "VERIFY" => {
-                net.error("That code didn't work. Check the email and try again.");
-                sink.send(net.drain_events());
-            }
-            Some(Reply::Failed { message, .. }) => {
-                let plain = failure(&chad_irc::batch::Item::Message(m.clone()));
-                return Err(End::Fatal(plain.unwrap_or(message)));
-            }
-            None => {}
-        }
-        // Classic (D72): the welcome, MOTD and server notices go to the server buffer.
-        let numeric = m.command.len() == 3 && m.command.bytes().all(|b| b.is_ascii_digit());
-        if net.classic()
-            && ((numeric && !matches!(m.command.as_str(), "005" | "221")) || m.command == "NOTICE")
-        {
-            let _ = net.handle(m.clone());
-        }
-        match m.command.as_str() {
-            "001" => {
-                m.param(0)
-                    .unwrap_or(&account)
-                    .clone_into(&mut net.info.nick);
-                // Classic without SASL (or without CAP at all): NickServ, the old way.
-                if net.classic() && !p.guest && !sasl_ok {
-                    auth_started = true;
-                    let text = format!("IDENTIFY {account} {password}");
-                    out.push(Message::new("PRIVMSG", ["NickServ", text.as_str()]));
-                    logged_in(net, p, password, sink).await;
+            Step::Registered => {
+                for m in login.out.drain(..) {
+                    let _ = ws.send(&m).await;
                 }
+                return Err(End::Registered);
             }
-            // RPL_LOGGEDIN: `<nick> <mask> <account> :You are now logged in as ...`.
-            "900" => {
-                net.account = m
-                    .param(2)
-                    .filter(|a| !a.is_empty() && a.len() <= 64)
-                    .map(str::to_owned);
-            }
-            "376" | "422" => {
+            Step::Done(nick) => {
                 if p.guest && p.joining.take().is_some() {
                     net.store.set_meta("origin", &net.info.network.clone());
-                    net.store.set_meta("guest", &account);
+                    net.store.set_meta("guest", &p.account);
                 }
-                return Ok(net.info.nick.clone());
+                return Ok(nick);
             }
-            // Guests and classic networks take the next free `nick1`..`nick9`.
-            "433" if (p.guest || net.classic()) && nick_tries < 9 => {
-                nick_tries += 1;
-                out.push(Message::new("NICK", [format!("{account}{nick_tries}")]));
-            }
-            "433" if p.guest || net.classic() => {
-                return Err(End::Fatal("That nickname is taken.".into()));
-            }
-            "433" => return Err(End::Fatal("That username is taken.".into())),
-            "432" => return Err(End::Fatal("That name isn't allowed here.".into())),
-            "MODE" | "221" => {
-                let _ = net.handle(m);
-            }
-            "ERROR" => return Err(End::Lost(m.params.last().cloned().unwrap_or_default())),
-            _ => {}
-        }
-        for o in out {
-            if let Err(e) = send(ws, &o).await {
-                return Err(lost(e));
-            }
+            Step::Lost(e) => return Err(End::Lost(e)),
+            Step::Fatal(e) => return Err(End::Fatal(e)),
         }
     }
-}
-
-/// Once CAP LS is in: subscribe to metadata, then start SASL or a sign-up.
-/// Returns the SASL exchange, if one started.
-fn start_auth(
-    net: &mut Net,
-    p: &Params,
-    password: &str,
-    d: &Discovery,
-    out: &mut Vec<Message>,
-) -> Result<Option<Sasl>, End> {
-    // Before CAP END, so the reattach burst includes everyone's value.
-    if net.caps.enabled("draft/metadata-2") {
-        let keys = [
-            VOICE_KEY,
-            DISPLAY_NAME_KEY,
-            AVATAR_KEY,
-            ACTIVITY_KEY,
-            DEVICES_KEY,
-            CHANNELS_KEY,
-            RECEIPTS_KEY,
-        ];
-        out.push(Message::new(
-            "METADATA",
-            ["*", "SUB"].into_iter().chain(keys),
-        ));
-    }
-    if p.guest {
-        out.push(net.caps.end());
-        return Ok(None);
-    }
-    if let Some(email) = &p.register {
-        if !net.caps.enabled("draft/account-registration") {
-            return Err(End::Fatal(format!("{} isn't taking sign-ups.", d.name)));
-        }
-        // Already signed up: VERIFY works from a fresh connection.
-        if p.verifying.is_none() {
-            out.push(register::register("*", email.as_deref(), password));
-        }
-        return Ok(None);
-    }
-    if !net.caps.enabled("sasl") {
-        if net.classic() {
-            // NickServ IDENTIFY once registered (`001`).
-            out.push(net.caps.end());
-            return Ok(None);
-        }
-        return Err(End::Fatal(format!(
-            "{} doesn't support logging in.",
-            d.name
-        )));
-    }
-    // `@device` is ergo's per-device login (D11); elsewhere it's just the account.
-    let user = if net.classic() {
-        p.account.clone()
-    } else {
-        format!("{}@{}", p.account, p.device)
-    };
-    let mechs = net.caps.value("sasl").unwrap_or_default();
-    let mut s = Sasl::new(&user, password, mechs).map_err(|e| End::Fatal(sasl_error(e)))?;
-    out.push(s.start());
-    Ok(Some(s))
 }
 
 /// Registered: IRC, voice and UI commands until the connection ends.
@@ -662,9 +504,6 @@ async fn live(
                 Ok(Some(m)) if m.command == "ERROR" && deleting.is_some_and(|d| d.1) => return End::Remove,
                 Ok(None) | Err(_) if deleting.is_some_and(|d| d.1) => return End::Remove,
                 Ok(Some(m)) => {
-                    if m.command == "ERROR" {
-                        return End::Lost(m.params.last().cloned().unwrap_or_default());
-                    }
                     if let Some(d) = deleting.as_mut()
                         && !d.1
                         && let Some(code) = unregister_code(&m, &p.account)
@@ -673,8 +512,8 @@ async fn live(
                         let text = format!("UNREGISTER {} {code}", p.account);
                         net.out.push(Message::new("PRIVMSG", ["NickServ", text.as_str()]));
                     }
-                    if net.handle(m).is_err() {
-                        return End::Lost("The server sent more than we can hold.".into());
+                    if let Err(e) = login::live(net, m) {
+                        return End::Lost(e);
                     }
                 }
                 Ok(None) => return End::Lost("The server closed the connection.".into()),
@@ -732,7 +571,7 @@ async fn live(
                 }
                 Some(ToNet::Cmd(NetCommand::Register { account, password, email })) if p.guest => {
                     let account = account.trim().to_owned();
-                    if !crate::manager::valid_nick(&account) {
+                    if !login::valid_nick(&account) {
                         sink.send([Event::SignUpFailed {
                             network: net.info.network.clone(),
                             error: "Names can't have spaces or start with # or :.".into(),
@@ -1016,15 +855,4 @@ fn lost(e: ws::Error) -> End {
         ws::Error::Timeout => "The server stopped responding.".into(),
         _ => "Lost the connection to the server.".into(),
     })
-}
-
-fn sasl_error(e: sasl::Error) -> String {
-    match e {
-        sasl::Error::Rejected => "Wrong username or password.".into(),
-        sasl::Error::NoMechanism => "This server's login method isn't supported.".into(),
-        other => {
-            tracing::warn!("SASL: {other}");
-            "Logging in failed. Try again later.".into()
-        }
-    }
 }

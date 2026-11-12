@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::conn::{self, Params, ToNet};
+use crate::login::valid_nick;
 use crate::net::Net;
 use crate::store::Store;
 use crate::{Auth, Command, Config, ConnState, Core, Event, NetCommand, NetworkInfo, invite};
@@ -231,12 +232,6 @@ fn spawn_with(
 }
 
 /// Enough to keep the name a single IRC parameter; the server judges the rest.
-pub(crate) fn valid_nick(nick: &str) -> bool {
-    !nick.is_empty()
-        && !nick.starts_with(['#', ':'])
-        && !nick.chars().any(|c| c.is_whitespace() || c.is_control())
-}
-
 fn file_name(origin: &str) -> PathBuf {
     // Classic ids keep their scheme, so `ircs://` and `irc://` to one host differ.
     let safe: String = origin

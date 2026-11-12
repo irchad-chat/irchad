@@ -8,9 +8,7 @@ repository.workspace = true
 
 [dependencies]
 chad-proto.workspace = true
-chad-irc.workspace = true
 chad-e2ee.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -21,9 +19,20 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 getrandom = "0.3"
 hex = "0.4"
 emojis = "0.9.1"
+# `Instant`/`SystemTime` that work in the browser too (std's panic there).
+web-time = "1.1"
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+chad-irc.workspace = true
+tokio.workspace = true
+
+# The browser: no sockets, threads or fs. chad-irc's tokio WebSocket is off; chad-web brings its own transport.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+chad-irc = { path = "../chad-irc", default-features = false }
+tokio = { version = "1.54.1", features = ["sync", "macros", "rt", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 oo7 = "0.6"

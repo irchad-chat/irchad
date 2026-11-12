@@ -24,7 +24,7 @@ fn net() -> Net {
         receipts: false,
         oper: false,
     };
-    let mut n = Net::new(Store::memory(), info);
+    let mut n = Net::new(Store::memory().unwrap(), info);
     let caps = "batch echo-message labeled-response draft/chathistory draft/read-marker \
                 draft/persistence message-tags server-time draft/multiline";
     n.caps.handle(&line(&format!(
