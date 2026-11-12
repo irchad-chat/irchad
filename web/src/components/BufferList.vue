@@ -74,6 +74,9 @@ const status = computed(() => {
       <input v-model="opening" aria-label="Join a channel or message someone" placeholder="#channel or nick" />
     </form>
     <p v-if="client.error" class="err small">{{ client.error }}</p>
+    <a class="get-app" :href="`${client.network}/invite`" target="_blank" rel="noopener">
+      <i class="ph ph-download-simple" /> Get the desktop app
+    </a>
     <VoiceBar />
     <footer>
       <div class="me">
@@ -176,6 +179,21 @@ form {
 form input {
   width: 100%;
   box-sizing: border-box;
+}
+.get-app {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #89b4fa22;
+  color: var(--accent);
+  font-weight: bold;
+  text-decoration: none;
+}
+.get-app:hover {
+  background: #89b4fa33;
 }
 footer {
   display: flex;

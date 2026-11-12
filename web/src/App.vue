@@ -9,6 +9,7 @@ import Composer from './components/Composer.vue'
 import MemberList from './components/MemberList.vue'
 import Toasts from './components/Toasts.vue'
 import Stage from './components/Stage.vue'
+import AppNotice from './components/AppNotice.vue'
 
 const client = useClient()
 const showMembers = ref(true)
@@ -28,6 +29,7 @@ const showMembers = ref(true)
       <Composer />
     </main>
     <MemberList v-if="showMembers && client.buffer?.kind === 'channel'" />
+    <AppNotice />
   </div>
   <Toasts />
 </template>

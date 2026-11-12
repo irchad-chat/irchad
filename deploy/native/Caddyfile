@@ -34,6 +34,17 @@
 	handle_path /livekit/* {
 		reverse_proxy 127.0.0.1:7880
 	}
+	# The web app (web/dist, built with base /chat/). Its assets are
+	# content-hashed, so they cache for good; index.html never does.
+	redir /chat /chat/
+	handle_path /chat/* {
+		root * /var/www/irchad-chat
+		encode zstd gzip
+		header /assets/* Cache-Control "public, max-age=31536000, immutable"
+		header / Cache-Control no-cache
+		try_files {path} /index.html
+		file_server
+	}
 	# Everything else is the project website (site/dist). Without it, 404.
 	handle {
 		root * /var/www/irchad

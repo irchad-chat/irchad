@@ -1,7 +1,7 @@
 <!-- The selected buffer's messages: sticks to the bottom, loads older ones
      scrolling up, and jumps to replies. -->
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Msg } from '../wasm/chad_web'
 import { day, sameDay } from '../lib/format'
 import { useClient } from '../stores/client'
@@ -9,6 +9,31 @@ import MessageItem from './MessageItem.vue'
 
 const client = useClient()
 const el = ref<HTMLElement>()
+const content = ref<HTMLElement>()
+// At the bottom, as of the reader's last scroll: images, previews and avatars
+// that load later grow the log, and must not push the newest message out of view.
+let stuck = true
+// The log's height as of the last scroll or resize we saw.
+let height = 0
+const atBottom = (e: HTMLElement) => e.scrollHeight - e.scrollTop - e.clientHeight < 40
+function onScroll() {
+  const e = el.value
+  if (!e) return
+  // The height changed too, so layout moved it (a channel switch clamping it,
+  // or content loading), not the reader: stay put.
+  if (stuck && e.scrollHeight !== height) e.scrollTop = e.scrollHeight
+  else stuck = atBottom(e)
+  height = e.scrollHeight
+  maybeOlder()
+}
+const grown = new ResizeObserver(() => {
+  const e = el.value
+  if (!e) return
+  if (stuck) e.scrollTop = e.scrollHeight
+  height = e.scrollHeight
+})
+onMounted(() => content.value && grown.observe(content.value))
+onUnmounted(() => grown.disconnect())
 // Messages from the same person this close together read as one.
 const GROUP_MS = 5 * 60_000
 
@@ -72,7 +97,7 @@ watch(
     const e = el.value
     if (!e) return
     before = {
-      bottom: e.scrollHeight - e.scrollTop - e.clientHeight < 40,
+      bottom: atBottom(e),
       height: e.scrollHeight,
       top: e.scrollTop,
       first: before.first,
@@ -100,6 +125,7 @@ watch(
     askedAt = -1
     jumping = undefined
     before = { bottom: true, height: 0, top: 0, first: '' }
+    stuck = true
     await nextTick()
     if (el.value) el.value.scrollTop = el.value.scrollHeight
     maybeOlder()
@@ -108,7 +134,8 @@ watch(
 </script>
 
 <template>
-  <div ref="el" class="log" role="log" aria-live="polite" @scroll.passive="maybeOlder">
+  <div ref="el" class="log" role="log" aria-live="polite" @scroll.passive="onScroll">
+    <div ref="content">
     <p v-if="client.buffer?.historyStart" class="start dim">This is the start of {{ client.selected }}.</p>
     <template v-for="(m, i) in client.messages" :key="m.key">
       <div v-if="i === 0 || !sameDay(client.messages[i - 1].time, m.time)" class="day dim small">
@@ -124,6 +151,7 @@ watch(
         @jump="jump"
       />
     </template>
+    </div>
   </div>
   <div class="typing dim small">{{ typing }}</div>
 </template>

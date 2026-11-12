@@ -132,9 +132,12 @@ function remove() {
   text-align: right;
 }
 .hover-time {
+  display: block;
   visibility: hidden;
+  white-space: nowrap;
   font-size: 0.7em;
-  line-height: 1.6rem;
+  /* One text line (1.4 at full size), so it never makes the row taller. */
+  line-height: 2em;
 }
 .msg:hover .hover-time {
   visibility: visible;

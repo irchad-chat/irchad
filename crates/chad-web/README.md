@@ -25,7 +25,8 @@ It must be `https://`, or chad-core would treat it as a classic network (D72).
 The browser must trust Caddy's internal CA (`root.crt`) for both the discovery fetch and the `wss://` connection.
 The dev stack's ergo has no `allowed-origins`, so any page can connect. Caddy answers `/api/*` for any origin (D79), so chadd works from Vite's origin too.
 The network's own uploads and emoji load straight into `<img>`, and any other image goes through chadd (`media`, D25).
-Before shipping, serve the web app from the network's own origin (a Caddy `handle`) and set `allowed-origins` in ergo.
+In production the app is served from the network's own origin at `/chat/` (`vite build` uses that base; see `deploy/native/README.md`).
+ergo's `allowed-origins` is still unset, so a page on any origin may open the IRC WebSocket. That's harmless without cookies, but setting it would pin the web client to the network's own page.
 
 On native targets this crate compiles to nothing.
 `getrandom`'s browser backend is selected in `/.cargo/config.toml`.

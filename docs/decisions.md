@@ -472,3 +472,8 @@ Refines D78. As on desktop, chad-core decides whether we may join (guests, `chad
 The page follows desktop's room rules (D43): auto-subscribe off, microphones and the soundboard and whisper tracks always, and a screen share and its audio or a camera only while it's watched. One video plays on the stage at a time. The `watching` attribute is set for screen shares only (D22, D70). It caps participants and identities as chad-media does (D14).
 The web app joins, talks, mutes, deafens and watches. It doesn't publish a screen or camera yet, and it has no soundboard, whisper, push-to-talk or per-person volume.
 If the IRC connection drops, chad-core ends the call and the page leaves the room, as desktop does. Closing the tab clears `chad/voice` on a best-effort basis. Otherwise chad-core clears the stale value on the next connect.
+
+## D81: The web app is served at `<network>/chat/` (2026-11-12)
+
+Production serves `web/dist` from `/var/www/irchad-chat` at `/chat/` on the network's own origin, so the page finds its network from `location.origin` and needs no config. `vite build` sets the base to `/chat/`, and `vite dev` keeps `/`. Caddy strips the prefix and sends any unknown path to `index.html`. The content-hashed `assets/` are cached as immutable, `index.html` is `no-cache`, and responses are compressed (the wasm goes from 3.7 MB to 1.4 MB with zstd).
+The site's hero links it as "Join in your browser", next to the app download, and the web app itself keeps pointing people at the app (the first-visit notice and the sidebar link, both to `/invite`).
