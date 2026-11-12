@@ -3,7 +3,9 @@
 //! are bounded (D14).
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use chad_proto::chadd::{
     self, ApiError, Game, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse,

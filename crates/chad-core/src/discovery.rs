@@ -1,22 +1,18 @@
-//! `GET <origin>/.well-known/irchad.json`, bounded per D14. In the browser
-//! only [`parse`] is here: the page fetches it itself.
+//! `GET <origin>/.well-known/irchad.json`, bounded per D14. Also the HTTP
+//! client chadd's calls share. In the browser it's the page's `fetch`.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
-use chad_proto::discovery::WELL_KNOWN_PATH;
-use chad_proto::discovery::{Discovery, VERSION};
+use chad_proto::discovery::{Discovery, VERSION, WELL_KNOWN_PATH};
 #[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 
 /// The real document is ~300 bytes.
-#[cfg(not(target_arch = "wasm32"))]
 const MAX_BODY: usize = 64 << 10;
 #[cfg(not(target_arch = "wasm32"))]
 const MAX_ICON: usize = 1 << 20;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub async fn fetch(origin: &str) -> Result<Discovery, String> {
     let host = origin.trim_start_matches("https://");
     let unreachable = |e: reqwest::Error| {
@@ -41,7 +37,6 @@ pub async fn fetch_icon(url: &Url) -> Result<Vec<u8>, String> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// `Ok(None)` when the body is over `max`.
 pub async fn get(url: &str, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
     let resp = client(url)?.get(url).send().await?.error_for_status()?;
@@ -71,6 +66,13 @@ pub fn client(url: &str) -> Result<reqwest::Client, reqwest::Error> {
     client.build()
 }
 
+#[cfg(target_arch = "wasm32")]
+/// The browser's `fetch`: its own TLS, redirects and timeouts. Mixed content
+/// is blocked on an `https://` page, and chad-web only runs on one.
+pub fn client(_url: &str) -> Result<reqwest::Client, reqwest::Error> {
+    Ok(reqwest::Client::new())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 /// The body, or `Ok(None)` past `max` bytes (D14).
 pub async fn body(
@@ -87,7 +89,18 @@ pub async fn body(
     Ok(Some(body))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
+/// The body, or `Ok(None)` past `max` bytes (D14).
+// shortcut: the browser has buffered the whole body by the time we look at
+// it; reqwest's `stream` feature would let us stop at `max`.
+pub async fn body(resp: reqwest::Response, max: usize) -> Result<Option<Vec<u8>>, reqwest::Error> {
+    if resp.content_length().is_some_and(|n| n > max as u64) {
+        return Ok(None);
+    }
+    let body = resp.bytes().await?;
+    Ok((body.len() <= max).then(|| body.to_vec()))
+}
+
 fn not_irchad(host: &str) -> String {
     format!("{host} isn't an IrChad server.")
 }

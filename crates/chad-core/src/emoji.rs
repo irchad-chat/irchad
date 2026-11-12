@@ -143,9 +143,43 @@ pub fn replace_shortcodes(text: &mut String, cursor: &mut usize, custom: &[Custo
     changed
 }
 
+/// [`replace_shortcodes`] with `cursor` in UTF-16 units, as a browser's
+/// text field counts.
+pub fn replace_shortcodes_utf16(
+    text: &mut String,
+    cursor: &mut usize,
+    custom: &[CustomEmoji],
+) -> bool {
+    let mut units = 0;
+    let mut chars = text
+        .chars()
+        .take_while(|c| {
+            units += c.len_utf16();
+            units <= *cursor
+        })
+        .count();
+    let changed = replace_shortcodes(text, &mut chars, custom);
+    *cursor = text.chars().take(chars).map(char::len_utf16).sum();
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcodes_utf16() {
+        // "😀" is two UTF-16 units, one char.
+        let mut t = "😀 :smile: x".to_owned();
+        let mut cursor = "😀 :smile:".encode_utf16().count();
+        assert!(replace_shortcodes_utf16(&mut t, &mut cursor, &[]));
+        assert_eq!(t, "😀 😄 x");
+        assert_eq!(cursor, "😀 😄".encode_utf16().count());
+        let mut t = "😀 :x".to_owned();
+        let mut cursor = 99;
+        assert!(!replace_shortcodes_utf16(&mut t, &mut cursor, &[]));
+        assert_eq!(cursor, 5);
+    }
 
     #[test]
     fn shortcodes() {

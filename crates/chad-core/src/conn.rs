@@ -454,10 +454,7 @@ async fn live(
     // Messages chadd deleted with other accounts while we were away (D69).
     let mut redactions = d.chadd.delete.then(|| {
         let api = d.chadd.api.clone();
-        let since = net
-            .store
-            .meta(crate::net::REDACTED_CURSOR)
-            .and_then(|c| c.parse().ok());
+        let since = net.redacted_since();
         tokio::spawn(async move { chadd::redacted(&api, since).await })
     });
     loop {

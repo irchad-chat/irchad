@@ -6,8 +6,7 @@
 //! as the server spells it, compared under the network's casemapping.
 
 // The IO half (sockets, HTTP, the tokio task) isn't ported to the browser yet; chad-web drives `Net` itself.
-#[cfg(not(target_arch = "wasm32"))]
-mod chadd;
+pub mod chadd;
 pub mod complete;
 #[cfg(not(target_arch = "wasm32"))]
 mod conn;
@@ -41,6 +40,7 @@ pub struct GameList {
     pub games: Vec<Game>,
     pub etag: Option<String>,
 }
+pub use discovery::fetch as fetch_discovery;
 #[cfg(not(target_arch = "wasm32"))]
 pub use discovery::fetch_icon;
 pub use discovery::parse as parse_discovery;

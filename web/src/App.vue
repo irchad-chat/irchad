@@ -1,118 +1,49 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
-import type { Rgb, Span } from "./wasm/chad_web";
-import { useClient } from "./stores/client";
-import BufferList from "./components/BufferList.vue";
+import { ref } from 'vue'
+import { useClient } from './stores/client'
+import LoginForm from './components/LoginForm.vue'
+import BufferList from './components/BufferList.vue'
+import ChatHeader from './components/ChatHeader.vue'
+import MessageList from './components/MessageList.vue'
+import Composer from './components/Composer.vue'
+import MemberList from './components/MemberList.vue'
+import Toasts from './components/Toasts.vue'
 
-const client = useClient();
-const nick = ref("webchad");
-const password = ref("");
-const input = ref("");
-const logEl = ref<HTMLElement>();
-
-const rgb = (c: Rgb | null) => (c ? `rgb(${c.join(",")})` : undefined);
-function style(s: Span) {
-  return {
-    fontWeight: s.bold ? "bold" : undefined,
-    fontStyle: s.italic ? "italic" : undefined,
-    textDecoration:
-      [s.underline && "underline", s.strike && "line-through"]
-        .filter(Boolean)
-        .join(" ") || undefined,
-    fontFamily: s.mono ? "monospace" : undefined,
-    color: rgb(s.fg),
-    background: rgb(s.bg),
-  };
-}
-const time = (ms: number) =>
-  new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-function send() {
-  if (!input.value.trim()) return;
-  client.send(input.value);
-  input.value = "";
-}
-
-watch(
-  () => client.messages,
-  async () => {
-    await nextTick();
-    logEl.value?.scrollTo({ top: logEl.value.scrollHeight });
-  },
-);
+const client = useClient()
+const showMembers = ref(true)
 </script>
 
 <template>
-  <form
-    v-if="!client.state || client.state.state === 'failed'"
-    class="login"
-    @submit.prevent="client.connect(nick, password)"
-  >
-    <h1>IrChad</h1>
-    <input
-      v-model="nick"
-      aria-label="Name"
-      placeholder="Name"
-      autocomplete="username"
-    />
-    <input
-      v-model="password"
-      type="password"
-      aria-label="Password"
-      placeholder="Password (empty for a guest)"
-      autocomplete="current-password"
-    />
-    <button>Connect</button>
-    <p v-if="client.state?.error" class="err">{{ client.state.error }}</p>
-    <p v-if="client.error" class="err">{{ client.error }}</p>
-  </form>
-
+  <LoginForm v-if="!client.ready || client.state?.state === 'verifying'" />
   <div v-else class="app">
     <BufferList />
-    <main>
-      <div ref="logEl" class="log">
-        <div
-          v-for="m in client.messages"
-          :key="m.key"
-          class="msg"
-          :class="{ mention: m.mention, pending: m.pending }"
-        >
-          <span class="dim">{{ time(m.time) }}</span>
-          <b v-if="m.action">* {{ m.nick }}</b>
-          <b v-else-if="m.notice">-{{ m.nick }}-</b>
-          <b v-else>{{ m.nick }}</b>
-          <i v-if="m.redacted" class="dim">deleted</i>
-          <template v-else>
-            <template v-for="(s, j) in m.spans" :key="j">
-              <!-- chad-core only flags http(s) links, so the href is safe to use as-is. -->
-              <a
-                v-if="s.link"
-                :href="s.text"
-                target="_blank"
-                rel="noopener noreferrer"
-                :style="style(s)"
-                >{{ s.text }}</a
-              >
-              <span v-else :style="style(s)">{{ s.text }}</span>
-            </template>
-            <span v-if="m.edited" class="dim"> (edited)</span>
-          </template>
-          <span v-if="m.failed" class="err"> {{ m.failed }}</span>
-        </div>
-      </div>
-      <form class="bar" @submit.prevent="send">
-        <input
-          v-model="input"
-          :aria-label="`Message ${client.selected ?? ''}`"
-          :placeholder="client.selected ? `Message ${client.selected}` : ''"
-          :disabled="!client.selected || client.state.state !== 'connected'"
-        />
-      </form>
+    <main class="chat">
+      <ChatHeader :members="showMembers" @toggle-members="showMembers = !showMembers" />
+      <p v-if="client.state && client.state.state !== 'connected'" class="banner small">
+        {{ client.state.error ? `${client.state.error} ` : '' }}Reconnecting…
+      </p>
+      <MessageList />
+      <Composer />
     </main>
+    <MemberList v-if="showMembers && client.buffer?.kind === 'channel'" />
   </div>
+  <Toasts />
 </template>
 
 <style>
+:root {
+  --bg: #1e1e2e;
+  --bg-deep: #11111b;
+  --panel: #181825;
+  --surface: #313244;
+  --border: #45475a;
+  --text: #cdd6f4;
+  --accent: #89b4fa;
+  --ok: #a6e3a1;
+  --warn: #f9e2af;
+  --err: #f38ba8;
+  color-scheme: dark;
+}
 html,
 body,
 #app {
@@ -121,107 +52,128 @@ body,
 }
 #app {
   display: flex;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  background: var(--bg);
+  color: var(--text);
   font-family: system-ui, sans-serif;
+  font-size: 15px;
 }
 input,
-button {
+button,
+textarea {
   font: inherit;
   color: inherit;
-  background: #313244;
-  border: 1px solid #45475a;
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
 }
-.login {
-  margin: auto;
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+button.primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: bold;
+}
+button.link {
+  background: none;
+  border: none;
+  padding: 0 4px;
+}
+dialog {
+  background: var(--panel);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: min(340px, calc(100vw - 32px));
+}
+dialog::backdrop {
+  background: #0008;
+}
+.stack {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: min(320px, 100% - 32px);
+}
+.stack .row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.stack h2,
+.stack p {
+  margin: 0;
 }
 .app {
   flex: 1;
   display: flex;
   min-width: 0;
 }
-.side {
-  width: 220px;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
-  background: #181825;
-  overflow: auto;
-}
-.side header {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 8px;
-}
-.buf {
-  display: flex;
-  justify-content: space-between;
-  text-align: left;
-  background: none;
-  border: none;
-  opacity: 0.7;
-}
-.buf.unread {
-  opacity: 1;
-  font-weight: bold;
-}
-.buf.on {
-  background: #313244;
-  opacity: 1;
-}
-.badge {
-  background: #f38ba8;
-  color: #1e1e2e;
-  border-radius: 8px;
-  padding: 0 6px;
-}
-main {
+.chat {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-.log {
-  flex: 1;
-  overflow: auto;
-  padding: 8px;
+.banner {
+  margin: 0;
+  padding: 4px 16px;
+  background: #f9e2af22;
+  color: var(--warn);
 }
-.msg {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: 1px 0;
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
 }
-.msg > * + * {
-  margin-left: 0.5em;
+.emoji {
+  display: inline-block;
+  width: 1.4em;
+  height: 1.4em;
+  vertical-align: middle;
+  object-fit: contain;
 }
-.msg.mention {
-  background: #45475a55;
+.mention {
+  background: #89b4fa33;
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 0 2px;
 }
-.msg.pending {
-  opacity: 0.6;
+code {
+  font-family: ui-monospace, monospace;
+  background: var(--bg-deep);
+  border-radius: 3px;
+  padding: 0 3px;
 }
-.bar {
-  display: flex;
-  padding: 8px;
+.badge {
+  margin-left: auto;
+  background: var(--err);
+  color: var(--bg);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 0.8em;
+  font-weight: bold;
 }
-.bar input {
-  flex: 1;
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dim {
   opacity: 0.6;
 }
+.small {
+  font-size: 0.85em;
+}
 .err {
-  color: #f38ba8;
+  color: var(--err);
 }
 a {
-  color: #89b4fa;
+  color: var(--accent);
 }
 </style>
