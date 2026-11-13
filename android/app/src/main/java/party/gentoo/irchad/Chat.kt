@@ -124,7 +124,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.content.MediaType
+import androidx.compose.foundation.content.consume
+import androidx.compose.foundation.content.contentReceiver
+import androidx.compose.foundation.content.hasMediaType
 import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.placeCursorAtEnd
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
@@ -134,13 +144,13 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import party.gentoo.irchad.core.Buffer
 import party.gentoo.irchad.core.Link
@@ -1237,20 +1247,34 @@ private fun rgb(c: UInt) = Color(0xFF000000.toInt() or c.toInt())
 private fun Color.luminance(): Float = 0.2126f * red + 0.7152f * green + 0.0722f * blue
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class) // contentReceiver
 private fun Composer(
     app: IrChad, tick: Long, net: Network, buf: Buffer, replyTo: Message?, editing: Message?, onDone: () -> Unit,
 ) {
     val c = app.client
-    var draft by rememberSaveable(net.network, buf.target, stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue())
-    }
+    val draft = rememberSaveable(net.network, buf.target, saver = TextFieldState.Saver) { TextFieldState() }
     // Nicks picked from the `@` list, sent as `+chad/mentions` (D66).
     var picked by remember(net.network, buf.target) { mutableStateOf(listOf<String>()) }
     // Editing starts from the message's text, without its formatting (like desktop).
     LaunchedEffect(editing?.key) {
         editing?.let {
-            draft = TextFieldValue(it.text, TextRange(it.text.length))
+            draft.setTextAndPlaceCursorAtEnd(it.text)
             picked = it.mentions
+        }
+    }
+    // Finished uploads to here: their links go in the draft, to send when the user says.
+    LaunchedEffect(net.network, buf.target) {
+        app.uploaded.collect { all ->
+            val mine = all.filter { it.first == net.network && it.second == buf.target }
+            if (mine.isEmpty()) return@collect
+            app.uploaded.update { it - mine.toSet() }
+            draft.edit {
+                for ((_, _, url) in mine) {
+                    if (length > 0 && !asCharSequence().last().isWhitespace()) append(" ")
+                    append(url)
+                }
+                placeCursorAtEnd()
+            }
         }
     }
     val ctx = LocalContext.current
@@ -1272,7 +1296,7 @@ private fun Composer(
                 )
                 IconButton(onClick = {
                     if (editing != null) {
-                        draft = TextFieldValue()
+                        draft.clearText()
                         picked = emptyList()
                     }
                     onDone()
@@ -1287,9 +1311,11 @@ private fun Composer(
         Picker(
             app, net.network, net.gifs,
             onEmoji = { e ->
-                val t = draft.text
-                val (a, b) = draft.selection.min to draft.selection.max
-                draft = TextFieldValue(t.substring(0, a) + e + t.substring(b), TextRange(a + e.length))
+                draft.edit {
+                    val a = selection.min
+                    replace(a, selection.max, e)
+                    selection = TextRange(a + e.length)
+                }
             },
             // Posted as a plain link: every client can open it, and IrChad shows it inline.
             onGif = {
@@ -1302,10 +1328,11 @@ private fun Composer(
     }
 
     // The `@` list: the word before the cursor, while it starts with `@`.
+    val text = draft.text.toString()
     val cursor = draft.selection.min
-    val wordStart = draft.text.lastIndexOfAny(charArrayOf(' ', '\n', '\t'), (cursor - 1).coerceAtLeast(0))
+    val wordStart = text.lastIndexOfAny(charArrayOf(' ', '\n', '\t'), (cursor - 1).coerceAtLeast(0))
         .let { if (cursor == 0) 0 else it + 1 }
-    val word = draft.text.substring(wordStart.coerceAtMost(cursor), cursor)
+    val word = text.substring(wordStart.coerceAtMost(cursor), cursor)
     val nicks = remember(tick, net.network, buf.target, word) {
         if (word.startsWith("@")) c.nicks(net.network, buf.target, word.drop(1)) else emptyList()
     }
@@ -1318,31 +1345,34 @@ private fun Composer(
                 SuggestionChip(onClick = {
                     // What IRC clients highlight on: `nick: ` to start a message, `nick ` elsewhere.
                     val put = if (wordStart == 0) "${n.nick}: " else "${n.nick} "
-                    val t = draft.text
-                    draft = TextFieldValue(t.substring(0, wordStart) + put + t.substring(cursor), TextRange(wordStart + put.length))
+                    draft.edit {
+                        replace(wordStart, cursor, put)
+                        selection = TextRange(wordStart + put.length)
+                    }
                     if (n.nick !in picked) picked = picked + n.nick
                 }, label = { Text(n.shown) })
             }
         }
     }
 
-    fun change(v: TextFieldValue) {
-        var next = v
-        if (v.text != draft.text) {
-            // `:shortcode:` turns into its emoji as it's typed, like desktop.
-            val at = v.text.codePointCount(0, v.selection.min.coerceIn(0, v.text.length))
-            c.replaceShortcodes(net.network, v.text, at.toUInt())?.let { r ->
-                val i = r.text.offsetByCodePoints(0, r.cursor.toInt().coerceAtMost(r.text.codePointCount(0, r.text.length)))
-                next = TextFieldValue(r.text, TextRange(i))
-            }
-            c.typing(net.network, buf.target, next.text.isNotBlank())
-            if (next.text.isBlank()) picked = emptyList()
+    // What the user types (not our own edits).
+    val typed = InputTransformation {
+        if (changes.changeCount == 0) return@InputTransformation
+        val v = toString()
+        // `:shortcode:` turns into its emoji as it's typed, like desktop.
+        val at = v.codePointCount(0, selection.min.coerceIn(0, v.length))
+        c.replaceShortcodes(net.network, v, at.toUInt())?.let { r ->
+            val i = r.text.offsetByCodePoints(0, r.cursor.toInt().coerceAtMost(r.text.codePointCount(0, r.text.length)))
+            replace(0, length, r.text)
+            selection = TextRange(i)
         }
-        draft = next
+        val blank = asCharSequence().isBlank()
+        c.typing(net.network, buf.target, !blank)
+        if (blank) picked = emptyList()
     }
 
     fun submit() {
-        val text = draft.text.trimEnd()
+        val text = draft.text.toString().trimEnd()
         gifCommand(text)?.let { q ->
             if (net.gifs != null) {
                 gifQuery = q
@@ -1350,14 +1380,14 @@ private fun Composer(
             } else {
                 app.notices.tryEmit("This network doesn't have GIFs.")
             }
-            draft = TextFieldValue()
+            draft.clearText()
             return
         }
         if (text.isBlank()) return
         val id = editing?.msgid
         if (id != null) c.edit(net.network, buf.target, id, text, picked)
         else c.send(net.network, buf.target, text, replyTo?.msgid, picked)
-        draft = TextFieldValue()
+        draft.clearText()
         picked = emptyList()
         c.typing(net.network, buf.target, false)
         onDone()
@@ -1378,17 +1408,25 @@ private fun Composer(
             picker = true
         }) { Icon(Icons.Default.Face, "Emoji and GIFs") }
         TextField(
-            draft, ::change,
+            draft,
+            inputTransformation = typed,
             placeholder = { Text("Message ${buf.target}") },
-            maxLines = 5,
+            lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5),
             shape = RoundedCornerShape(24.dp),
             colors = androidx.compose.material3.TextFieldDefaults.colors(
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
             ),
-            modifier = Modifier.weight(1f),
+            // Keyboard GIFs, stickers and pasted images upload like attachments.
+            modifier = Modifier.weight(1f).contentReceiver { t ->
+                if (!t.hasMediaType(MediaType.Image)) return@contentReceiver t
+                val uris = mutableListOf<android.net.Uri>()
+                val rest = t.consume { item -> item.uri?.also { uris += it } != null }
+                if (uris.isNotEmpty()) upload(app, ctx, net, buf.target, uris)
+                rest
+            },
         )
-        IconButton(enabled = draft.text.isNotBlank(), onClick = ::submit) {
+        IconButton(enabled = text.isNotBlank(), onClick = ::submit) {
             Icon(if (editing != null) Icons.Default.Check else Icons.AutoMirrored.Filled.Send, if (editing != null) "Save" else "Send")
         }
     }

@@ -35,6 +35,8 @@ pub trait Listener: Send + Sync {
     fn changed(&self);
     /// Something to tell the user, in words they understand.
     fn notice(&self, text: String);
+    /// `Client::upload` finished: put `url` in `target`'s draft to send.
+    fn uploaded(&self, network: String, target: String, url: String);
     /// A join never became a network (wrong password, bad invite).
     fn join_failed(&self, invite: String, error: String);
     /// The answer to `Client::preview`: `None` if the page has none.

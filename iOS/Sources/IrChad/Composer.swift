@@ -83,6 +83,15 @@ struct Composer: View {
             model.client.typing(network: net.network, target: buf.target, active: !blank)
             if blank { picked = [] }
         }
+        // Finished uploads to here: their links go in the draft, to send when the user says.
+        .onChange(of: model.uploaded["\(net.network) \(buf.target)"], initial: true) { _, links in
+            guard let links else { return }
+            model.uploaded["\(net.network) \(buf.target)"] = nil
+            for l in links {
+                if let c = draft.last, !c.isWhitespace { draft += " " }
+                draft += l
+            }
+        }
         .onChange(of: editing?.key) { _, _ in
             // Prefilled with the text without its formatting, like desktop.
             if let e = editing {

@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import party.gentoo.irchad.core.Client
 import party.gentoo.irchad.core.Clip
 import party.gentoo.irchad.core.Credentials
@@ -45,6 +46,8 @@ class IrChad : Application() {
     val notifier by lazy { Notifier(this) }
     val sounds by lazy { Sounds(this) }
     val settings by lazy { Settings(this) }
+    /** Finished uploads (network, target, link), until that buffer's composer takes them. */
+    val uploaded = MutableStateFlow(listOf<Triple<String, String, String>>())
     /** Something shared to IrChad from another app, until it's sent somewhere. */
     val shared = MutableStateFlow<Shared?>(null)
 
@@ -62,6 +65,9 @@ class IrChad : Application() {
                 override fun notice(text: String) {
                     notices.tryEmit(text)
                 }
+
+                override fun uploaded(network: String, target: String, url: String) =
+                    this@IrChad.uploaded.update { it + Triple(network, target, url) }
 
                 override fun joinFailed(invite: String, error: String) {
                     joinFailures.tryEmit(invite to error)

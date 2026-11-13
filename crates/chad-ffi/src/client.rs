@@ -141,20 +141,12 @@ impl Client {
                     Event::Uploaded { result: Err(e), .. } => {
                         listener.notice(format!("Upload failed: {e}"))
                     }
-                    // Posted as a plain link, like desktop: every client can open it.
+                    // The app puts the link in the draft; the user sends it.
                     Event::Uploaded {
                         network,
                         target: Some(target),
                         result: Ok(url),
-                    } => c.send(Command::Net {
-                        network,
-                        cmd: NetCommand::Send {
-                            target,
-                            text: url.into(),
-                            reply_to: None,
-                            mentions: Vec::new(),
-                        },
-                    }),
+                    } => listener.uploaded(network, target, url.into()),
                     Event::Sounds { network, result } => match result {
                         Ok(clips) => listener.sounds(
                             network,
@@ -280,7 +272,7 @@ impl Client {
         self.core.send(Command::Background { on });
     }
 
-    /// Upload a file through chadd, then post its link to `target`.
+    /// Upload a file through chadd; its link comes as `Listener::uploaded`.
     /// Failures come as `Listener::notice`.
     pub fn upload(&self, network: String, target: String, name: String, bytes: Vec<u8>) {
         let bytes = chad_core::Blob(bytes.into());

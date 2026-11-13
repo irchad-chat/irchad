@@ -34,6 +34,8 @@ final class AppModel {
     var reporting: ReportDraft?
     /// The server took a report: say so until dismissed.
     var reported = false
+    /// Finished uploads' links by "network target", until that buffer's composer takes them.
+    var uploaded: [String: [String]] = [:]
     /// A conversation to show: a tapped notification, a finished join.
     var focus: Sel?
     /// An `irchad://` invite that opened the app, until the join screen takes it.
@@ -150,6 +152,10 @@ final class Bridge: Listener, @unchecked Sendable {
 
     func notice(text: String) {
         main { $0.toast(text) }
+    }
+
+    func uploaded(network: String, target: String, url: String) {
+        main { $0.uploaded["\(network) \(target)", default: []].append(url) }
     }
 
     func joinFailed(invite: String, error: String) {
