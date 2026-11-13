@@ -6,10 +6,6 @@ const icon = (name: string) => icons[`/node_modules/@phosphor-icons/core/assets/
 // Same release roots and asset names as chadd's landing page (crates/chadd/src/routes.rs, D44).
 const repo = "https://git.gentoo.party/sam/irchad-ng";
 const releases = "https://downloads.gentoo.party/irchad";
-// Play closed testing: joining the group adds you to the track's tester list, then you opt in.
-const testers = "https://groups.google.com/g/irchad-testers";
-const playOptIn = "https://play.google.com/apps/testing/chat.irchad.IrChad";
-const playStore = "https://play.google.com/store/apps/details?id=chat.irchad.IrChad";
 const builds = [
   { os: "Linux", icon: "linux-logo", asset: "irchad-linux-x86_64.tar.gz", note: "x86_64. Unpack, then run irchad/install.sh (or irchad/irchad directly).", nightly: true },
   { os: "Windows", icon: "windows-logo", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer.", nightly: true },
@@ -141,10 +137,7 @@ const table = [
             <p>{b.note} {b.nightly && <a href={`${releases}/nightly/${b.asset}`} download>Nightly build</a>}</p>
             <a class="btn primary" href={`${releases}/latest/${b.asset}`} download><Fragment set:html={icon(b.icon)} />Download for {b.os}</a>
             {b.os === "Android" && <a class="btn secondary" href={obtainium}><Fragment set:html={icon("package")} />Add to Obtainium</a>}
-            {b.os === "Android" && <>
-              <a class="btn secondary" href={testers}><Fragment set:html={icon("google-play-logo")} />Join the Play Store beta</a>
-              <p class="muted small">Join the group with your Google account, then <a href={playOptIn}>opt in on Google Play</a> and <a href={playStore}>install it</a>. It can take a few minutes after joining.</p>
-            </>}
+            {b.os === "Android" && <a class="btn secondary" href="/beta"><Fragment set:html={icon("google-play-logo")} />Join the Play Store beta</a>}
           </li>
         ))}
       </ul>

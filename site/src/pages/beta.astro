@@ -1,0 +1,65 @@
+---
+const site = "https://irchad.chat/";
+const title = "Android beta · IrChad";
+const description = "How to join the IrChad Android beta on Google Play and get started.";
+const testers = "https://groups.google.com/g/irchad-testers";
+const playOptIn = "https://play.google.com/apps/testing/chat.irchad.IrChad";
+const playStore = "https://play.google.com/store/apps/details?id=chat.irchad.IrChad";
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta name="description" content={description} />
+  <link rel="canonical" href={`${site}beta`} />
+</head>
+<body>
+  <main>
+    <p><a href="/">← IrChad</a></p>
+    <h1>Join the Android beta</h1>
+    <p class="muted">Thanks for testing! The beta comes from Google Play, so you need a Google account and Android 10 or newer.
+      Use the same Google account in every step.</p>
+
+    <h2>Get the app</h2>
+    <ol>
+      <li><b>Join the testers group:</b> open <a href={testers}>irchad-testers</a> and press <b>Join group</b>.</li>
+      <li><b>Opt in:</b> open <a href={playOptIn}>the beta opt-in page</a> and press <b>Become a tester</b>.
+        If it says you aren't eligible, wait a few minutes after joining the group and reload the page.</li>
+      <li><b>Install:</b> open <a href={playStore}>IrChad on Google Play</a> on your phone and install it.
+        Updates arrive through the Play Store like any other app.</li>
+    </ol>
+
+    <h2>Sign in</h2>
+    <ol>
+      <li>Open <a href="/invite">irchad.chat/invite</a> on your phone and press <b>Click to Join</b>, which opens the app.
+        Or, in the app, tap <b>Join a network</b> and enter <code>irchad.chat</code>.</li>
+      <li>Create an account or log in. See <a href="/docs/getting-started">Getting started</a> for the details.</li>
+      <li>The app asks once how you want notifications. <a href="/docs/mobile">Phones and tablets</a> explains the choices.</li>
+    </ol>
+
+    <h2>Report problems</h2>
+    <p>Tell Sam in the app: DM Sam or mention Sam in any channel. Say what you did, what you expected, and your phone model.</p>
+    <p class="muted">Already using the APK from this site? The Play version is a separate app, so both can be installed side by side.
+      To leave the beta, use the <a href={playOptIn}>opt-in page</a> again.</p>
+  </main>
+</body>
+</html>
+
+<style is:global>
+  /* The same Catppuccin tokens as privacy.astro. */
+  :root { color-scheme: light dark; --bg: #e6e9ef; --fg: #4c4f69; --muted: #6c6f85; --accent: #40a02b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #11111b; --fg: #cdd6f4; --muted: #a6adc8; --accent: #a6e3a1; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 16px 4rem; }
+  a { color: inherit; text-decoration-color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 2.25rem; margin: 1rem 0 0; }
+  h2 { font-size: 1.3rem; margin: 2.5rem 0 .5rem; }
+  .muted { color: var(--muted); }
+  li { margin: .35rem 0; }
+  code { font-size: .9em; overflow-wrap: anywhere; }
+</style>

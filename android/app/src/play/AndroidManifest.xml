@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The Play build drops "Stay connected" (a specialUse foreground service):
-     notifications in the background come through UnifiedPush only. -->
+     notifications in the background come through UnifiedPush only, with FCM
+     as the embedded fallback distributor (D84). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 

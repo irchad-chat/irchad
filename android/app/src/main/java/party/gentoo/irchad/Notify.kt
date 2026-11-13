@@ -111,7 +111,11 @@ class Notifier(private val app: IrChad) {
         }
     }
 
-    fun hasDistributor() = UnifiedPush.getDistributors(app).any { it != app.packageName }
+    /** On the Play build, our own package counts: FCM, when Play services is there (D84). */
+    fun hasDistributor() = UnifiedPush.getDistributors(app).isNotEmpty()
+
+    /** Push would go through Google, as no UnifiedPush app is installed. */
+    fun onlyEmbedded() = UnifiedPush.getDistributors(app) == listOf(app.packageName)
 
     /** Picking push may ask which distributor, which needs [activity]. */
     fun choose(m: Background, activity: Activity) {
@@ -310,7 +314,11 @@ fun BackgroundChoices(app: IrChad) {
         for ((m, label, sub) in listOf(
             Triple(
                 Background.PUSH, "Push",
-                if (has) "Through your UnifiedPush app, such as ntfy" else "Needs a UnifiedPush app such as ntfy",
+                when {
+                    !has -> "Needs a UnifiedPush app such as ntfy"
+                    n.onlyEmbedded() -> "Through Google Play services"
+                    else -> "Through your UnifiedPush app, such as ntfy"
+                },
             ),
             Triple(Background.SOCKET, "Stay connected", "Shows a permanent notification, and uses some battery"),
             Triple(Background.OFF, "Off", "Only while IrChad is open"),
