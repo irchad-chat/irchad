@@ -114,8 +114,8 @@ dependencies {
         exclude(group = "com.google.crypto.tink", module = "tink")
     }
     implementation("com.google.crypto.tink:tink-android:1.23.0")
-    // Play only: FCM as a fallback distributor, straight to ergo with its VAPID key (D84).
-    "playImplementation"("org.unifiedpush.android:embedded-fcm-distributor:3.1.0")
+    // FCM as the fallback distributor, only with Play services; ergo posts to it with its VAPID key (D84).
+    implementation("org.unifiedpush.android:embedded-fcm-distributor:3.1.0")
     implementation("com.mikepenz:aboutlibraries-compose-m3:13.2.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")

@@ -111,7 +111,7 @@ class Notifier(private val app: IrChad) {
         }
     }
 
-    /** On the Play build, our own package counts: FCM, when Play services is there (D84). */
+    /** Our own package counts: the embedded FCM distributor, when Play services is there (D84). */
     fun hasDistributor() = UnifiedPush.getDistributors(app).isNotEmpty()
 
     /** Push would go through Google, as no UnifiedPush app is installed. */
