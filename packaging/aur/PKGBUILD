@@ -1,0 +1,31 @@
+# Maintainer: Sam Hoffman
+# Source of truth: packaging/aur/PKGBUILD in https://git.gentoo.party/sam/irchad-ng
+# release.yml's aur job bumps pkgver and the checksum and pushes to the AUR.
+pkgname=irchad-bin
+pkgver=0.1.34
+pkgrel=1
+pkgdesc='Discord-like client for IRC: chat, voice and screen share'
+arch=(x86_64)
+url='https://git.gentoo.party/sam/irchad-ng'
+license=(GPL-3.0-or-later)
+depends=(glibc libgcc glib2 libpipewire dbus libglvnd libxkbcommon hicolor-icon-theme)
+optdepends=(
+  'xdg-desktop-portal: screen share and file picker on Wayland'
+  'libva: hardware video encoding'
+)
+provides=(irchad)
+conflicts=(irchad)
+options=(!debug)
+# The asset name has no version in it, so name the download.
+source=("irchad-$pkgver.tar.gz::$url/releases/download/v$pkgver/irchad-linux-x86_64.tar.gz")
+sha256sums=('d9542f6fb4bc1c65ec80b88f94219a597dbc5e02197bf0b1bea917841637603c')
+
+package() {
+  cd irchad
+  local id=party.gentoo.IrChad
+  install -Dm755 irchad "$pkgdir/usr/bin/irchad"
+  install -Dm644 "$id.desktop" "$pkgdir/usr/share/applications/$id.desktop"
+  install -Dm644 "$id.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$id.svg"
+  install -Dm644 "$id.metainfo.xml" "$pkgdir/usr/share/metainfo/$id.metainfo.xml"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE THIRD_PARTY_LICENSES.txt LIBWEBRTC_LICENSES.md
+}

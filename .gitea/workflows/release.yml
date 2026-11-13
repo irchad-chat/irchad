@@ -223,3 +223,16 @@ jobs:
         env:
           CHADSTER_PASSWORD: ${{ secrets.CHADSTER_PASSWORD }}
         run: python3 deploy/tools/announce.py ${{ needs.release.outputs.version }} "https://git.gentoo.party/${{ github.repository }}/releases/tag/v${{ needs.release.outputs.version }}"
+      # AUR_SSH_KEY: private key registered on the irchad-bin AUR account.
+      # Skipped until that secret exists; best effort like the announcement.
+      - name: Bump irchad-bin on the AUR
+        continue-on-error: true
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          [ -n "$AUR_SSH_KEY" ] || { echo "AUR_SSH_KEY not set, skipping"; exit 0; }
+          mkdir -p ~/.ssh && printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur && chmod 600 ~/.ssh/aur
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur -o IdentitiesOnly=yes"
+          git config --global user.name "Sam Hoffman" && git config --global user.email "${{ secrets.AUR_EMAIL }}"
+          packaging/aur/publish.sh ${{ needs.release.outputs.version }}
