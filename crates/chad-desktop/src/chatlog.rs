@@ -643,7 +643,10 @@ fn row_ui(
                         .color(ui.visuals().error_fg_color),
                 );
             } else {
-                ui.scope(|ui| body_ui(ui, m, &parsed.lines, name, dark, extras));
+                let hide = inline_images(m, &parsed.links, extras)
+                    .filter(|u| extras.media.image_ready(u))
+                    .collect::<Vec<_>>();
+                ui.scope(|ui| body_ui(ui, m, &parsed.lines, &hide, name, dark, extras));
                 if m.edited {
                     ui.label(RichText::new("(edited)").weak().small());
                 }
@@ -831,18 +834,35 @@ pub fn guest_badge(ui: &mut egui::Ui) {
         .on_hover_text("Guest (not logged in)");
 }
 
+fn shows_media(m: &ChatMessage, extras: &Extras) -> bool {
+    m.kind != MessageKind::Notice && (extras.guest_media || m.account.is_some() || m.own)
+}
+
+/// The image links `links_ui` shows inline.
+fn inline_images<'a>(
+    m: &ChatMessage,
+    links: &'a [(String, Kind)],
+    extras: &Extras,
+) -> impl Iterator<Item = &'a str> {
+    let on = shows_media(m, extras);
+    links
+        .iter()
+        .filter(move |(_, k)| on && matches!(k, Kind::Image))
+        .take(MAX_IMAGES)
+        .map(|(u, _)| u.as_str())
+}
+
 /// Images inline, videos and files as cards, and a preview of the first page.
 fn links_ui(ui: &mut egui::Ui, m: &ChatMessage, links: &[(String, Kind)], extras: &mut Extras) {
-    if m.kind == MessageKind::Notice || (!extras.guest_media && m.account.is_none() && !m.own) {
+    if !shows_media(m, extras) {
         return;
     }
-    let (mut images, mut previewed) = (0, false);
+    for url in inline_images(m, links, extras).collect::<Vec<_>>() {
+        extras.media.image(ui, url, extras.auto_media);
+    }
+    let mut previewed = false;
     for (url, kind) in links {
         match *kind {
-            Kind::Image if images < MAX_IMAGES => {
-                images += 1;
-                extras.media.image(ui, url, extras.auto_media);
-            }
             k @ (Kind::Video | Kind::File) => Media::card(ui, url, k),
             Kind::Page if !previewed => {
                 previewed = true;
@@ -857,6 +877,7 @@ fn body_ui(
     ui: &mut egui::Ui,
     m: &ChatMessage,
     lines: &[Vec<format::Span>],
+    hide: &[&str],
     name: &str,
     dark: bool,
     extras: &mut Extras,
@@ -887,6 +908,11 @@ fn body_ui(
             continue;
         }
         for spans in group {
+            let hidden = |s: &format::Span| s.link && hide.contains(&s.text.as_str());
+            // A line that was only shown images goes, rather than leave a gap.
+            if !spans.is_empty() && spans.iter().all(|s| hidden(s) || s.text.trim().is_empty()) {
+                continue;
+            }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 if std::mem::take(&mut first) && m.kind == MessageKind::Action {
@@ -901,6 +927,9 @@ fn body_ui(
                     ui.label(" ");
                 }
                 for span in spans {
+                    if hidden(span) {
+                        continue;
+                    }
                     if span.link || span.mono {
                         span_ui(ui, m, span, &span.text, weak);
                         continue;

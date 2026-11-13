@@ -240,19 +240,39 @@ struct Animated: UIViewRepresentable {
     }
 }
 
+/// Whether `MessageLinks` shows anything for `m`.
+@MainActor
+private func showsMedia(_ model: AppModel, _ m: Message) -> Bool {
+    !(m.notice || m.redacted || m.undecryptable) && (model.settings.guestMedia || m.account != nil || m.own)
+}
+
+/// The image links `MessageLinks` shows inline.
+@MainActor
+private func inlineImages(_ model: AppModel, _ m: Message) -> [Link] {
+    showsMedia(model, m) ? Array(m.links.filter { $0.kind == .image }.prefix(maxImages)) : []
+}
+
+/// Links whose image is showing inline: the image stands in for the link.
+@MainActor
+func shownImages(_ model: AppModel, network: String, _ m: Message) -> Set<String> {
+    let _ = model.media.tick
+    return Set(inlineImages(model, m).map(\.url).filter {
+        if case .ready? = model.media.image(network: network, url: $0, ask: false) { true } else { false }
+    })
+}
+
 /// Images inline, videos and files as cards, and a preview of the first page.
 struct MessageLinks: View {
     @Environment(AppModel.self) private var model
     let network: String
     let m: Message
-    @State private var open: UIImage?
+    @State private var open: ImageBox?
 
     var body: some View {
-        if !(m.notice || m.redacted || m.undecryptable || m.links.isEmpty)
-            && (model.settings.guestMedia || m.account != nil || m.own) {
+        if !m.links.isEmpty && showsMedia(model, m) {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(m.links.filter { $0.kind == .image }.prefix(maxImages), id: \.url) { l in
-                    RemoteImage(network: network, url: l.url, onOpen: { open = $0 })
+                ForEach(inlineImages(model, m), id: \.url) { l in
+                    RemoteImage(network: network, url: l.url, onOpen: { open = ImageBox(image: $0, url: l.url) })
                 }
                 ForEach(m.links.filter { $0.kind == .video || $0.kind == .file }, id: \.url) { l in
                     FileCard(link: l)
@@ -262,8 +282,8 @@ struct MessageLinks: View {
                 }
             }
             .padding(.top, 4)
-            .fullScreenCover(item: Binding(get: { open.map(ImageBox.init) }, set: { open = $0?.image })) { b in
-                ImageViewer(image: b.image)
+            .fullScreenCover(item: $open) { b in
+                ImageViewer(image: b.image, url: b.url)
             }
         }
     }
@@ -271,6 +291,7 @@ struct MessageLinks: View {
 
 private struct ImageBox: Identifiable {
     let image: UIImage
+    let url: String
     var id: ObjectIdentifier { ObjectIdentifier(image) }
 }
 
@@ -339,13 +360,31 @@ private struct PreviewCard: View {
 // larger, like desktop's viewer, if that looks soft on an iPad.
 struct ImageViewer: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     let image: UIImage
+    let url: String
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
             Zoomable { Animated(image: image) }
                 .ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(url).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 16) {
+                    if let u = URL(string: url) {
+                        Button("Open in browser", systemImage: "arrow.up.right.square") { openURL(u) }
+                    }
+                    Button("Copy image link", systemImage: "doc.on.doc") { UIPasteboard.general.string = url }
+                }
+                .font(.callout)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .background(alignment: .bottom) {
+                LinearGradient(colors: [.clear, .black.opacity(0.6)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 120).ignoresSafeArea()
+            }
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill").font(.title).foregroundStyle(.white, .white.opacity(0.3))
             }

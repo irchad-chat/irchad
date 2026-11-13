@@ -18,6 +18,17 @@ const picking = ref(false)
 
 const m = computed(() => props.msg)
 const canAct = computed(() => !!m.value.msgid && !m.value.redacted && client.connected)
+// Links whose image shows under the message: the image stands in for them.
+const shown = ref(new Set<string>())
+const spans = computed(() => {
+  if (!shown.value.size) return m.value.spans
+  const kept = m.value.spans.filter((s) => !(s.link && shown.value.has(s.text)))
+  const blank = (i: number) => !kept[i]?.text.trim()
+  let [a, b] = [0, kept.length]
+  while (a < b && blank(a)) a++
+  while (b > a && blank(b - 1)) b--
+  return kept.slice(a, b)
+})
 const snippet = (t: string) => (t.length > 120 ? `${t.slice(0, 120)}…` : t)
 
 function react(e: string) {
@@ -66,12 +77,12 @@ function remove() {
           <i v-if="m.redacted" class="dim">deleted</i>
           <template v-else>
             <span v-if="m.action">* {{ m.shown }} </span>
-            <Spans :spans="m.spans" />
+            <Spans :spans="spans" />
             <span v-if="m.edited" class="dim small"> (edited)</span>
           </template>
           <span v-if="m.failed" class="err small"> {{ m.failed }}</span>
         </div>
-        <Embeds v-if="!m.redacted && m.links.length" :links="m.links" />
+        <Embeds v-if="!m.redacted && m.links.length" :links="m.links" @shown="(u) => (shown = new Set(shown).add(u))" />
         <div v-if="m.reactions.length" class="reactions">
           <button
             v-for="r in m.reactions"

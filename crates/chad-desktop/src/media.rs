@@ -224,6 +224,11 @@ impl Media {
         }
     }
 
+    /// Whether `url` is showing as an inline image, so its link can go.
+    pub fn image_ready(&self, url: &str) -> bool {
+        matches!(self.images.get(url), Some(Img::Ready(_)))
+    }
+
     /// An inline image, or a button to load it when `auto` is off.
     pub fn image(&mut self, ui: &mut egui::Ui, url: &str, auto: bool) {
         if auto {
@@ -306,12 +311,19 @@ impl Media {
                 f.size * scale,
             )));
             r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &url));
+            ui.add(egui::Label::new(RichText::new(&url).weak().small()).truncate());
             ui.horizontal(|ui| {
                 if ui
                     .button(format!("{} Open in browser", icons::ARROW_SQUARE_OUT))
                     .clicked()
                 {
                     ui.ctx().open_url(egui::OpenUrl::new_tab(&url));
+                }
+                if ui
+                    .button(format!("{} Copy image link", icons::COPY))
+                    .clicked()
+                {
+                    ui.ctx().copy_text(url.clone());
                 }
                 close = ui.button("Close").clicked();
             });

@@ -7,6 +7,8 @@ import { useClient } from '../stores/client'
 import MediaImg from './MediaImg.vue'
 
 const props = defineProps<{ links: Link[] }>()
+// An image that's showing, so its link in the text can go.
+const emit = defineEmits<{ shown: [url: string] }>()
 const client = useClient()
 const own = (url: string) => URL.canParse(url) && new URL(url).origin === client.network
 const failed = ref(new Set<string>())
@@ -32,7 +34,7 @@ const fail = (url: string) => (failed.value = new Set(failed.value).add(url))
   <div v-if="shown.length || card" class="embeds">
     <template v-for="l in shown" :key="l.url">
       <a v-if="l.kind === 'image'" :href="l.url" target="_blank" rel="noopener noreferrer">
-        <MediaImg class="embed-img" :url="l.url" @failed="fail(l.url)" />
+        <MediaImg class="embed-img" :url="l.url" @failed="fail(l.url)" @loaded="emit('shown', l.url)" />
       </a>
       <video v-else-if="l.kind === 'video'" class="embed-img" :src="l.url" controls preload="metadata" />
       <a v-else class="file" :href="l.url" target="_blank" rel="noopener noreferrer" download><i class="ph ph-file" /> {{ fileName(l.url) }}</a>

@@ -1067,16 +1067,24 @@ private fun MessageRow(
                 app, network,
                 remember(m.spans, m.reactions) { m.spans.mapNotNull { it.emoji } + m.reactions.mapNotNull { it.image } },
             )
+            val hidden = shownImages(app, network, m)
+            val spans = remember(m.spans, hidden) {
+                if (hidden.isEmpty()) m.spans
+                else m.spans.filterNot { it.link && it.text in hidden }
+                    .dropWhile { it.text.isBlank() }.dropLastWhile { it.text.isBlank() }
+            }
             when {
                 m.redacted -> Text("Message deleted", fontStyle = FontStyle.Italic, color = faint)
                 m.undecryptable -> Text("Couldn't decrypt this message.", fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.error)
                 m.action -> Text(
-                    styled(m.spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} ", emoji = inline.keys),
+                    styled(spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} ", emoji = inline.keys),
                     fontStyle = FontStyle.Italic,
                     inlineContent = inline,
                 )
+                // Nothing but shown images: no empty line above them.
+                spans.isEmpty() && m.spans.isNotEmpty() -> {}
                 else -> Text(
-                    styled(m.spans, MaterialTheme.colorScheme.primary, emoji = inline.keys),
+                    styled(spans, MaterialTheme.colorScheme.primary, emoji = inline.keys),
                     color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
                     inlineContent = inline,
                 )

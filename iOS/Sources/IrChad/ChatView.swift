@@ -323,15 +323,30 @@ struct MessageRow: View {
         .contextMenu { menu }
     }
 
+    /// The text without links to images that show inline.
+    private var spans: [Span] {
+        let hidden = shownImages(model, network: network, m)
+        guard !hidden.isEmpty else { return m.spans }
+        let blank = { (s: Span) in s.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let kept = m.spans.filter { !($0.link && hidden.contains($0.text)) }
+        guard let first = kept.firstIndex(where: { !blank($0) }), let last = kept.lastIndex(where: { !blank($0) }) else {
+            return []
+        }
+        return Array(kept[first...last])
+    }
+
     @ViewBuilder private var messageBody: some View {
         if m.redacted {
             Text("Message deleted").italic().foregroundStyle(.secondary)
         } else if m.undecryptable {
             Text("Couldn't decrypt this message.").italic().foregroundStyle(.red)
         } else if m.action {
-            styledText(m.spans, prefix: "* \(m.shown) ", network: network, media: model.media).italic()
+            styledText(spans, prefix: "* \(m.shown) ", network: network, media: model.media).italic()
+        } else if spans.isEmpty && !m.spans.isEmpty {
+            // Nothing but shown images: no empty line above them.
+            EmptyView()
         } else {
-            styledText(m.spans, network: network, media: model.media)
+            styledText(spans, network: network, media: model.media)
                 .foregroundStyle(m.pending || m.notice ? .secondary : .primary)
                 .textSelection(.enabled)
         }

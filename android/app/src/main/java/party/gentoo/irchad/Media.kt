@@ -322,17 +322,33 @@ fun EmojiImage(app: IrChad, network: String, url: String, name: String, modifier
     )
 }
 
+/** Whether `MessageLinks` shows anything for `m`. */
+private fun showsMedia(app: IrChad, m: Message) =
+    !(m.notice || m.redacted || m.undecryptable) && (app.media.guests || m.account != null || m.own)
+
+/** The image links `MessageLinks` shows inline. */
+private fun inlineImages(app: IrChad, m: Message) =
+    if (!showsMedia(app, m)) emptyList() else m.links.filter { it.kind == LinkKind.IMAGE }.take(MAX_IMAGES)
+
+/** Links whose image is showing inline: the image stands in for the link. */
+@Composable
+fun shownImages(app: IrChad, network: String, m: Message): Set<String> {
+    val tick by app.media.tick.collectAsState()
+    return remember(tick, network, m) {
+        inlineImages(app, m).filter { app.media.image(network, it.url, false) is Media.Img.Ready }
+            .mapTo(HashSet()) { it.url }
+    }
+}
+
 /** Images inline, videos and files as cards, and a preview of the first page. */
 @Composable
 fun MessageLinks(app: IrChad, network: String, m: Message) {
-    if (m.notice || m.redacted || m.undecryptable || m.links.isEmpty()) return
-    if (!app.media.guests && m.account == null && !m.own) return
+    if (m.links.isEmpty() || !showsMedia(app, m)) return
     val pages = m.links.filter { it.kind == LinkKind.PAGE }.take(1)
-    val images = m.links.filter { it.kind == LinkKind.IMAGE }.take(MAX_IMAGES)
-    var open by remember { mutableStateOf<Drawable?>(null) }
-    open?.let { ImageViewer(it) { open = null } }
+    var open by remember { mutableStateOf<Pair<String, Drawable>?>(null) }
+    open?.let { (url, d) -> ImageViewer(d, url) { open = null } }
     Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        for (l in images) RemoteImage(app, network, l.url, 280.dp, 220.dp, onOpen = { open = it })
+        for (l in inlineImages(app, m)) RemoteImage(app, network, l.url, 280.dp, 220.dp, onOpen = { open = l.url to it })
         for (l in m.links.filter { it.kind == LinkKind.VIDEO || it.kind == LinkKind.FILE }) FileCard(l)
         for (l in pages) LinkPreviewCard(app, network, l.url)
     }
@@ -344,7 +360,7 @@ fun MessageLinks(app: IrChad, network: String, m: Message) {
 // shortcut: shows the inline decode (800 px a side); decode the bytes again
 // larger, like desktop's viewer, if that looks soft on big screens.
 @Composable
-fun ImageViewer(d: Drawable, onDismiss: () -> Unit) {
+fun ImageViewer(d: Drawable, url: String, onDismiss: () -> Unit) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         var scale by remember { mutableStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
@@ -376,6 +392,21 @@ fun ImageViewer(d: Drawable, onDismiss: () -> Unit) {
             )
             IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp)) {
                 Icon(Icons.Default.Close, "Close", tint = Color.White)
+            }
+            val uri = LocalUriHandler.current
+            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+            Column(
+                Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = 0.6f))
+                    .navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Text(url, color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row {
+                    TextButton(onClick = { uri.openUri(url) }) { Text("Open in browser") }
+                    TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(url)) }) {
+                        Text("Copy image link")
+                    }
+                }
             }
         }
     }
