@@ -315,6 +315,8 @@ fn live() {
     s.harness.key_press(egui::Key::Tab);
     s.shot("live_mention_done");
     s.click("bob");
+    s.shot("live_card");
+    s.click("Send DM");
     s.settle(2);
     s.shot("live_dm");
     s.click("Network options");

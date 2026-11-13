@@ -672,22 +672,29 @@ impl App {
                         m,
                         profile,
                         chatlog::shown(profiles, &m.nick),
-                    );
-                    let r = r.on_hover_ui(|ui| {
-                        profile_card(
-                            ui,
-                            media,
-                            auto,
-                            m,
-                            profile,
-                            chatlog::shown(profiles, &m.nick),
-                            m.nick != own,
-                        );
-                    });
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let card = egui::Popup::from_toggle_button_response(&r)
+                        // Not the default id: `context_menu` on `r` closes that one on left click.
+                        .id(r.id.with("card"))
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .align(egui::RectAlign::LEFT_START)
+                        .show(|ui| {
+                            chatlog::profile_card(
+                                ui,
+                                media,
+                                auto,
+                                m,
+                                profile,
+                                chatlog::shown(profiles, &m.nick),
+                                m.nick != own,
+                                true,
+                            )
+                        });
+                    if card.is_some_and(|c| c.inner) {
+                        dm = Some(m.nick.clone());
+                    }
                     if m.nick != own {
-                        if r.clicked() {
-                            dm = Some(m.nick.clone());
-                        }
                         r.context_menu(|ui| {
                             if ui.button("Block").clicked() {
                                 block = Some((m.nick.clone(), m.account.clone()));
@@ -732,49 +739,6 @@ fn badges(m: &Member) -> String {
 }
 
 /// Channel roles from mode prefixes (`~&@%+`), highest first.
-fn roles(prefix: &str) -> Vec<&'static str> {
-    prefix
-        .chars()
-        .filter_map(|c| match c {
-            '~' => Some("Owner"),
-            '&' => Some("Admin"),
-            '@' => Some("Operator"),
-            '%' => Some("Half-op"),
-            '+' => Some("Voice"),
-            _ => None,
-        })
-        .collect()
-}
-
-/// An avatar with its online/away dot on the lower right.
-fn avatar_with_status(
-    ui: &egui::Ui,
-    media: &mut Media,
-    auto: bool,
-    rect: egui::Rect,
-    name: &str,
-    profile: Option<&chatlog::Profile>,
-    away: bool,
-) {
-    media.avatar(
-        ui,
-        rect,
-        name,
-        profile.and_then(|p| p.avatar.as_ref()),
-        auto,
-    );
-    let r = rect.width() * 0.16;
-    let c = rect.right_bottom() - vec2(r, r) * 0.9;
-    let dot = if away {
-        Color32::from_rgb(0xf0, 0xb2, 0x32)
-    } else {
-        Color32::from_rgb(0x23, 0xa5, 0x5a)
-    };
-    let p = ui.painter();
-    p.circle_filled(c, r + 2.0, ui.visuals().panel_fill);
-    p.circle_filled(c, r, dot);
-}
-
 /// One member, Discord style: avatar, display name, and their activity under it.
 fn member_row(
     ui: &mut egui::Ui,
@@ -798,7 +762,7 @@ fn member_row(
         egui::pos2(rect.left() + 6.0 + ROW_AVATAR / 2.0, rect.center().y),
         vec2(ROW_AVATAR, ROW_AVATAR),
     );
-    avatar_with_status(ui, media, auto, at, name, profile, m.away);
+    chatlog::avatar_with_status(ui, media, auto, at, name, profile, m.away);
 
     let x = rect.left() + ROW_TEXT_X;
     let room = (rect.right() - 4.0 - x).max(0.0);
@@ -839,89 +803,4 @@ fn member_row(
         p.galley(egui::pos2(x, below), sub, fg);
     }
     r
-}
-
-/// What hovering a member shows: a bigger avatar, names, and what we know.
-fn profile_card(
-    ui: &mut egui::Ui,
-    media: &mut Media,
-    auto: bool,
-    m: &Member,
-    profile: Option<&chatlog::Profile>,
-    name: &str,
-    other: bool,
-) {
-    ui.set_min_width(240.0);
-    ui.horizontal(|ui| {
-        let (at, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
-        avatar_with_status(ui, media, auto, at, name, profile, m.away);
-        ui.vertical(|ui| {
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(name)
-                    .heading()
-                    .strong()
-                    .color(chatlog::nick_color(&m.nick, ui.visuals().dark_mode)),
-            );
-            if name != m.nick {
-                ui.label(RichText::new(&m.nick).weak());
-            }
-        });
-    });
-    if let Some(a) = profile.and_then(|p| p.activity.as_deref()) {
-        ui.add_space(4.0);
-        ui.label(format!("{} {a}", crate::presence::icon(a)));
-    }
-    ui.separator();
-    egui::Grid::new("profile_card")
-        .num_columns(2)
-        .spacing(vec2(12.0, 4.0))
-        .show(ui, |ui| {
-            let row = |ui: &mut egui::Ui, k: &str, v: RichText| {
-                ui.label(RichText::new(k).small().weak());
-                ui.label(v);
-                ui.end_row();
-            };
-            row(
-                ui,
-                "Status",
-                RichText::new(if m.away { "Away" } else { "Online" }),
-            );
-            match &m.account {
-                Some(a) => row(ui, "Account", RichText::new(a)),
-                None => row(
-                    ui,
-                    "Account",
-                    RichText::new(format!("{} Guest (not logged in)", icons::GHOST)).weak(),
-                ),
-            }
-            let roles = roles(&m.prefix);
-            if !roles.is_empty() {
-                row(ui, "Channel role", RichText::new(roles.join(", ")));
-            }
-            if m.oper {
-                row(
-                    ui,
-                    "Network",
-                    RichText::new(format!("{} IRC operator", icons::CROWN)),
-                );
-            }
-        });
-    if other {
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new("Click to message · right-click to block")
-                .small()
-                .weak(),
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn roles_follow_prefixes() {
-        assert_eq!(super::roles("~@+"), ["Owner", "Operator", "Voice"]);
-        assert!(super::roles("").is_empty());
-    }
 }

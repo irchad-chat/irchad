@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use chad_core::view::{Edit, Msgs, mention_name};
-use chad_core::{ChatMessage, Crypt, Mention, MessageKind, SendStatus, mention};
+use chad_core::{ChatMessage, Crypt, Member, Mention, MessageKind, SendStatus, mention};
 use egui::{Align, Color32, Layout, Rect, RichText, ScrollArea, Sense, Stroke, UiBuilder, vec2};
 use jiff::tz::TimeZone;
 
@@ -568,19 +568,49 @@ fn row_ui(
                     profile.and_then(|p| p.avatar.as_ref()),
                     extras.auto_media,
                 );
+                let av = ui
+                    .interact(at, ui.scope_id().with(("avatar", index)), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
                 ui.horizontal(|ui| {
                     let label = RichText::new(name)
                         .strong()
                         .color(nick_color(&m.nick, dark));
                     let r = ui
                         .add(egui::Label::new(label).sense(Sense::click()))
-                        .on_hover_ui(|ui| {
-                            ui.label(account_tip(&m.nick, name, m.account.as_deref()));
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let toggle =
+                        (r.clicked() || av.clicked()).then_some(egui::SetOpenCommand::Toggle);
+                    let card = egui::Popup::from_response(&r)
+                        // Not the default id: `context_menu` on `r` closes that one on left click.
+                        .id(r.id.with("card"))
+                        .open_memory(toggle)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
+                            let member = extras.members.as_deref().and_then(|ms| {
+                                ms.iter().find(|x| x.nick.eq_ignore_ascii_case(&m.nick))
+                            });
+                            let guess = Member {
+                                nick: m.nick.clone(),
+                                account: m.account.clone(),
+                                away: false,
+                                oper: false,
+                                prefix: String::new(),
+                            };
+                            profile_card(
+                                ui,
+                                extras.media,
+                                extras.auto_media,
+                                member.unwrap_or(&guess),
+                                profile,
+                                name,
+                                !m.own,
+                                member.is_some(),
+                            )
                         });
+                    if card.is_some_and(|c| c.inner) {
+                        actions.push(Action::OpenDm(m.nick.clone()));
+                    }
                     if !m.own {
-                        if r.clicked() {
-                            actions.push(Action::OpenDm(m.nick.clone()));
-                        }
                         r.context_menu(|ui| {
                             if ui.button("Block").clicked() {
                                 actions.push(Action::Block(m.nick.clone(), m.account.clone()));
@@ -821,14 +851,6 @@ fn toolbar(
 }
 
 /// "nick · account x", for hovering someone's name.
-pub fn account_tip(nick: &str, name: &str, account: Option<&str>) -> String {
-    match account {
-        Some(a) if name != nick => format!("{nick} · account {a}"),
-        Some(a) => format!("account {a}"),
-        None => format!("{nick} · not logged in"),
-    }
-}
-
 pub fn guest_badge(ui: &mut egui::Ui) {
     ui.label(RichText::new(icons::GHOST).weak())
         .on_hover_text("Guest (not logged in)");
@@ -1033,9 +1055,141 @@ pub fn snippet(s: &str, max: usize) -> String {
     out
 }
 
+fn roles(prefix: &str) -> Vec<&'static str> {
+    prefix
+        .chars()
+        .filter_map(|c| match c {
+            '~' => Some("Owner"),
+            '&' => Some("Admin"),
+            '@' => Some("Operator"),
+            '%' => Some("Half-op"),
+            '+' => Some("Voice"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An avatar with its online/away dot on the lower right.
+pub fn avatar_with_status(
+    ui: &egui::Ui,
+    media: &mut Media,
+    auto: bool,
+    rect: egui::Rect,
+    name: &str,
+    profile: Option<&Profile>,
+    away: bool,
+) {
+    media.avatar(
+        ui,
+        rect,
+        name,
+        profile.and_then(|p| p.avatar.as_ref()),
+        auto,
+    );
+    let r = rect.width() * 0.16;
+    let c = rect.right_bottom() - vec2(r, r) * 0.9;
+    let dot = if away {
+        Color32::from_rgb(0xf0, 0xb2, 0x32)
+    } else {
+        Color32::from_rgb(0x23, 0xa5, 0x5a)
+    };
+    let p = ui.painter();
+    p.circle_filled(c, r + 2.0, ui.visuals().panel_fill);
+    p.circle_filled(c, r, dot);
+}
+
+/// What clicking someone shows: a bigger avatar, names, and what we know.
+/// `present`: `m` is a real channel member, so its away state is known.
+/// Returns whether "Send DM" was clicked.
+#[allow(clippy::too_many_arguments)]
+pub fn profile_card(
+    ui: &mut egui::Ui,
+    media: &mut Media,
+    auto: bool,
+    m: &Member,
+    profile: Option<&Profile>,
+    name: &str,
+    other: bool,
+    present: bool,
+) -> bool {
+    ui.set_min_width(240.0);
+    ui.horizontal(|ui| {
+        let (at, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+        if present {
+            avatar_with_status(ui, media, auto, at, name, profile, m.away);
+        } else {
+            media.avatar(ui, at, name, profile.and_then(|p| p.avatar.as_ref()), auto);
+        }
+        ui.vertical(|ui| {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(name)
+                    .heading()
+                    .strong()
+                    .color(nick_color(&m.nick, ui.visuals().dark_mode)),
+            );
+            if name != m.nick {
+                ui.label(RichText::new(&m.nick).weak());
+            }
+        });
+    });
+    if let Some(a) = profile.and_then(|p| p.activity.as_deref()) {
+        ui.add_space(4.0);
+        ui.label(format!("{} {a}", crate::presence::icon(a)));
+    }
+    ui.separator();
+    egui::Grid::new("profile_card")
+        .num_columns(2)
+        .spacing(vec2(12.0, 4.0))
+        .show(ui, |ui| {
+            let row = |ui: &mut egui::Ui, k: &str, v: RichText| {
+                ui.label(RichText::new(k).small().weak());
+                ui.label(v);
+                ui.end_row();
+            };
+            if present {
+                let status = if m.away { "Away" } else { "Online" };
+                row(ui, "Status", RichText::new(status));
+            }
+            match &m.account {
+                Some(a) => row(ui, "Account", RichText::new(a)),
+                None => row(
+                    ui,
+                    "Account",
+                    RichText::new(format!("{} Guest (not logged in)", icons::GHOST)).weak(),
+                ),
+            }
+            let roles = roles(&m.prefix);
+            if !roles.is_empty() {
+                row(ui, "Channel role", RichText::new(roles.join(", ")));
+            }
+            if m.oper {
+                row(
+                    ui,
+                    "Network",
+                    RichText::new(format!("{} IRC operator", icons::CROWN)),
+                );
+            }
+        });
+    if other {
+        ui.add_space(4.0);
+        if ui.button("Send DM").clicked() {
+            ui.close();
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn roles_follow_prefixes() {
+        assert_eq!(roles("~@+"), ["Owner", "Operator", "Voice"]);
+        assert!(roles("").is_empty());
+    }
 
     fn msg(id: &str, time: i64) -> ChatMessage {
         ChatMessage {
