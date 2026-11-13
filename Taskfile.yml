@@ -23,6 +23,7 @@ tasks:
     cmds:
       # The Play upload key, not the APK's release key (the Play app is chat.irchad.IrChad).
       # Set inline: the shell's variables would override task env.
-      - ABIS=arm64-v8a PROFILE=release IRCHAD_KEYSTORE="$IRCHAD_PLAY_KEYSTORE" IRCHAD_KEYSTORE_PASSWORD="$IRCHAD_PLAY_KEYSTORE_PASSWORD" ./gradlew --no-daemon bundlePlayRelease
+      # Gradle 8.14 can't run on JDK 25 (the system default).
+      - JAVA_HOME=/usr/lib/jvm/openjdk-bin-21 ABIS=arm64-v8a PROFILE=release IRCHAD_KEYSTORE="$IRCHAD_PLAY_KEYSTORE" IRCHAD_KEYSTORE_PASSWORD="$IRCHAD_PLAY_KEYSTORE_PASSWORD" ./gradlew --no-daemon bundlePlayRelease
       - cmd: echo "built android/app/build/outputs/bundle/playRelease/app-play-release.aab"
         silent: true
