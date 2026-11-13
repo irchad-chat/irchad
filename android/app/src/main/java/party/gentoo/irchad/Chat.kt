@@ -904,8 +904,9 @@ private fun Log(
         jump = null
         list.animateScrollToItem(i)
     }
-    Box(modifier.fillMaxWidth()) {
-        LazyColumn(state = list, reverseLayout = true, modifier = Modifier.fillMaxSize()) {
+    // A Column, not a Box: the typing line goes under the newest message instead of over it.
+    Column(modifier.fillMaxWidth()) {
+        LazyColumn(state = list, reverseLayout = true, modifier = Modifier.fillMaxWidth().weight(1f)) {
             items(rev.size, key = { rev[it].key }) { i ->
                 val m = rev[i]
                 val prev = rev.getOrNull(i + 1)
@@ -1006,10 +1007,7 @@ private fun Log(
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             )
         }
     }
