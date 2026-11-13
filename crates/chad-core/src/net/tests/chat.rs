@@ -230,6 +230,26 @@ fn read_markers_and_mentions() {
     });
     assert_eq!(out(&mut n), [format!("MARKREAD #c timestamp={}", ts(3000))]);
     assert_eq!(buffer(&events(&mut n), "#c").unwrap().unread, 0);
+
+    // Read again within READ_EVERY: local at once, the server only once the wait is over.
+    feed(
+        &mut n,
+        &format!("@msgid=f;time={} :alice!u@h PRIVMSG #c :more", ts(4000)),
+    );
+    n.command(NetCommand::MarkRead {
+        target: "#c".into(),
+    });
+    assert!(out(&mut n).is_empty());
+    assert_eq!(buffer(&events(&mut n), "#c").unwrap().unread, 0);
+    n.flush_reads();
+    assert!(out(&mut n).is_empty());
+    let due = n.read_due_at().unwrap();
+    assert!(due > Instant::now());
+    n.read_sent
+        .insert("#c".into(), due.checked_sub(READ_EVERY * 2).unwrap());
+    n.flush_reads();
+    assert_eq!(out(&mut n), [format!("MARKREAD #c timestamp={}", ts(4000))]);
+    assert_eq!(n.read_due_at(), None);
 }
 
 #[test]

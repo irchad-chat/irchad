@@ -614,6 +614,9 @@ impl Inner {
     /// Sends what's queued and applies `net`'s events to the view. Returns
     /// the page's callback if anything changed.
     fn pump(&mut self) -> Option<js_sys::Function> {
+        // shortcut: a held-back read position waits for the next pump (any
+        // traffic, at worst the keepalive); give it its own Timer if that's too late.
+        self.net.flush_reads();
         if let Some(c) = &mut self.conn
             && c.open
         {

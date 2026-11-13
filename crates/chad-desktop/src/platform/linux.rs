@@ -170,6 +170,20 @@ struct Sni {
     tx: OsTx,
     unread: bool,
     mentions: u32,
+    /// Rendered for the current (unread, mentions > 0): ksni asks for the
+    /// pixmap on every update and every host read, and rendering is costly.
+    icons: Vec<ksni::Icon>,
+}
+
+fn icons(unread: bool, mention: bool) -> Vec<ksni::Icon> {
+    [22, 32, 64]
+        .into_iter()
+        .map(|s| ksni::Icon {
+            width: s as i32,
+            height: s as i32,
+            data: super::tray_icon(s, unread, mention),
+        })
+        .collect()
 }
 
 impl ksni::Tray for Sni {
@@ -187,14 +201,7 @@ impl ksni::Tray for Sni {
         }
     }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        [22, 32, 64]
-            .into_iter()
-            .map(|s| ksni::Icon {
-                width: s as i32,
-                height: s as i32,
-                data: super::tray_icon(s, self.unread, self.mentions > 0),
-            })
-            .collect()
+        self.icons.clone()
     }
     fn attention_icon_pixmap(&self) -> Vec<ksni::Icon> {
         self.icon_pixmap()
@@ -227,6 +234,7 @@ impl Tray {
             tx,
             unread: false,
             mentions: 0,
+            icons: icons(false, false),
         };
         // Flatpak can't own `StatusNotifierItem-<pid>-<n>`; watchers take the unique name.
         let sandboxed = std::env::var_os("FLATPAK_ID").is_some();
@@ -249,6 +257,9 @@ impl Tray {
         if let Some(h) = self.0.clone() {
             tokio::spawn(async move {
                 h.update(|t| {
+                    if (t.unread, t.mentions > 0) != (unread, mentions > 0) {
+                        t.icons = icons(unread, mentions > 0);
+                    }
                     t.unread = unread;
                     t.mentions = mentions;
                 })

@@ -77,6 +77,10 @@ pub const MUSIC_KEY: &str = "chad/music";
 pub const RECEIPTS_KEY: &str = "chad/receipts";
 /// The client tag on a read receipt: the msgid read up to.
 const READ_TAG: &str = "+chad/read";
+/// At most one read position per buffer this often: ergo's fakelag allows ~2
+/// commands/s, and a busy channel read live would otherwise queue everything
+/// we send (lag pings, messages) behind a growing pile of MARKREADs.
+const READ_EVERY: Duration = Duration::from_secs(3);
 /// Store meta: our own `chad/receipts`, as last seen, for offline startup.
 const RECEIPTS_META: &str = "receipts";
 /// The server/status buffer's key and name on classic networks (D72): not a
@@ -196,6 +200,10 @@ pub struct Net {
     next_local: u64,
     next_batch: u64,
     typing_sent: HashMap<String, Instant>,
+    /// Per folded buffer: when we last sent our read position, and the newest
+    /// one held back since by [`READ_EVERY`] (target, msgid, time).
+    read_sent: HashMap<String, Instant>,
+    read_due: HashMap<String, (String, String, i64)>,
     connected: bool,
     synced: bool,
     /// The home channel's `chad/report`.
@@ -266,6 +274,8 @@ impl Net {
             next_local: 0,
             next_batch: 0,
             typing_sent: HashMap::new(),
+            read_sent: HashMap::new(),
+            read_due: HashMap::new(),
             connected: false,
             synced: false,
             report_to: None,
@@ -387,6 +397,7 @@ impl Net {
         self.synced = false;
         self.batches.clear();
         self.typing_sent.clear();
+        self.read_sent.clear();
         self.out.clear();
         self.e2e_detach();
         self.listing = None;

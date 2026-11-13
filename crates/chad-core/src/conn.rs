@@ -495,7 +495,9 @@ async fn live(
         }
         sink.send(net.drain_events());
         let push_retry = net.push_retry_at();
+        let read_due = net.read_due_at();
         tokio::select! {
+            () = tokio::time::sleep_until(read_due.unwrap_or_else(std::time::Instant::now).into()), if read_due.is_some() => net.flush_reads(),
             () = tokio::time::sleep_until(push_retry.unwrap_or_else(std::time::Instant::now).into()), if push_retry.is_some() => net.retry_push(),
             () = tokio::time::sleep_until(deleting.map_or_else(tokio::time::Instant::now, |d| d.0)), if deleting.is_some() => {
                 deleting = None;

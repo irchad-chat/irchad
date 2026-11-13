@@ -37,6 +37,7 @@ fn receipts_on(n: &mut Net) {
 fn sent_only_while_both_have_them_on() {
     let mut n = dm();
     let read = |n: &mut Net, t: &str| {
+        n.read_sent.clear(); // not testing READ_EVERY here
         n.command(NetCommand::MarkRead { target: t.into() });
         out(n)
     };

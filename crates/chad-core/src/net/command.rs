@@ -444,12 +444,55 @@ impl Net {
             return;
         }
         self.set_read(&key, Some(t));
+        if self
+            .read_sent
+            .get(&key)
+            .is_some_and(|at| at.elapsed() < READ_EVERY)
+        {
+            self.read_due.insert(key, (target.to_owned(), msgid, t));
+            return;
+        }
+        self.send_read(&key, target, &msgid, t);
+    }
+
+    fn send_read(&mut self, key: &str, target: &str, msgid: &str, t: i64) {
+        self.read_sent.insert(key.to_owned(), Instant::now());
         if self.connected && self.caps.enabled("draft/read-marker") {
             let ts = format!("timestamp={}", time::format(t));
             self.out
                 .push(Message::new("MARKREAD", [target, ts.as_str()]));
         }
-        self.send_receipt(&key, &msgid);
+        self.send_receipt(key, msgid);
+    }
+
+    /// When a read position held back by [`READ_EVERY`] can go out.
+    pub fn read_due_at(&self) -> Option<Instant> {
+        let at = |k: &String| {
+            self.read_sent
+                .get(k)
+                .map_or_else(Instant::now, |at| *at + READ_EVERY)
+        };
+        self.read_due.keys().map(at).min()
+    }
+
+    /// Sends the held-back read positions whose wait is over.
+    pub fn flush_reads(&mut self) {
+        let now = Instant::now();
+        let ready: Vec<String> = self
+            .read_due
+            .keys()
+            .filter(|k| {
+                self.read_sent
+                    .get(*k)
+                    .is_none_or(|at| now >= *at + READ_EVERY)
+            })
+            .cloned()
+            .collect();
+        for key in ready {
+            if let Some((target, msgid, t)) = self.read_due.remove(&key) {
+                self.send_read(&key, &target, &msgid, t);
+            }
+        }
     }
 
     /// A line typed in the server buffer, sent as is (`/` and `/quote ` optional).
