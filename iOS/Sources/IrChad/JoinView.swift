@@ -15,7 +15,7 @@ struct JoinView: View {
     let onDone: (Sel?) -> Void
     let onCancel: (() -> Void)?
 
-    @State private var link = ""
+    @State private var link = "irchad.chat"
     @State private var mode = Mode.login
     @State private var account = ""
     @State private var password = ""

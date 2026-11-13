@@ -51,7 +51,7 @@ impl App {
                 });
                 // An invite URL isn't a host, nor the other way round.
                 if j.classic != was_classic {
-                    j.invite.clear();
+                    j.invite = if j.classic { "" } else { DEFAULT_SERVER }.into();
                 }
                 ui.add_space(4.0);
                 if j.classic {

@@ -276,7 +276,9 @@ struct Attachment {
     key: String,
 }
 
-#[derive(Default)]
+/// Filled in for "Join a network", so newcomers can just sign up.
+const DEFAULT_SERVER: &str = "irchad.chat";
+
 struct JoinDialog {
     /// The server URL, or a classic network's host.
     invite: String,
@@ -293,6 +295,23 @@ struct JoinDialog {
     /// The invite sent to the core, while waiting for the outcome.
     busy: Option<String>,
     error: Option<String>,
+}
+
+impl Default for JoinDialog {
+    fn default() -> Self {
+        Self {
+            invite: DEFAULT_SERVER.into(),
+            classic: false,
+            port: String::new(),
+            plaintext: false,
+            mode: JoinMode::default(),
+            account: String::new(),
+            password: String::new(),
+            email: String::new(),
+            busy: None,
+            error: None,
+        }
+    }
 }
 
 /// "Browse channels…": every channel on a network, from LIST.

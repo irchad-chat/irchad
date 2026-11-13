@@ -51,7 +51,7 @@ fun JoinScreen(
     onDone: (origin: String, channel: String?) -> Unit,
     onCancel: (() -> Unit)?,
 ) {
-    var link by rememberSaveable { mutableStateOf(invite ?: "") }
+    var link by rememberSaveable { mutableStateOf(invite ?: "irchad.chat") }
     var mode by rememberSaveable { mutableStateOf(Mode.Login) }
     var account by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
