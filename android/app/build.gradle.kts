@@ -20,6 +20,8 @@ val releaseKeystore = System.getenv("IRCHAD_KEYSTORE")?.let { file(it) }
 android {
     namespace = "party.gentoo.irchad"
     compileSdk = 36
+    // The NDK build-rust.sh links with (deploy/ci.Dockerfile); Gradle needs it to strip libchad_ffi.so.
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "party.gentoo.irchad"
@@ -61,7 +63,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8: Play flags unobfuscated bundles. Keep rules for JNA/UniFFI are in proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Local release builds without the keystore get the debug key.
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
