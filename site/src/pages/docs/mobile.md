@@ -11,6 +11,8 @@ The phone apps do chat, encrypted DMs, voice, and watching screen shares. Your p
 
 **Install:** download the APK from the [home page](/#download), or add IrChad to [Obtainium](https://obtainium.imranr.dev) to get updates. Needs Android 10 or newer.
 
+**Google Play beta:** join [irchad-testers](https://groups.google.com/g/irchad-testers) with your Google account, then [opt in on Google Play](https://play.google.com/apps/testing/chat.irchad.IrChad) and [install it from the Play Store](https://play.google.com/store/apps/details?id=chat.irchad.IrChad). Play can take a few minutes to notice you joined.
+
 **Join:** tap **Click to Join** on an invite page, or paste the link in the app.
 
 ### Notifications
