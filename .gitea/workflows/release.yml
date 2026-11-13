@@ -202,7 +202,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # S3_ACCESS_KEY/S3_SECRET_KEY: garage's `gitea-actions` key (woodford).
+      # S3_ACCESS_KEY/S3_SECRET_KEY: a garage key with write access to the bucket.
       # Mirrored while still a draft, so a failure here leaves it unpublished.
       - name: Mirror to downloads.gentoo.party
         env:

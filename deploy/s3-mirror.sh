@@ -1,5 +1,5 @@
 #!/bin/sh
-# Copy a Gitea release's assets to garage on woodford (downloads.gentoo.party),
+# Copy a Gitea release's assets to the downloads.gentoo.party garage bucket,
 # once per prefix: `s3-mirror.sh <release id> irchad/latest irchad/v0.1.3`.
 # Env: API (repo API URL), TOKEN (Gitea token), S3_ACCESS_KEY, S3_SECRET_KEY.
 set -eu
