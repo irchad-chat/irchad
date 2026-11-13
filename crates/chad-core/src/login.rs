@@ -320,6 +320,7 @@ mod tests {
                 games: false,
                 emoji: false,
                 receipts: false,
+                lag_ms: None,
             },
         )
     }

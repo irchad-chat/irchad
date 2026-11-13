@@ -114,6 +114,7 @@ impl Client {
             games: false,
             emoji: false,
             receipts: false,
+            lag_ms: None,
         };
         // No cache: history comes from chathistory on every page load.
         let store = Store::memory().map_err(|e| JsError::new(&e.to_string()))?;

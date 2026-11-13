@@ -22,6 +22,7 @@ fn net() -> Net {
         games: false,
         emoji: false,
         receipts: false,
+        lag_ms: None,
         oper: false,
     };
     let mut n = Net::new(Store::memory().unwrap(), info);
@@ -449,4 +450,24 @@ fn reports_go_to_the_home_channels_account_and_stay_hidden() {
         "{}",
         sent[0].len()
     );
+}
+
+#[test]
+fn lag_ping_measures_one_at_a_time_and_clears_on_detach() {
+    let mut n = net();
+    attach(&mut n, &[]);
+    n.ping_lag();
+    n.ping_lag();
+    let sent = out(&mut n);
+    assert_eq!(sent.len(), 1, "one lag PING outstanding at most: {sent:?}");
+    assert!(sent[0].ends_with("PING lag"));
+    feed(
+        &mut n,
+        &format!("@label={} :s PONG s lag", label_of(&sent[0])),
+    );
+    assert!(n.info.lag_ms.is_some());
+    n.ping_lag();
+    assert_eq!(out(&mut n).len(), 1);
+    n.detach();
+    assert_eq!(n.info.lag_ms, None);
 }

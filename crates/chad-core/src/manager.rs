@@ -209,6 +209,7 @@ fn spawn_with(
         games: false,
         emoji: false,
         receipts: false,
+        lag_ms: None,
         oper: false,
     };
     let mut net = Net::new(store, info);

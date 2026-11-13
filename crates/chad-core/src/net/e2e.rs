@@ -120,7 +120,7 @@ impl Net {
         let held = std::mem::take(&mut e.held);
         let verifying: Vec<String> = e.verifications.drain().map(|(k, _)| k).collect();
         for (target, mut local) in held {
-            local.status = SendStatus::Failed("Not sent: the connection dropped.".into());
+            local.status = SendStatus::Failed("The connection dropped.".into());
             self.emit_messages(&target, vec![local]);
         }
         for nick in verifying {
@@ -327,7 +327,7 @@ impl Net {
         let (theirs, ours) = (e.devices.get(&peer), e.devices.get(&me));
         let (Some(Some(theirs)), Some(Some(ours))) = (theirs, ours) else {
             if e.held.len() >= MAX_HELD {
-                local.status = SendStatus::Failed("Not sent: still fetching keys.".into());
+                local.status = SendStatus::Failed("Still fetching keys.".into());
                 return self.emit_messages(target, vec![local]);
             }
             // Fetch what nobody asked for yet; what's underway releases this.

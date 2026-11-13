@@ -773,6 +773,27 @@ fn messages(ui: &mut egui::Ui, cx: &Pane, b: &mut Buffer, mut extras: Extras) ->
                 b.ui.start_edit(&b.msgs[i]);
                 out.refocus = true;
             }
+            Action::Retry(i) | Action::Discard(i) => {
+                let resend = matches!(a, Action::Retry(_));
+                // Stale index from an earlier frame: only drop what's still a failed send.
+                let failed = b
+                    .msgs
+                    .get(i)
+                    .is_some_and(|m| matches!(m.status, chad_core::SendStatus::Failed(_)));
+                if !failed {
+                    continue;
+                }
+                let Some(m) = b.msgs.remove(i) else { continue };
+                b.ui.log.apply(&[chad_core::view::Edit::Removed(i)], &[]);
+                if resend {
+                    cx.send(NetCommand::Send {
+                        target: target.to_owned(),
+                        text: m.text,
+                        reply_to: m.reply_to,
+                        mentions: m.mentions.into_iter().map(|x| x.nick).collect(),
+                    });
+                }
+            }
             Action::Delete { msgid } => {
                 cx.send(NetCommand::Redact {
                     target: target.to_owned(),

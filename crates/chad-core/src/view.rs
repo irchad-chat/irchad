@@ -223,6 +223,13 @@ impl Msgs {
             .rposition(|m| m.msgid.as_deref() == Some(msgid))
     }
 
+    /// Drops the message at `i`, like an unsent one the user gave up on.
+    pub fn remove(&mut self, i: usize) -> Option<ChatMessage> {
+        let m = (i < self.list.len()).then(|| self.list.remove(i))?;
+        self.unindex(&m);
+        Some(m)
+    }
+
     fn holds(&self, m: &ChatMessage) -> bool {
         m.msgid.as_ref().is_some_and(|i| self.msgids.contains(i))
             || m.local_id.is_some_and(|i| self.locals.contains(&i))
@@ -549,6 +556,7 @@ mod tests {
             games: false,
             emoji: false,
             receipts: false,
+            lag_ms: None,
             oper: false,
         })
     }

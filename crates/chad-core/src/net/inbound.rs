@@ -158,6 +158,12 @@ impl Net {
             Pending::Block { nick } => self.block_reply(&nick, flatten(items)),
             Pending::Report => self.report_reply(&items),
             Pending::Sync => self.synced(),
+            Pending::Lag(at) => {
+                self.lag_out = false;
+                let ms = u32::try_from(at.elapsed().as_millis()).unwrap_or(u32::MAX);
+                self.info.lag_ms = Some(ms);
+                self.events.push(Event::Network(self.info.clone()));
+            }
             Pending::List => {
                 let channels: Vec<String> = flatten(items)
                     .filter(|m| m.command == "322")

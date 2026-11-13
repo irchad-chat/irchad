@@ -9,6 +9,9 @@ use crate::Message;
 /// Silence before we PING, then how long we wait for anything at all.
 pub const IDLE: Duration = Duration::from_secs(90);
 pub const PONG_WAIT: Duration = Duration::from_secs(30);
+/// After we send, how long the server may stay quiet before we PING: a dead
+/// link swallows writes, and someone is waiting on that message.
+pub const SENT_WAIT: Duration = Duration::from_secs(10);
 
 /// The transport waits [`Keepalive::wait`] for each line. Lines go through
 /// [`Keepalive::line`]; a wait that runs out calls [`Keepalive::silence`].

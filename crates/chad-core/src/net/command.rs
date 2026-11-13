@@ -343,7 +343,7 @@ impl Net {
             )
         });
         let fail = match limits {
-            _ if !self.connected => Some("Not sent: you're offline."),
+            _ if !self.connected => Some("You're offline."),
             Some((bytes, lines))
                 if pieces.len() > lines
                     || pieces.iter().map(|p| p.0.len()).sum::<usize>() > bytes =>

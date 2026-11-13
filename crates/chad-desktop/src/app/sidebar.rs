@@ -196,6 +196,21 @@ impl App {
                 });
             });
         });
+        let info = &self.view.nets[ni].info;
+        // Only worth mentioning when it's slow.
+        if let (ConnState::Connected, Some(ms @ 300..)) = (&info.state, info.lag_ms) {
+            let color = if ms < 1500 {
+                ui.visuals().warn_fg_color
+            } else {
+                ui.visuals().error_fg_color
+            };
+            ui.label(
+                RichText::new(format!("Connected · {ms} ms"))
+                    .small()
+                    .color(color),
+            )
+            .tip("Round trip to the server");
+        }
         if let Some((text, bad)) = state_text(&self.view.nets[ni].info.state) {
             let color = if bad {
                 ui.visuals().error_fg_color

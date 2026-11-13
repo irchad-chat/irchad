@@ -86,6 +86,8 @@ const MAX_LIST_SHOWN: usize = 5_000;
 
 #[derive(Debug)]
 enum Pending {
+    /// Our lag `PING`, sent then.
+    Lag(Instant),
     /// `rest`: the other devices' copies of an encrypted DM, sent once the first
     /// one's echo gives them a msgid to share.
     Send {
@@ -225,6 +227,8 @@ pub struct Net {
     /// Channels whose member list changed since the last `drain_events`.
     members_dirty: Vec<String>,
     ctcp_at: Option<Instant>,
+    /// A lag `PING` is unanswered; D14: never more than one.
+    lag_out: bool,
     /// Where ergo pushes to, and whether this connection has registered it.
     push: Option<PushSubscription>,
     push_registered: bool,
@@ -276,6 +280,7 @@ impl Net {
             version: "IrChad".into(),
             members_dirty: Vec::new(),
             ctcp_at: None,
+            lag_out: false,
             push: None,
             push_registered: false,
             push_tries: 0,
@@ -371,6 +376,8 @@ impl Net {
     /// The connection is gone. Unanswered sends fail.
     pub fn detach(&mut self) {
         self.connected = false;
+        self.info.lag_ms = None;
+        self.lag_out = false;
         self.synced = false;
         self.batches.clear();
         self.typing_sent.clear();
@@ -384,7 +391,7 @@ impl Net {
                 target, mut local, ..
             } = pending
             {
-                local.status = SendStatus::Failed("Not sent: the connection dropped.".into());
+                local.status = SendStatus::Failed("The connection dropped.".into());
                 self.emit_messages(&target, vec![*local]);
             }
         }
@@ -400,6 +407,14 @@ impl Net {
         }
         let channels: HashSet<String> = self.voice_of.drain().map(|(_, (_, c))| c).collect();
         channels.iter().for_each(|c| self.emit_voice_members(c));
+    }
+
+    /// Measures the round trip to the server. Needs labels to match the reply.
+    pub fn ping_lag(&mut self) {
+        if self.synced && self.caps.enabled("labeled-response") && !self.lag_out {
+            self.lag_out = true;
+            self.send_labeled(Message::new("PING", ["lag"]), Pending::Lag(Instant::now()));
+        }
     }
 
     /// What happened since last time, for the UI. A member list that changed
@@ -452,6 +467,7 @@ impl Net {
             Pending::List | Pending::Browse => self.listing = Some((token, Vec::new())),
             // Callers gate these on caps no labels-less server has; WHO falls back to NAMES.
             Pending::Who { .. }
+            | Pending::Lag(_)
             | Pending::History { .. }
             | Pending::Targets
             | Pending::Devices { .. }

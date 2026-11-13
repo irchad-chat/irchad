@@ -59,6 +59,9 @@ pub enum Action {
         emoji: String,
     },
     Edit(usize),
+    /// A message that failed to send: send it again, or drop it.
+    Retry(usize),
+    Discard(usize),
     Delete {
         msgid: String,
     },
@@ -413,6 +416,7 @@ impl ChatLog {
                     |ui| {
                         row_ui(
                             ui,
+                            i,
                             m,
                             prev,
                             parent,
@@ -511,6 +515,7 @@ impl ChatLog {
 #[allow(clippy::too_many_arguments)]
 fn row_ui(
     ui: &mut egui::Ui,
+    index: usize,
     (m, parsed): (&ChatMessage, &Parsed),
     prev: Option<(&ChatMessage, &Parsed)>,
     parent: Option<(&ChatMessage, &Parsed)>,
@@ -645,11 +650,20 @@ fn row_ui(
                 links_ui(ui, m, &parsed.links, extras);
             }
             if let SendStatus::Failed(why) = &m.status {
-                ui.label(
-                    RichText::new(format!("Not sent: {why}"))
-                        .small()
-                        .color(ui.visuals().error_fg_color),
-                );
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        RichText::new(format!("Not sent: {why}"))
+                            .small()
+                            .color(ui.visuals().error_fg_color),
+                    );
+                    // An edit can't go out as a new message; it can only be dropped.
+                    if m.edits.is_none() && ui.small_button("Retry").clicked() {
+                        actions.push(Action::Retry(index));
+                    }
+                    if ui.small_button("Delete").clicked() {
+                        actions.push(Action::Discard(index));
+                    }
+                });
             }
             if !m.reactions.is_empty() && !m.redacted {
                 ui.horizontal_wrapped(|ui| {

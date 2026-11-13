@@ -15,6 +15,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::net::TcpStream;
+use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::http::{HeaderValue, Uri};
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -22,7 +23,7 @@ use tokio_tungstenite::tungstenite::{self, Message as Frame};
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
 use crate::Message;
-use crate::keepalive::Keepalive;
+use crate::keepalive::{Keepalive, SENT_WAIT};
 
 /// 8191 bytes of tags plus 512 for the rest, with headroom. Bigger is hostile.
 const MAX_FRAME: usize = 16 << 10;
@@ -57,6 +58,9 @@ enum Inner {
 pub struct Connection {
     inner: Inner,
     alive: Keepalive,
+    /// When the keepalive acts. A deadline, not a per-`recv` timeout: `recv` is
+    /// raced and restarted constantly, which would put it off forever.
+    deadline: Instant,
 }
 
 impl Connection {
@@ -68,13 +72,26 @@ impl Connection {
             Some("irc") => Inner::Line(Lines::connect(url, false).await?),
             _ => Inner::Ws(Box::new(connect_ws(url).await?)),
         };
+        let alive = Keepalive::new();
         Ok(Self {
             inner,
-            alive: Keepalive::new(),
+            deadline: Instant::now() + alive.wait(),
+            alive,
         })
     }
 
+    /// Sends `msg`. A link that died quietly takes our writes without
+    /// complaint, so a send makes the keepalive check sooner.
     pub async fn send(&mut self, msg: &Message) -> Result<(), Error> {
+        self.deadline = self.deadline.min(Instant::now() + SENT_WAIT);
+        self.write(msg).await
+    }
+
+    fn rearm(&mut self) {
+        self.deadline = Instant::now() + self.alive.wait();
+    }
+
+    async fn write(&mut self, msg: &Message) -> Result<(), Error> {
         let line = msg.to_line()?;
         match &mut self.inner {
             Inner::Ws(ws) => ws.send(Frame::text(line)).await?,
@@ -87,10 +104,11 @@ impl Connection {
     /// Unparsable lines are logged and skipped.
     pub async fn recv(&mut self) -> Result<Option<Message>, Error> {
         loop {
-            let text = match tokio::time::timeout(self.alive.wait(), self.next_text()).await {
+            let text = match tokio::time::timeout_at(self.deadline, self.next_text()).await {
                 Err(_) => {
                     let ping = self.alive.silence().map_err(|_| Error::Timeout)?;
-                    self.send(&ping).await?;
+                    self.write(&ping).await?;
+                    self.rearm();
                     continue;
                 }
                 Ok(r) => match r? {
@@ -98,13 +116,19 @@ impl Connection {
                     None => return Ok(None),
                 },
             };
-            match Message::parse(&text) {
-                Ok(m) => match self.alive.line(&m) {
-                    Some(pong) => self.send(&pong).await?,
-                    None => return Ok(Some(m)),
-                },
+            let parsed = Message::parse(&text);
+            match parsed {
+                Ok(m) => {
+                    let pong = self.alive.line(&m);
+                    self.rearm();
+                    match pong {
+                        Some(pong) => self.write(&pong).await?,
+                        None => return Ok(Some(m)),
+                    }
+                }
                 Err(e) => {
                     self.alive.heard();
+                    self.rearm();
                     tracing::warn!("skipping bad line from server: {e}");
                 }
             }

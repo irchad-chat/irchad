@@ -463,6 +463,8 @@ async fn live(
         let since = net.redacted_since();
         tokio::spawn(async move { chadd::redacted(&api, since).await })
     });
+    let mut lag = tokio::time::interval(std::time::Duration::from_secs(30));
+    lag.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         // A call keeps the connection (it needs the voice metadata) until it ends.
         if p.background && net.voice.is_none() && call.is_none() && token.is_none() {
@@ -502,6 +504,7 @@ async fn live(
                     error: "The server didn't delete your account.".into(),
                 }]);
             }
+            _ = lag.tick() => net.ping_lag(),
             // ergo drops the connection once the account is gone.
             r = ws.recv() => match r {
                 Ok(Some(m)) if m.command == "ERROR" && deleting.is_some_and(|d| d.1) => return End::Remove,

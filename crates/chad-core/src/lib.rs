@@ -620,6 +620,8 @@ pub struct NetworkInfo {
     pub emoji: bool,
     /// Our account sends read receipts in DMs, and shows theirs (D68).
     pub receipts: bool,
+    /// Last measured round trip to the server, while connected.
+    pub lag_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
