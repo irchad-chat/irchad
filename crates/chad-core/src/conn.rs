@@ -176,7 +176,13 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                         () = &mut sleep => break,
                         cmd = rx.recv() => match cmd {
                             Some(ToNet::Cmd(c)) => offline(&mut net, c, &sink),
-                            Some(ToNet::Background(on)) => p.background = on,
+                            // Back in front (the socket likely died while frozen): retry now, not after the wait.
+                            Some(ToNet::Background(false)) => {
+                                p.background = false;
+                                backoff.reset();
+                                break;
+                            }
+                            Some(ToNet::Background(true)) => p.background = true,
                             Some(ToNet::Remove) => return remove(net, &p, &sink).await,
                             None => return,
                         },
