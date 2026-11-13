@@ -13,7 +13,10 @@ cp LICENSE "$dir/"
 cargo about generate --locked --fail -m "crates/$pkg/Cargo.toml" --target "$target" \
     about.hbs -o "$dir/THIRD_PARTY_LICENSES.txt"
 # The newest extracted prebuilt; it ships its third_party notices as LICENSE.md.
-webrtc=$(ls -t "${CARGO_TARGET_DIR:-target}"/*/build/scratch-*/out/livekit_webrtc/livekit/*/*/LICENSE.md 2>/dev/null | head -1 || true)
+# Cargo ≥ 1.100 lays build dirs out as build/<pkg>/<hash>/, older as build/<pkg>-<hash>/.
+t="${CARGO_TARGET_DIR:-target}"
+webrtc=$(ls -t "$t"/*/build/scratch-*/out/livekit_webrtc/livekit/*/*/LICENSE.md \
+    "$t"/*/build/scratch/*/out/livekit_webrtc/livekit/*/*/LICENSE.md 2>/dev/null | head -1 || true)
 if [ -n "$webrtc" ]; then
     cp "$webrtc" "$dir/LIBWEBRTC_LICENSES.md"
 elif [ "$pkg" = chad-desktop ]; then
