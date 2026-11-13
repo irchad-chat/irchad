@@ -449,10 +449,17 @@ impl ChatLog {
                 self.prefix_dirty = true;
             }
             // The toolbar stays while the pointer is on it, even past its row.
-            // A window over the log hides it.
+            // A window over the log hides it, and so does scrolling: the bar is
+            // its own layer, so a wheel tick over it wouldn't reach the log.
+            const SCROLL_HIDE: f32 = 0.3;
+            let scrolled = ui.input(|i| i.time_since_last_scroll());
+            if scrolled < SCROLL_HIDE {
+                ui.ctx().request_repaint_after_secs(SCROLL_HIDE - scrolled);
+            }
             let (log, bar) = (ui.layer_id(), toolbar_layer(ui.layer_id()));
             let pointer = ui.ctx().pointer_hover_pos().filter(|p| {
-                ui.clip_rect().contains(*p)
+                scrolled >= SCROLL_HIDE
+                    && ui.clip_rect().contains(*p)
                     && ui
                         .ctx()
                         .layer_id_at(*p)
