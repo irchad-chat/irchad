@@ -363,7 +363,8 @@ impl ChatLog {
             return out;
         }
 
-        if std::mem::take(&mut self.to_bottom) {
+        let jumped = std::mem::take(&mut self.to_bottom);
+        if jumped {
             let total = self.prefix.last().copied().unwrap_or(0.0);
             self.pending_offset = Some((total - ui.available_height()).max(0.0));
             self.shift = 0.0;
@@ -380,7 +381,8 @@ impl ChatLog {
 
         let mut compensate = 0.0;
         let mut changed = false;
-        let was_bottom = self.at_bottom;
+        // A jump pins on estimated heights; keep re-pinning until the rows it lands on are measured.
+        let was_bottom = self.at_bottom || jumped;
         let dark = ui.visuals().dark_mode;
         let res = area.show_viewport(ui, |ui, viewport| {
             let total = *self.prefix.last().unwrap_or(&0.0);
