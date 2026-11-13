@@ -7,14 +7,37 @@ order: 1
 
 ## 1. Install
 
-Downloads are on the [home page](/#download).
+### Linux (x86_64)
 
-| System | How |
-|---|---|
-| Linux (x86_64) | Unpack the tarball and run `irchad/install.sh`. It installs for your user only: the app, its menu entry, and the handler for invite links. `./install.sh --uninstall` removes it. |
-| Windows (x86_64) | Run the installer. It installs for your user, with no admin prompt. |
-| Android | Install the APK, or add it to Obtainium to get updates. See [Phones and tablets](/docs/mobile). |
-| iOS | Not released yet. |
+Paste this into a terminal:
+
+```sh
+curl -fsSL https://irchad.chat/install.sh | sh
+```
+
+It installs for your user only, without root: the app in `~/.local/bin`, its menu entry, and the handler for invite links.
+To get a nightly build, add `-s -- --nightly` after `sh`. To remove IrChad, add `-s -- --uninstall`. Your settings and accounts are kept.
+
+To do it by hand, download the tarball from the [home page](/#download), unpack it and run `irchad/install.sh`. `./install.sh --uninstall` removes it.
+
+### Gentoo
+
+There's an overlay:
+
+```sh
+eselect repository add irchad git https://git.gentoo.party/sam/irchad-overlay.git
+emaint sync -r irchad
+emerge -av net-im/irchad
+```
+
+### Windows (x86_64)
+
+Download the installer from the [home page](/#download) and run it. It installs for your user, with no admin prompt.
+
+### Phones and tablets
+
+On Android, install the APK from the [home page](/#download), or add it to Obtainium to get updates. See [Phones and tablets](/docs/mobile).
+iOS isn't released yet.
 
 The desktop app tells you when a new version is out. If you installed it from the Linux tarball or the Windows installer, it downloads the new version in the background, checks that we signed it, and then offers **Restart to update**. Nothing changes until you click that.
 If your package manager installed IrChad, or the app can't replace its own file for some other reason, it only shows the notice, and you update it the usual way. You can turn either one off in **Settings → General → Updates**.

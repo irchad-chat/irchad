@@ -7,8 +7,8 @@ const icon = (name: string) => icons[`/node_modules/@phosphor-icons/core/assets/
 const repo = "https://git.gentoo.party/sam/irchad-ng";
 const releases = "https://downloads.gentoo.party/irchad";
 const builds = [
-  { os: "Linux", icon: "linux-logo", asset: "irchad-linux-x86_64.tar.gz", note: "x86_64. Unpack, then run irchad/install.sh (or irchad/irchad directly).", nightly: true },
-  { os: "Windows", icon: "windows-logo", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer.", nightly: true },
+  { os: "Linux", icon: "linux-logo", asset: "irchad-linux-x86_64.tar.gz", cmd: "curl -fsSL https://irchad.chat/install.sh | sh", note: "x86_64. Paste that into a terminal. It installs for your user, without root, and the app updates itself. Or download the tarball and run irchad/install.sh.", nightly: true },
+  { os: "Windows", icon: "windows-logo", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer. It installs for your user, with no admin prompt, and the app updates itself.", nightly: true },
   { os: "Android", icon: "android-logo", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
 ];
 // Obtainium can't detect a self-hosted Gitea, so preset its Forgejo source ("Codeberg" class) or it scrapes HTML and makes up versions.
@@ -134,6 +134,7 @@ const table = [
         {builds.map((b) => (
           <li class="card">
             <h3>{b.os}</h3>
+            {b.cmd && <pre><code>{b.cmd}</code></pre>}
             <p>{b.note} {b.nightly && <a href={`${releases}/nightly/${b.asset}`} download>Nightly build</a>}</p>
             <a class="btn primary" href={`${releases}/latest/${b.asset}`} download><Fragment set:html={icon(b.icon)} />Download for {b.os}</a>
             {b.os === "Android" && <a class="btn secondary" href={obtainium}><Fragment set:html={icon("package")} />Add to Obtainium</a>}
@@ -141,7 +142,7 @@ const table = [
           </li>
         ))}
       </ul>
-      <p class="muted small">Nightly builds are rebuilt each night from <code>main</code>, so expect some breakage. <a href={`${repo}/releases`}>All releases</a></p>
+      <p class="muted small">On Gentoo, use <a href="/docs/getting-started#gentoo">the overlay</a>. Nightly builds are rebuilt each night from <code>main</code>, so expect some breakage. <a href={`${repo}/releases`}>All releases</a></p>
     </section>
 
     <section aria-labelledby="host">
@@ -206,6 +207,7 @@ const table = [
   .small { font-size: .85rem; }
   .plain { padding-left: 1.25rem; }
   code { font-size: .9em; }
+  .card pre { margin: 0; padding: .6rem .8rem; border-radius: 8px; background: var(--bg); white-space: pre-wrap; overflow-wrap: break-word; user-select: all; font-size: .85rem; }
   .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 1rem; background: color-mix(in srgb, var(--card) 80%, transparent); }
   table { width: 100%; border-collapse: collapse; min-width: 36rem; }
   th, td { padding: .75rem 1rem; text-align: left; vertical-align: top; border-top: 1px solid var(--line); }
