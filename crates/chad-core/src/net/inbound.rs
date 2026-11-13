@@ -402,7 +402,7 @@ impl Net {
             "761" | "766"
                 if matches!(
                     m.param(2),
-                    Some(DISPLAY_NAME_KEY | AVATAR_KEY | ACTIVITY_KEY)
+                    Some(DISPLAY_NAME_KEY | AVATAR_KEY | ACTIVITY_KEY | MUSIC_KEY)
                 ) && m
                     .param(1)
                     .is_some_and(|t| valid_name(t) && !self.is_channel(t)) =>

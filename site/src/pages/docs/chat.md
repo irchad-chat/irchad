@@ -99,7 +99,7 @@ Click your name at the bottom of the channel list.
 Off by default. In **Settings → General → Activity**:
 
 - **Share what I'm playing** shows a line like "Playing Celeste" under your name. It spots running games, and games that support Discord Rich Presence can add details. While Discord itself is running, those games report to Discord instead.
-- **Share what I'm listening to** shows the song from the media players you tick. Nothing is shared from a player you haven't ticked, so a browser tab's title can't leak.
+- **Share what I'm listening to** shows the song from the media players you tick. Nothing is shared from a player you haven't ticked, so a browser tab's title can't leak. Others see how far into the song you are and, from Spotify or a browser on Linux, can open it. Videos in a browser show as "Watching". **Say which player** adds "on Spotify".
 
 > **Server setting:** naming games needs `chadd.toml` → `discord_games = true`. Without it, only games with Rich Presence show, using their own details line.
 

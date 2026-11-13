@@ -18,6 +18,7 @@ pub mod login;
 #[cfg(not(target_arch = "wasm32"))]
 mod manager;
 pub mod mention;
+pub mod music;
 mod net;
 mod platform;
 pub mod secrets;
@@ -47,6 +48,7 @@ pub use discovery::parse as parse_discovery;
 pub use emoji::CustomEmoji;
 #[cfg(not(target_arch = "wasm32"))]
 pub use manager::start;
+pub use music::Music;
 pub use net::Net;
 pub use store::Store;
 
@@ -270,6 +272,8 @@ pub enum NetCommand {
     /// it (clearing ours first), so other devices' values are left alone.
     SetActivity {
         text: Option<String>,
+        /// The track behind a "Listening to"/"Watching" `text`: `chad/music`.
+        music: Option<Music>,
     },
     /// Read receipts in DMs, for every device of this account: user metadata
     /// `chad/receipts` (D68). `NetworkInfo::receipts` follows.
@@ -448,6 +452,7 @@ pub enum Event {
         display_name: Option<String>,
         avatar: Option<Url>,
         activity: Option<String>,
+        music: Option<Music>,
     },
     Preview {
         network: String,

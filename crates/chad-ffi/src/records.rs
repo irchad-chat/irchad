@@ -273,6 +273,19 @@ pub struct Profile {
     pub avatar: Option<String>,
     /// Their `chad/activity` ("Playing Celeste"), already sanitized by chad-core.
     pub activity: Option<String>,
+    /// The track behind a "Listening to"/"Watching" activity.
+    pub music: Option<Music>,
+}
+
+/// `chad/music`, checked by chad-core.
+#[derive(uniffi::Record)]
+pub struct Music {
+    /// Unix second the track (as it's playing now) began.
+    pub start: u64,
+    /// Seconds; 0 when unknown (no progress then).
+    pub length: u32,
+    /// A link to it on a known music or video site, https only.
+    pub url: Option<String>,
 }
 
 /// One of someone's devices with encrypted DMs on.

@@ -104,15 +104,22 @@ impl Net {
                 });
             }
             NetCommand::SetReceipts { on } => self.set_receipts(on),
-            NetCommand::SetActivity { text } => {
+            NetCommand::SetActivity { text, music } => {
                 let text = text.map(|t| one_line(&t, MAX_ACTIVITY));
-                match (&text, &self.activity) {
+                let music = music.filter(|_| text.as_ref().is_some_and(|t| !t.is_empty()));
+                let old = std::mem::replace(&mut self.activity, text.clone());
+                let old_music = std::mem::replace(&mut self.music, music);
+                // Music first, so the new line never shows the old song's progress.
+                // Starting to manage it also clears one a crash left behind.
+                if old_music != self.music || (old.is_none() && text.is_some()) {
+                    self.publish_music();
+                }
+                match (&text, old) {
                     (Some(new), old) if old.as_ref() != Some(new) => self.publish_activity(new),
                     // Stops managing it: take down what we put up.
                     (None, Some(old)) if !old.is_empty() => self.publish_activity(""),
                     _ => {}
                 }
-                self.activity = text;
             }
             // Offline: the set we have stays.
             NetCommand::Emoji => {}

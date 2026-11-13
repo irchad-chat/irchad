@@ -160,7 +160,7 @@ fn profiles_and_away() {
     feed(&mut n, ":carol!u@h JOIN #dev * :c");
     assert_eq!(
         out(&mut n),
-        ["METADATA carol GET display-name avatar chad/activity"]
+        ["METADATA carol GET display-name avatar chad/activity chad/music"]
     );
 
     n.command(NetCommand::SetDisplayName {
@@ -205,6 +205,7 @@ fn activity() {
     let set = |n: &mut Net, t: Option<&str>| {
         n.command(NetCommand::SetActivity {
             text: t.map(str::to_owned),
+            music: None,
         });
     };
     // Turning sharing on clears whatever a crash left; then it follows the game.
@@ -216,6 +217,7 @@ fn activity() {
     assert_eq!(
         out(&mut n),
         [
+            "METADATA * SET chad/music",
             "METADATA * SET chad/activity",
             "METADATA * SET chad/activity :Playing Celeste",
             "METADATA * SET chad/activity",
@@ -231,6 +233,49 @@ fn activity() {
     assert_eq!(out(&mut n), ["METADATA * SET chad/activity"]);
     n.attach("bob");
     assert!(!out(&mut n).iter().any(|l| l.contains("chad/activity")));
+}
+
+#[test]
+fn music() {
+    let mut n = net();
+    n.caps.handle(&line("CAP * LS :draft/metadata-2"));
+    n.caps.handle(&line("CAP * ACK :draft/metadata-2"));
+    n.attach("bob");
+    out(&mut n);
+    let song = crate::Music::parse("100 200 https://open.spotify.com/track/x");
+    let set = |n: &mut Net, t: &str, m: &Option<crate::Music>| {
+        n.command(NetCommand::SetActivity {
+            text: Some(t.to_owned()),
+            music: m.clone(),
+        });
+    };
+    set(&mut n, "Listening to X", &song);
+    set(&mut n, "Listening to X", &song);
+    // A game takes over: its line goes up without the song's progress.
+    set(&mut n, "Playing Celeste", &song.clone().filter(|_| false));
+    assert_eq!(
+        out(&mut n),
+        [
+            "METADATA * SET chad/music :100 200 https://open.spotify.com/track/x",
+            "METADATA * SET chad/activity :Listening to X",
+            "METADATA * SET chad/music",
+            "METADATA * SET chad/activity :Playing Celeste",
+        ]
+    );
+    // Theirs is checked: a bad link is dropped, junk is no music at all.
+    let music = |n: &mut Net| {
+        events(n).iter().rev().find_map(|e| match e {
+            Event::Profile { music, .. } => Some(music.clone()),
+            _ => None,
+        })
+    };
+    feed(
+        &mut n,
+        ":s 761 * alice chad/music * :5 60 https://evil.example/",
+    );
+    assert_eq!(music(&mut n), Some(crate::Music::parse("5 60")));
+    feed(&mut n, ":s 761 * alice chad/music * :lol");
+    assert_eq!(music(&mut n), Some(None));
 }
 
 #[test]

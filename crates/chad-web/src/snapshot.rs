@@ -63,6 +63,9 @@ export type Member = {
   avatar: string | null;
   /** Their `chad/activity` ("Playing Celeste"). */
   activity: string | null;
+  /** `chad/music`: the track behind that activity (unix second it began, its
+      seconds or 0, an https link to it). */
+  music: { start: number; length: number; url: string | null } | null;
 };
 export type Nick = { nick: string; shown: string };
 export type CustomEmoji = { name: string; url: string };
@@ -191,6 +194,14 @@ struct Member<'a> {
     account: Option<&'a str>,
     avatar: Option<String>,
     activity: Option<&'a str>,
+    music: Option<Music<'a>>,
+}
+
+#[derive(Serialize)]
+struct Music<'a> {
+    start: u64,
+    length: u32,
+    url: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -369,6 +380,11 @@ impl Client {
                     account: m.account.as_deref(),
                     avatar: p.and_then(|p| p.avatar.as_ref()).map(ToString::to_string),
                     activity: p.and_then(|p| p.activity.as_deref()),
+                    music: p.and_then(|p| p.music.as_ref()).map(|m| Music {
+                        start: m.start,
+                        length: m.length,
+                        url: m.url.as_ref().map(url::Url::as_str),
+                    }),
                 }
             })
             .collect();

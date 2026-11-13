@@ -71,6 +71,14 @@ impl Net {
         }
     }
 
+    /// Our `chad/music` as it stands; none deletes it.
+    pub(super) fn publish_music(&mut self) {
+        if self.connected && !self.guest && self.caps.enabled("draft/metadata-2") {
+            let v = self.music.as_ref().map(crate::Music::encode);
+            self.set_metadata(MUSIC_KEY, v.as_deref().unwrap_or_default());
+        }
+    }
+
     /// `METADATA * SET key [value]`; an empty value deletes the key.
     pub(super) fn set_metadata(&mut self, key: &str, value: &str) {
         if !self.caps.enabled("draft/metadata-2") {
@@ -88,7 +96,7 @@ impl Net {
             return;
         };
         let (display_name, avatar) = (p.display_name.clone(), p.avatar.clone());
-        let activity = p.activity.clone();
+        let (activity, music) = (p.activity.clone(), p.music.clone());
         let network = self.id();
         self.events.push(Event::Profile {
             network,
@@ -96,6 +104,7 @@ impl Net {
             display_name,
             avatar,
             activity,
+            music,
         });
     }
 
@@ -261,7 +270,9 @@ impl Net {
         }
         let p = self.profiles.entry(folded).or_default();
         let text = |max| value.map(|v| one_line(v, max)).filter(|v| !v.is_empty());
-        if key == ACTIVITY_KEY {
+        if key == MUSIC_KEY {
+            p.music = value.and_then(crate::Music::parse);
+        } else if key == ACTIVITY_KEY {
             p.activity = text(MAX_ACTIVITY);
         } else if key == DISPLAY_NAME_KEY {
             p.display_name = text(MAX_DISPLAY_NAME);

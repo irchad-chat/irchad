@@ -784,6 +784,11 @@ impl Client {
                 .and_then(|p| p.avatar.as_ref())
                 .map(std::string::ToString::to_string),
             activity: p.and_then(|p| p.activity.clone()),
+            music: p.and_then(|p| p.music.as_ref()).map(|m| Music {
+                start: m.start,
+                length: m.length,
+                url: m.url.as_ref().map(ToString::to_string),
+            }),
         }
     }
 

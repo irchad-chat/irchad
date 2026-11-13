@@ -71,6 +71,8 @@ const MAX_DISPLAY_NAME: usize = 64;
 /// Metadata key: what someone's doing, as plain text ("Playing Celeste").
 pub const ACTIVITY_KEY: &str = "chad/activity";
 const MAX_ACTIVITY: usize = 128;
+/// Metadata key: the track behind the activity ([`crate::Music`]).
+pub const MUSIC_KEY: &str = "chad/music";
 /// Metadata key: `1` if the account sends read receipts in DMs (D68).
 pub const RECEIPTS_KEY: &str = "chad/receipts";
 /// The client tag on a read receipt: the msgid read up to.
@@ -220,6 +222,8 @@ pub struct Net {
     /// `None` while this client doesn't manage it, so it never touches a value
     /// another device of ours set.
     activity: Option<String>,
+    /// Our `chad/music`, alongside `activity`.
+    music: Option<crate::Music>,
     /// Encrypted DMs; `None` for guests, or without a keyring.
     pub e2e: Option<E2e>,
     /// Our CTCP VERSION reply.
@@ -276,6 +280,7 @@ impl Net {
             receipts_of: HashSet::new(),
             away: None,
             activity: None,
+            music: None,
             e2e: None,
             version: "IrChad".into(),
             members_dirty: Vec::new(),
@@ -357,6 +362,7 @@ impl Net {
         // Empty also clears one a crash left behind (always-on keeps metadata).
         if let Some(a) = self.activity.clone() {
             self.publish_activity(&a);
+            self.publish_music();
         }
         if !self.guest && self.caps.enabled("draft/persistence") {
             self.out.push(Message::new("PERSISTENCE", ["GET"]));

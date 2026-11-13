@@ -286,7 +286,8 @@ impl App {
         }
         if applied.new && self.activity_sent.0.is_some() {
             let text = self.activity_sent.0.clone();
-            self.send(&origin, NetCommand::SetActivity { text });
+            let music = self.music_sent.clone();
+            self.send(&origin, NetCommand::SetActivity { text, music });
         }
         if icon_changed {
             self.view.nets[i].ui.icon = Icon::None;
@@ -572,16 +573,18 @@ impl App {
             }
         }
         // Sharing off: `None`, so this client leaves `chad/activity` to other devices.
-        let text = self.poll.as_ref().map(|p| {
+        let shared = self.poll.as_ref().map(|p| {
             let seen = p.rx.borrow();
             let games = self.games.borrow();
             crate::presence::line(
                 current.map(|a| a.text(games.as_deref())),
                 seen.game.as_deref(),
-                seen.music.as_deref(),
+                seen.music.as_ref(),
+                self.settings.music_player_name,
             )
         });
-        if text == self.activity_sent.0 {
+        let (text, music) = shared.map_or((None, None), |(t, m)| (Some(t), m));
+        if text == self.activity_sent.0 && music == self.music_sent {
             return;
         }
         let wait = self.activity_sent.1.map_or(Duration::ZERO, |t| {
@@ -592,9 +595,10 @@ impl App {
             return;
         }
         for n in &self.view.nets {
-            let text = text.clone();
-            self.send(&n.info.network, NetCommand::SetActivity { text });
+            let (text, music) = (text.clone(), music.clone());
+            self.send(&n.info.network, NetCommand::SetActivity { text, music });
         }
         self.activity_sent = (text, Some(Instant::now()));
+        self.music_sent = music;
     }
 }

@@ -5,7 +5,10 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::time::Duration;
 
+use futures_util::{FutureExt, StreamExt};
 use zbus::zvariant::OwnedValue;
+
+use super::presence::Track;
 
 /// Bounds on what a poll reads; other programs choose these sizes.
 const MAX_PROCESSES: usize = 4096;
@@ -58,21 +61,51 @@ pub(super) fn paths(pid: &std::path::Path) -> Vec<String> {
     out
 }
 
-/// MPRIS players, over one session bus connection kept between polls.
-pub struct Media(Option<zbus::Connection>);
+/// Signals queued between polls; a player spamming more just loses the oldest.
+const MAX_QUEUED: usize = 64;
+
+type Changes = futures_util::stream::Select<zbus::MessageStream, zbus::MessageStream>;
+
+/// MPRIS players, over one session bus connection kept between polls, and
+/// their change signals on it.
+pub struct Media {
+    conn: Option<zbus::Connection>,
+    changes: Option<Changes>,
+}
 
 impl Media {
     pub fn new() -> Self {
-        Self(None)
+        Self {
+            conn: None,
+            changes: None,
+        }
+    }
+
+    /// Waits for a player to change track, state or position, or to come or
+    /// go. Never returns without a bus.
+    pub async fn changed(&mut self) {
+        let Some(c) = self.changes.as_mut() else {
+            return std::future::pending().await;
+        };
+        if c.next().await.is_none() {
+            self.changes = None;
+            return std::future::pending().await;
+        }
+        // A track change comes as a burst of signals: one poll for all of them.
+        tokio::time::sleep(super::presence::SETTLE).await;
+        while let Some(Some(_)) = c.next().now_or_never() {}
     }
 
     /// Every MPRIS player's id (see [`player_id`]), and the first one in
-    /// `allowed` that's playing, as "Title by Artist". Others aren't asked.
-    pub async fn now_playing(&mut self, allowed: &[String]) -> (Vec<String>, Option<String>) {
-        if self.0.is_none() {
-            self.0 = zbus::Connection::session().await.ok();
+    /// `allowed` that's playing. Others aren't asked.
+    pub async fn now_playing(&mut self, allowed: &[String]) -> (Vec<String>, Option<Track>) {
+        if self.conn.is_none() {
+            self.conn = zbus::Connection::session().await.ok();
+            if let Some(conn) = &self.conn {
+                self.changes = changes(conn).await.ok();
+            }
         }
-        let Some(conn) = self.0.as_ref() else {
+        let Some(conn) = self.conn.as_ref() else {
             return Default::default();
         };
         let names = match zbus::fdo::DBusProxy::new(conn).await {
@@ -80,7 +113,8 @@ impl Media {
             Err(e) => Err(e.into()),
         };
         let Ok(names) = names else {
-            self.0 = None; // reconnect next time
+            self.conn = None; // reconnect next time
+            self.changes = None;
             return Default::default();
         };
         let mut players: Vec<String> = Vec::new();
@@ -93,7 +127,8 @@ impl Media {
                 players.push(id.to_owned());
             }
             if track.is_none() && allowed.iter().any(|a| a == id) {
-                let found = tokio::time::timeout(PLAYER_WAIT, playing(conn, name.as_str())).await;
+                let found =
+                    tokio::time::timeout(PLAYER_WAIT, playing(conn, name.as_str(), id)).await;
                 track = found.ok().flatten();
             }
         }
@@ -111,31 +146,76 @@ fn player_id(bus: &str) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
-/// `name`'s track, if it's playing one.
-async fn playing(conn: &zbus::Connection, name: &str) -> Option<String> {
-    let p = player(conn, name).await.ok()?;
+/// Every player's property changes and seeks (all on MPRIS's one object
+/// path), and players starting or quitting.
+async fn changes(conn: &zbus::Connection) -> zbus::Result<Changes> {
+    let players = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .path(PATH)?
+        .build();
+    let owners = zbus::MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender("org.freedesktop.DBus")?
+        .interface("org.freedesktop.DBus")?
+        .member("NameOwnerChanged")?
+        .arg0ns("org.mpris.MediaPlayer2")?
+        .build();
+    let a = zbus::MessageStream::for_match_rule(players, conn, Some(MAX_QUEUED)).await?;
+    let b = zbus::MessageStream::for_match_rule(owners, conn, Some(MAX_QUEUED)).await?;
+    Ok(futures_util::stream::select(a, b))
+}
+
+const PATH: &str = "/org/mpris/MediaPlayer2";
+
+/// `name`'s track, if it's playing one. `id` is its [`player_id`].
+async fn playing(conn: &zbus::Connection, name: &str, id: &str) -> Option<Track> {
+    let p = proxy(conn, name, "org.mpris.MediaPlayer2.Player")
+        .await
+        .ok()?;
     let status: String = p.get_property("PlaybackStatus").await.ok()?;
     if status != "Playing" {
         return None;
     }
     let meta: HashMap<String, OwnedValue> = p.get_property("Metadata").await.ok()?;
-    let title = meta
-        .get("xesam:title")
-        .and_then(|v| v.try_clone().ok())
-        .and_then(|v| String::try_from(v).ok())?;
-    let artists = meta
-        .get("xesam:artist")
-        .and_then(|v| v.try_clone().ok())
+    let get = |k: &str| meta.get(k).and_then(|v| v.try_clone().ok());
+    let title = get("xesam:title").and_then(|v| String::try_from(v).ok())?;
+    let artists = get("xesam:artist")
         .and_then(|v| Vec::<String>::try_from(v).ok())
         .unwrap_or_default();
-    super::presence::track(&title, &artists)
+    let url = get("xesam:url").and_then(|v| String::try_from(v).ok());
+    // Spec says x (i64), but some players send t (u64). Microseconds.
+    let length = get("mpris:length").and_then(|v| {
+        i64::try_from(v.try_clone().ok()?)
+            .ok()
+            .or_else(|| u64::try_from(v).ok().and_then(|l| i64::try_from(l).ok()))
+    });
+    let position: Option<i64> = p.get_property("Position").await.ok();
+    let root = proxy(conn, name, "org.mpris.MediaPlayer2").await.ok();
+    let identity: Option<String> = match root {
+        Some(r) => r.get_property("Identity").await.ok(),
+        None => None,
+    };
+    super::presence::Track::new(super::presence::Raw {
+        title: &title,
+        artists: &artists,
+        id,
+        identity: identity.as_deref(),
+        url: url.as_deref(),
+        position_ms: position.map(|p| p / 1000),
+        length_ms: length.map(|l| l / 1000),
+        video: false,
+    })
 }
 
-async fn player<'a>(conn: &zbus::Connection, name: &'a str) -> zbus::Result<zbus::Proxy<'a>> {
+async fn proxy<'a>(
+    conn: &zbus::Connection,
+    name: &'a str,
+    interface: &'a str,
+) -> zbus::Result<zbus::Proxy<'a>> {
     zbus::proxy::Builder::new(conn)
         .destination(name)?
-        .path("/org/mpris/MediaPlayer2")?
-        .interface("org.mpris.MediaPlayer2.Player")?
+        .path(PATH)?
+        .interface(interface)?
         .cache_properties(zbus::proxy::CacheProperties::No)
         .build()
         .await
@@ -168,9 +248,31 @@ mod live {
     #[tokio::test]
     #[ignore = "needs a session bus"]
     async fn prints_now_playing() {
-        println!(
-            "now playing: {:?}",
-            super::Media::new().now_playing(&[]).await
-        );
+        let mut m = super::Media::new();
+        let (players, _) = m.now_playing(&[]).await;
+        let (_, track) = m.now_playing(&players).await;
+        println!("players {players:?}, playing {track:?}");
+    }
+
+    /// A player's change signal wakes `changed`; needs a session bus.
+    #[tokio::test]
+    #[ignore = "needs a session bus"]
+    async fn wakes_on_change() {
+        let mut m = super::Media::new();
+        m.now_playing(&[]).await;
+        let other = zbus::Connection::session().await.unwrap();
+        let props = std::collections::HashMap::<&str, zbus::zvariant::Value>::new();
+        other
+            .emit_signal(
+                None::<&str>,
+                super::PATH,
+                "org.freedesktop.DBus.Properties",
+                "PropertiesChanged",
+                &("org.mpris.MediaPlayer2.Player", props, Vec::<&str>::new()),
+            )
+            .await
+            .unwrap();
+        let woke = tokio::time::timeout(std::time::Duration::from_secs(3), m.changed()).await;
+        assert!(woke.is_ok());
     }
 }

@@ -90,6 +90,8 @@ pub struct Profile {
     pub avatar: Option<Url>,
     /// Their `chad/activity` ("Playing Celeste").
     pub activity: Option<String>,
+    /// Their `chad/music`: progress and a link for that activity.
+    pub music: Option<crate::Music>,
 }
 
 /// One step in how a buffer's `msgs` changed, applied in order.
@@ -476,12 +478,14 @@ impl<N: Default, B: Default> View<N, B> {
                 display_name,
                 avatar,
                 activity,
+                music,
             } => {
                 if let Some(i) = self.net(network) {
                     let p = Profile {
                         display_name: display_name.clone(),
                         avatar: avatar.clone(),
                         activity: activity.clone(),
+                        music: music.clone(),
                     };
                     self.nets[i].profiles.insert(key(nick), p);
                 }

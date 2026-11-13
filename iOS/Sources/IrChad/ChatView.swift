@@ -519,6 +519,80 @@ extension Color {
     }
 }
 
+/// Someone's activity, with its track's progress ticking under it.
+private struct ActivityLine: View {
+    let text: String
+    let music: Music?
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        if let music, music.length > 0 {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                ProgressView(value: Double(at(music, ctx.date)), total: Double(music.length))
+                    .frame(width: 120)
+            }
+        }
+    }
+
+    private var icon: String {
+        if text.hasPrefix("Listening to") { return "music.note" }
+        if text.hasPrefix("Watching") { return "play.tv" }
+        return "gamecontroller.fill"
+    }
+
+    private func at(_ m: Music, _ date: Date) -> UInt64 {
+        let now = UInt64(max(date.timeIntervalSince1970, 0))
+        return min(now - min(now, m.start), UInt64(m.length))
+    }
+}
+
+/// One member in the sheet: tap to DM, long press for their song's link.
+private struct MemberRow: View {
+    @Environment(AppModel.self) private var model
+    let net: Network
+    let m: Member
+    let open: (String) -> Void
+
+    var body: some View {
+        let _ = model.tick // profiles change without the member changing
+        let p = model.client.profile(network: net.network, nick: m.nick)
+        let link: URL? = p.music?.url.flatMap { URL(string: $0) }
+        Button {
+            if m.nick.lowercased() != net.nick.lowercased() { open(m.nick) }
+        } label: {
+            HStack(spacing: 12) {
+                Avatar(network: net.network, nick: m.nick, url: p.avatar)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        if m.oper {
+                            Image(systemName: "crown.fill").font(.caption)
+                                .foregroundStyle(.yellow)
+                                .accessibilityLabel("IRC operator")
+                        }
+                        if m.account == nil {
+                            Text("👻").accessibilityLabel("Guest (not logged in)")
+                        }
+                        Text(m.prefix + m.shown).foregroundStyle(m.away ? .secondary : .primary)
+                    }
+                    if let a = p.activity {
+                        ActivityLine(text: a, music: p.music)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        // Tapping the row opens a DM, so the song link is a long press away.
+        .contextMenu {
+            if let link {
+                SwiftUI.Link(destination: link) { Label("Open link", systemImage: "link") }
+            }
+        }
+    }
+}
+
 private struct MembersSheet: View {
     @Environment(AppModel.self) private var model
     let net: Network
@@ -536,34 +610,7 @@ private struct MembersSheet: View {
                         if !group.isEmpty {
                             Section("\(away ? "Away" : "Online") — \(group.count)") {
                                 ForEach(group, id: \.nick) { m in
-                                    Button {
-                                        if m.nick.lowercased() != net.nick.lowercased() { open(m.nick) }
-                                    } label: {
-                                        let p = model.client.profile(network: net.network, nick: m.nick)
-                                        HStack(spacing: 12) {
-                                            Avatar(network: net.network, nick: m.nick, url: p.avatar)
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                HStack {
-                                                    if m.oper {
-                                                        Image(systemName: "crown.fill").font(.caption)
-                                                            .foregroundStyle(.yellow)
-                                                            .accessibilityLabel("IRC operator")
-                                                    }
-                                                    if m.account == nil {
-                                                        Text("👻").accessibilityLabel("Guest (not logged in)")
-                                                    }
-                                                    Text(m.prefix + m.shown).foregroundStyle(m.away ? .secondary : .primary)
-                                                }
-                                                if let a = p.activity {
-                                                    Label(a, systemImage: a.hasPrefix("Listening to") ? "music.note" : "gamecontroller.fill")
-                                                        .font(.caption)
-                                                        .foregroundStyle(.secondary)
-                                                        .lineLimit(1)
-                                                }
-                                            }
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
+                                    MemberRow(net: net, m: m, open: open)
                                 }
                             }
                         }

@@ -153,6 +153,8 @@ pub struct App {
     /// The `chad/activity` we last sent everywhere (`None`: we leave it alone),
     /// and when.
     activity_sent: (Option<String>, Option<Instant>),
+    /// The `chad/music` sent with it.
+    music_sent: Option<chad_core::Music>,
     update: mpsc::Receiver<update::Status>,
     /// A newer build, for the banner.
     new_version: Option<update::Status>,
@@ -523,6 +525,7 @@ impl App {
             games_fresh: false,
             games_error: None,
             activity_sent: (None, None),
+            music_sent: None,
             new_version: None,
             update: {
                 let (tx, rx) = mpsc::channel();

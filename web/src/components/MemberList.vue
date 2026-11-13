@@ -2,7 +2,7 @@
      away, each with avatar, badges and activity; a card on hover. Click to
      DM, right-click to block. -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import type { Member } from '../wasm/chad_web'
 import { nickColor } from '../lib/format'
 import { useClient } from '../stores/client'
@@ -23,14 +23,39 @@ const sections = computed(() =>
 
 const ROLES: Record<string, string> = { '~': 'Owner', '&': 'Admin', '@': 'Operator', '%': 'Half-op', '+': 'Voice' }
 const roles = (prefix: string) => [...prefix].flatMap((c) => ROLES[c] ?? [])
-const icon = (activity: string) => (activity.startsWith('Listening to') ? 'ph-music-notes' : 'ph-game-controller')
+const icon = (activity: string) =>
+  activity.startsWith('Listening to') ? 'ph-music-notes' : activity.startsWith('Watching') ? 'ph-play' : 'ph-game-controller'
 const isMe = (m: Member) => m.nick === client.state?.nick
 
-// The card's member and where it goes: left of the hovered row.
+// The card's member and where it goes: left of the hovered row. It lingers a
+// moment after the row is left, so the pointer can cross to its song link.
 const card = ref<{ m: Member; top: number; right: number }>()
+let leaving: ReturnType<typeof setTimeout> | undefined
 function hover(m: Member, e: MouseEvent) {
+  clearTimeout(leaving)
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
   card.value = { m, top: Math.min(r.top, innerHeight - 260), right: innerWidth - r.left + 8 }
+}
+const leave = () => (leaving = setTimeout(() => (card.value = undefined), 200))
+const stay = () => clearTimeout(leaving)
+
+// The card's track progress, ticking while it's open.
+const now = ref(Date.now() / 1000)
+let tick: ReturnType<typeof setInterval> | undefined
+watch(card, (c) => {
+  clearInterval(tick)
+  now.value = Date.now() / 1000
+  if (c?.m.music?.length) tick = setInterval(() => (now.value = Date.now() / 1000), 1000)
+})
+onUnmounted(() => {
+  clearInterval(tick)
+  clearTimeout(leaving)
+})
+const at = (m: NonNullable<Member['music']>) => Math.min(Math.max(now.value - m.start, 0), m.length)
+function clock(s: number) {
+  const [h, m, sec] = [Math.floor(s / 3600), Math.floor(s / 60) % 60, Math.floor(s) % 60]
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`
 }
 
 function block(m: Member) {
@@ -53,7 +78,7 @@ function block(m: Member) {
         @click="!isMe(m) && client.open(m.nick)"
         @contextmenu.prevent="block(m)"
         @mouseenter="hover(m, $event)"
-        @mouseleave="card = undefined"
+        @mouseleave="leave"
       >
         <Avatar :nick="m.nick" :shown="m.shown" :url="m.avatar" :size="32" :status="m.away ? 'away' : 'online'" />
         <span class="lines">
@@ -66,7 +91,13 @@ function block(m: Member) {
         </span>
       </button>
     </template>
-    <div v-if="card" class="card" :style="{ top: `${card.top}px`, right: `${card.right}px` }">
+    <div
+      v-if="card"
+      class="card"
+      :style="{ top: `${card.top}px`, right: `${card.right}px` }"
+      @mouseenter="stay"
+      @mouseleave="card = undefined"
+    >
       <div class="who">
         <Avatar :nick="card.m.nick" :shown="card.m.shown" :url="card.m.avatar" :size="64" :status="card.m.away ? 'away' : 'online'" />
         <div>
@@ -74,7 +105,18 @@ function block(m: Member) {
           <div v-if="card.m.shown !== card.m.nick" class="dim">{{ card.m.nick }}</div>
         </div>
       </div>
-      <div v-if="card.m.activity"><i class="ph" :class="icon(card.m.activity)" /> {{ card.m.activity }}</div>
+      <div v-if="card.m.activity">
+        <i class="ph" :class="icon(card.m.activity)" />
+        <a v-if="card.m.music?.url" :href="card.m.music.url" target="_blank" rel="noopener noreferrer">{{
+          card.m.activity
+        }}</a>
+        <template v-else>{{ card.m.activity }}</template>
+      </div>
+      <div v-if="card.m.music?.length" class="track dim small">
+        {{ clock(at(card.m.music)) }}
+        <progress :value="at(card.m.music)" :max="card.m.music.length" />
+        {{ clock(card.m.music.length) }}
+      </div>
       <hr />
       <dl>
         <dt>Status</dt>
@@ -150,7 +192,16 @@ h3:first-child {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px #0008;
-  pointer-events: none;
+}
+.track {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.track progress {
+  width: 120px;
+  height: 4px;
 }
 .who {
   display: flex;

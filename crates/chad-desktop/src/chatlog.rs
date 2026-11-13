@@ -1142,9 +1142,13 @@ pub fn profile_card(
             }
         });
     });
-    if let Some(a) = profile.and_then(|p| p.activity.as_deref()) {
+    if let Some(p) = profile.filter(|p| p.activity.is_some()) {
         ui.add_space(4.0);
-        ui.label(format!("{} {a}", crate::presence::icon(a)));
+        crate::presence::show(
+            ui,
+            p.activity.as_deref().unwrap_or_default(),
+            p.music.as_ref(),
+        );
     }
     ui.separator();
     egui::Grid::new("profile_card")

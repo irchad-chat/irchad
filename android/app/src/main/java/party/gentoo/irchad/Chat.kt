@@ -14,6 +14,7 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.ui.unit.Dp
 import io.livekit.android.room.participant.ConnectionQuality
 import party.gentoo.irchad.core.Device
+import party.gentoo.irchad.core.Music
 import party.gentoo.irchad.core.Reaction
 import android.content.pm.PackageManager
 import android.os.Build
@@ -447,15 +448,7 @@ private fun ChatScreen(
                                         else MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
-                                p.activity?.let {
-                                    Text(
-                                        (if (it.startsWith("Listening to")) "🎵 " else "🎮 ") + it,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                                p.activity?.let { ActivityLine(it, p.music) }
                             }
                         }
                     }
@@ -1753,5 +1746,39 @@ private fun ScreenViewer(app: IrChad, call: CallState, pip: Boolean) {
                 }
             }
         }
+    }
+}
+
+/** Someone's activity, a tap away from its song's link, with the song's progress. */
+@Composable
+private fun ActivityLine(text: String, music: Music?) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    val icon = when {
+        text.startsWith("Listening to") -> "🎵 "
+        text.startsWith("Watching") -> "📺 "
+        else -> "🎮 "
+    }
+    val url = music?.url
+    Text(
+        icon + text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (url != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = if (url != null) Modifier.clickable { uri.openUri(url) } else Modifier,
+    )
+    val length = music?.length?.toLong() ?: 0L
+    if (length > 0) {
+        val now by androidx.compose.runtime.produceState(System.currentTimeMillis() / 1000) {
+            while (true) {
+                kotlinx.coroutines.delay(1000)
+                value = System.currentTimeMillis() / 1000
+            }
+        }
+        val at = (now - music!!.start.toLong()).coerceIn(0, length)
+        androidx.compose.material3.LinearProgressIndicator(
+            progress = { at.toFloat() / length },
+            modifier = Modifier.width(120.dp).padding(top = 4.dp),
+        )
     }
 }

@@ -63,6 +63,8 @@ pub struct Settings {
     /// `spotify`) on Linux, app ids (e.g. `Spotify.exe`) on Windows.
     /// Opt-in per player, so a browser tab's title never leaks by surprise.
     pub music_players: Vec<String>,
+    /// Say which player it's on: "Listening to X on Spotify".
+    pub music_player_name: bool,
     /// The game overlay (D74).
     pub overlay: OverlaySettings,
 }
@@ -94,6 +96,7 @@ impl Default for Settings {
             share_activity: false,
             share_music: false,
             music_players: Vec::new(),
+            music_player_name: false,
             overlay: OverlaySettings::default(),
         }
     }
@@ -269,9 +272,17 @@ impl Settings {
                     {
                         ui.label("");
                         ui.checkbox(&mut self.share_music, "Share what I'm listening to")
-                            .on_hover_text("The song playing in the media players you pick below.");
+                            .on_hover_text(
+                                "The song or video playing in the media players you pick \
+                                 below, with how far in it is and, from Spotify and \
+                                 browsers on Linux, a link to it.",
+                            );
                         ui.end_row();
                         if self.share_music {
+                            ui.label("");
+                            ui.checkbox(&mut self.music_player_name, "Say which player")
+                                .on_hover_text("\"Listening to Song by Artist on Spotify\"");
+                            ui.end_row();
                             ui.label("");
                             ui.vertical(|ui| music_players(ui, &mut self.music_players, players));
                             ui.end_row();

@@ -3,9 +3,10 @@
 
 use std::collections::HashMap;
 
-use chad_core::Game;
+use chad_core::{Game, Music};
 
 use crate::icons;
+use crate::platform::presence::Track;
 
 /// Discord's game list from chadd, indexed for Rich Presence ids and for
 /// running executables. Each name is kept once; the maps point into `names`.
@@ -73,17 +74,68 @@ pub fn custom_game(paths: &[String], custom: &[String]) -> Option<String> {
     })
 }
 
-/// The line to share, best source first; empty for nothing.
-pub fn line(rich: Option<String>, game: Option<&str>, music: Option<&str>) -> String {
-    rich.or_else(|| game.map(|g| format!("Playing {g}")))
-        .or_else(|| music.map(|m| format!("Listening to {m}")))
-        .unwrap_or_default()
+/// The line to share, best source first (empty for nothing), and the track
+/// behind it when it's the media player's. `on` adds the player's name.
+pub fn line(
+    rich: Option<String>,
+    game: Option<&str>,
+    music: Option<&Track>,
+    on: bool,
+) -> (String, Option<Music>) {
+    if let Some(l) = rich.or_else(|| game.map(|g| format!("Playing {g}"))) {
+        return (l, None);
+    }
+    let Some(t) = music else {
+        return (String::new(), None);
+    };
+    let verb = if t.video { "Watching" } else { "Listening to" };
+    let line = match t.player.as_deref().filter(|_| on) {
+        Some(p) => format!("{verb} {} on {p}", t.line),
+        None => format!("{verb} {}", t.line),
+    };
+    (line, Some(t.music.clone()))
+}
+
+/// An activity line in full, as on a profile card: a link when its track has
+/// one, and the track's progress under it.
+pub fn show(ui: &mut egui::Ui, line: &str, music: Option<&Music>) {
+    let text = format!("{} {line}", icon(line));
+    match music.and_then(|m| m.url.as_ref()) {
+        Some(u) => {
+            ui.hyperlink_to(text, u.as_str()).on_hover_text(u.as_str());
+        }
+        None => {
+            ui.label(text);
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    if let Some((at, len)) = music.and_then(|m| m.progress(now)) {
+        ui.horizontal(|ui| {
+            let clock = |s| {
+                egui::RichText::new(chad_core::music::clock(s))
+                    .small()
+                    .weak()
+            };
+            ui.label(clock(at));
+            let bar = egui::ProgressBar::new(at as f32 / len as f32).desired_height(4.0);
+            ui.add_sized([120.0, 4.0], bar);
+            ui.label(clock(len));
+        });
+        if at < len {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
+        }
+    }
 }
 
 /// The icon next to an activity line.
 pub fn icon(line: &str) -> &'static str {
     if line.starts_with("Listening to") {
         icons::MUSIC_NOTES
+    } else if line.starts_with("Watching") {
+        icons::PLAY
     } else {
         icons::GAME_CONTROLLER
     }
@@ -147,14 +199,35 @@ mod tests {
 
     #[test]
     fn rich_presence_beats_a_running_game_beats_music() {
-        let rich = Some("Playing Celeste: Chapter 3".to_owned());
+        let y = Track {
+            line: "Y by Z".into(),
+            player: Some("Spotify".into()),
+            video: false,
+            music: Music::parse("1 2").unwrap(),
+        };
+        let l =
+            |rich: Option<&str>, game, music, on| line(rich.map(str::to_owned), game, music, on);
+        let rich = "Playing Celeste: Chapter 3";
         assert_eq!(
-            line(rich, Some("X"), Some("Y")),
-            "Playing Celeste: Chapter 3"
+            l(Some(rich), Some("X"), Some(&y), true),
+            (rich.into(), None)
         );
-        assert_eq!(line(None, Some("X"), Some("Y")), "Playing X");
-        assert_eq!(line(None, None, Some("Y by Z")), "Listening to Y by Z");
-        assert_eq!(line(None, None, None), "");
+        assert_eq!(l(None, Some("X"), Some(&y), true).0, "Playing X");
+        assert_eq!(
+            l(None, None, Some(&y), false),
+            ("Listening to Y by Z".into(), Some(y.music.clone()))
+        );
+        assert_eq!(
+            l(None, None, Some(&y), true).0,
+            "Listening to Y by Z on Spotify"
+        );
+        let w = Track {
+            video: true,
+            ..y.clone()
+        };
+        assert_eq!(l(None, None, Some(&w), false).0, "Watching Y by Z");
+        assert_eq!(l(None, None, None, true), (String::new(), None));
         assert_eq!(icon("Listening to Y"), icons::MUSIC_NOTES);
+        assert_eq!(icon("Watching Y"), icons::PLAY);
     }
 }
