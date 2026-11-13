@@ -37,6 +37,8 @@ class IrChad : Application() {
     val joinFailures = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 4)
     /** The verification on screen, one person at a time. */
     val verify = MutableStateFlow<Verify?>(null)
+    /** The server took a report: say so until dismissed. */
+    val reported = MutableStateFlow(false)
 
     val calls by lazy { Calls(this) }
     val media by lazy { Media(this) }
@@ -95,6 +97,10 @@ class IrChad : Application() {
 
                 override fun sound(network: String, file: String, bytes: ByteArray?) =
                     sounds.gotBytes(network, file, bytes)
+
+                override fun reported(network: String) {
+                    reported.value = true
+                }
             },
         ).also {
             notifier.started()

@@ -59,6 +59,8 @@ pub trait Listener: Send + Sync {
     /// The answer to `Client::sound`: the clip's encoded bytes (mp3, ogg, wav
     /// or flac, unchecked), or `None` if it couldn't be fetched.
     fn sound(&self, network: String, file: String, bytes: Option<Vec<u8>>);
+    /// The server took a `Client::report`: say it was sent. A failure comes as `notice`.
+    fn reported(&self, network: String);
 }
 
 /// A soundboard button (D37).

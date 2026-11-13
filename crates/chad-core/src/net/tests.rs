@@ -1,6 +1,6 @@
 use super::*;
-use crate::Encryption;
 use crate::store::msg;
+use crate::{Encryption, Report};
 
 mod block;
 mod chat;
@@ -97,8 +97,9 @@ fn messages(events: &[Event]) -> Vec<ChatMessage> {
 }
 
 fn label_of(l: &str) -> &str {
-    l.strip_prefix("@label=")
+    l.split_once("label=")
         .unwrap()
+        .1
         .split([' ', ';'])
         .next()
         .unwrap()
@@ -357,7 +358,95 @@ fn the_home_channels_list_joins_and_parts_official_channels() {
     n.detach();
     let sent = attach(&mut n, &["#lobby", "#c"]);
     assert!(
-        sent.contains(&"METADATA #lobby GET chad/channels".to_owned()),
+        sent.contains(&"METADATA #lobby GET chad/channels chad/report".to_owned()),
         "{sent:?}"
+    );
+}
+
+#[test]
+fn reports_go_to_the_home_channels_account_and_stay_hidden() {
+    let mut n = net();
+    n.home = Some("#lobby".into());
+    attach(&mut n, &["#lobby", "#other"]);
+    events(&mut n);
+    out(&mut n);
+    let report_to = |n: &mut Net, l: &str| {
+        feed(n, l);
+        events(n).into_iter().find_map(|e| match e {
+            Event::ReportTo { account, .. } => Some(account),
+            _ => None,
+        })
+    };
+    // Not the home channel, or not a nick: ignored or cleared.
+    assert_eq!(
+        report_to(&mut n, ":s 761 * #other chad/report * :eve"),
+        None
+    );
+    assert_eq!(
+        report_to(&mut n, ":s 761 * #lobby chad/report * :#chan"),
+        Some(None)
+    );
+    assert_eq!(
+        report_to(&mut n, ":s 761 * #lobby chad/report * :a b"),
+        Some(None)
+    );
+    assert_eq!(
+        report_to(&mut n, ":s 766 * #lobby chad/report :not set"),
+        Some(None)
+    );
+    n.command(NetCommand::Report(Report {
+        nick: "eve".into(),
+        ..Default::default()
+    }));
+    assert!(out(&mut n).is_empty(), "no one takes reports");
+    assert_eq!(
+        report_to(&mut n, ":s 761 * #lobby chad/report * :Mods"),
+        Some(Some("Mods".into()))
+    );
+
+    n.command(NetCommand::Report(Report {
+        nick: "eve".into(),
+        target: Some("#lobby".into()),
+        msgid: Some("m1".into()),
+        text: Some("bad\nthing".into()),
+        reason: " spam\r\n ".into(),
+    }));
+    let sent = out(&mut n);
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0].ends_with(
+            "PRIVMSG Mods :[Report] eve in #lobby (msgid m1): \"bad thing\" | Reason: spam"
+        ) && sent[0].contains("+chad/report"),
+        "{sent:?}"
+    );
+    let label = label_of(&sent[0]).to_owned();
+    feed(
+        &mut n,
+        &format!("@label={label};+chad/report=1;msgid=r1 :bob!u@h PRIVMSG Mods :[Report] eve"),
+    );
+    let ev = events(&mut n);
+    assert!(
+        ev.iter().any(|e| matches!(e, Event::Reported { .. })),
+        "{ev:?}"
+    );
+    assert!(buffer(&ev, "Mods").is_none());
+    // Our other device's copy: hidden too.
+    feed(
+        &mut n,
+        "@+chad/report=1;msgid=r2 :bob!u@h2 PRIVMSG Mods :[Report] eve",
+    );
+    assert!(buffer(&events(&mut n), "Mods").is_none());
+
+    // A huge quote still fits one line.
+    n.command(NetCommand::Report(Report {
+        nick: "eve".into(),
+        text: Some("é".repeat(1000)),
+        ..Default::default()
+    }));
+    let sent = out(&mut n);
+    assert!(
+        sent[0].len() < 512 && sent[0].contains("…\""),
+        "{}",
+        sent[0].len()
     );
 }

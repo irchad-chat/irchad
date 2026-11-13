@@ -63,6 +63,8 @@ pub struct Net<N = (), B = ()> {
     pub emoji: Vec<CustomEmoji>,
     /// Blocked people, oldest first: their messages and reactions are hidden.
     pub blocks: Vec<Block>,
+    /// Who takes reports (`Event::ReportTo`).
+    pub report_to: Option<String>,
     pub ui: N,
 }
 
@@ -348,6 +350,7 @@ impl<N: Default, B: Default> View<N, B> {
                         sounds: Vec::new(),
                         emoji: Vec::new(),
                         blocks: Vec::new(),
+                        report_to: None,
                         ui: N::default(),
                     });
                 }
@@ -483,6 +486,11 @@ impl<N: Default, B: Default> View<N, B> {
             } => {
                 if let Some(i) = self.net(network) {
                     self.nets[i].devices.insert(key(nick), devices.clone());
+                }
+            }
+            Event::ReportTo { network, account } => {
+                if let Some(i) = self.net(network) {
+                    self.nets[i].report_to.clone_from(account);
                 }
             }
             Event::Blocks { network, blocks } => {

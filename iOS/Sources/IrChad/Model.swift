@@ -30,6 +30,10 @@ final class AppModel {
     var joinFailure: (invite: String, error: String)?
     /// The verification on screen, one person at a time.
     var verify: Verify?
+    /// A report being written: who, and the message if it's about one.
+    var reporting: ReportDraft?
+    /// The server took a report: say so until dismissed.
+    var reported = false
     /// A conversation to show: a tapped notification, a finished join.
     var focus: Sel?
     /// An `irchad://` invite that opened the app, until the join screen takes it.
@@ -190,6 +194,19 @@ final class Bridge: Listener, @unchecked Sendable {
             self?.main { $0.sounds.gotFile(network: network, file: file, url: url) }
         }
     }
+
+    func reported(network: String) {
+        main { $0.reported = true }
+    }
+}
+
+/// Someone to report to the network's moderators, or their message.
+struct ReportDraft {
+    let network: String
+    let nick: String
+    var target: String?
+    var msgid: String?
+    var text: String?
 }
 
 /// Passwords (and each network's E2EE store key, `<origin>#e2e`) in the

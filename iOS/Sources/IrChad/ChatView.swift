@@ -391,6 +391,14 @@ struct MessageRow: View {
                 if let id = m.msgid { model.client.redact(network: network, target: target, msgid: id) }
             }
         }
+        if !m.own && model.client.reportTo(network: network) != nil {
+            Button("Report", systemImage: "flag") {
+                model.reporting = ReportDraft(
+                    network: network, nick: m.nick, target: target,
+                    msgid: m.msgid, text: m.text.isEmpty ? nil : m.text
+                )
+            }
+        }
         if !m.own {
             Button("Block \(m.shown)", systemImage: "hand.raised", role: .destructive) {
                 model.client.block(network: network, nick: m.nick, account: m.account)

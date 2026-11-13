@@ -143,7 +143,8 @@ impl Net {
                     else {
                         continue;
                     };
-                    if self.is_channel(t) || m.command != "CHATHISTORY" {
+                    // shortcut: a moderator's reply made while we were offline opens no DM; a live one does.
+                    if self.is_channel(t) || m.command != "CHATHISTORY" || self.is_report_to(t) {
                         continue;
                     }
                     let key = self.fold(t);
@@ -155,6 +156,7 @@ impl Net {
             }
             Pending::Devices { nick } => self.devices_reply(&nick, flatten(items)),
             Pending::Block { nick } => self.block_reply(&nick, flatten(items)),
+            Pending::Report => self.report_reply(&items),
             Pending::Sync => self.synced(),
             Pending::List => {
                 let channels: Vec<String> = flatten(items)
@@ -256,7 +258,7 @@ impl Net {
         {
             self.out.push(Message::new(
                 "METADATA",
-                [home.as_str(), "GET", CHANNELS_KEY],
+                [home.as_str(), "GET", CHANNELS_KEY, REPORT_KEY],
             ));
         }
         self.store.set_meta("autojoined", "1");
@@ -371,6 +373,12 @@ impl Net {
                     && m.command == "761"
                 {
                     self.official_channels(target, value);
+                }
+            }
+            "761" | "766" if m.param(2) == Some(REPORT_KEY) => {
+                let value = if m.command == "761" { m.param(4) } else { None };
+                if let Some(target) = m.param(1) {
+                    self.report_metadata(target, value);
                 }
             }
             "761" | "766" if m.param(2) == Some(RECEIPTS_KEY) => {
@@ -653,6 +661,9 @@ impl Net {
 
     /// A PRIVMSG/NOTICE or multiline batch as `(buffer name, message)`.
     pub(super) fn chat(&self, item: &Item) -> Option<(String, ChatMessage)> {
+        if self.own_report(head(item)) {
+            return None;
+        }
         let (head, text) = match item {
             Item::Message(m) if matches!(m.command.as_str(), "PRIVMSG" | "NOTICE") => {
                 (m, m.param(1)?.to_owned())

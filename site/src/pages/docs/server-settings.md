@@ -60,3 +60,4 @@ Channel operators set these on a channel from any IRC client. They aren't in a c
 |---|---|
 | [Turn voice off](/docs/voice#joining-and-leaving) in a channel | `/quote METADATA #channel SET chad/voice off` |
 | [Official channels](/docs/getting-started#4-youre-in) everyone is added to | On the home channel: `/quote METADATA #home SET chad/channels :#one #two` |
+| Who gets reports (the phone apps' **Report** button, shown only when this is set) | On the home channel: `/quote METADATA #home SET chad/report modname`. Reports arrive as a DM starting with `[Report]` |

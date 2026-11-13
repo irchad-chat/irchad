@@ -174,6 +174,7 @@ impl Client {
                         file,
                         result,
                     } => listener.sound(network, file, result.ok().map(|b| b.0.to_vec())),
+                    Event::Reported { network } => listener.reported(network),
                     _ => {}
                 }
                 listener.changed();
@@ -511,6 +512,37 @@ impl Client {
         // shortcut: a cold start may read the push before the block list loads; it shows then.
         v.net(&network)
             .is_some_and(|i| v.nets[i].blocks.iter().any(|b| b.hides(&msg)))
+    }
+
+    /// Who takes reports on `network` (the home channel's `chad/report`);
+    /// `None`: hide Report.
+    pub fn report_to(&self, network: String) -> Option<String> {
+        let v = self.view();
+        v.nets[v.net(&network)?].report_to.clone()
+    }
+
+    /// Report `nick`, or their message `msgid` with `text` in `target`, to
+    /// `report_to`. Answered by `Listener::reported` or `Listener::notice`; no
+    /// DM opens on our side.
+    pub fn report(
+        &self,
+        network: String,
+        nick: String,
+        target: Option<String>,
+        msgid: Option<String>,
+        text: Option<String>,
+        reason: String,
+    ) {
+        self.net(
+            network,
+            NetCommand::Report(chad_core::Report {
+                nick,
+                target,
+                msgid,
+                text,
+                reason,
+            }),
+        );
     }
 
     /// Join a channel's voice room, leaving any other call.

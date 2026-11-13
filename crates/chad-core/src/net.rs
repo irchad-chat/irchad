@@ -28,6 +28,7 @@ mod members;
 mod metadata;
 mod push;
 mod receipts;
+mod report;
 pub use e2e::{DEVICES_KEY, E2e};
 use url::Url;
 
@@ -57,6 +58,8 @@ const PUSH_TRIES: u32 = 4;
 pub const VOICE_KEY: &str = "chad/voice";
 /// Metadata key on the home channel: the official channels, space-separated.
 pub const CHANNELS_KEY: &str = "chad/channels";
+/// Metadata key on the home channel: the account that takes reports (a moderator or bot).
+pub const REPORT_KEY: &str = "chad/report";
 /// Store meta: the last `chad/channels` we acted on, folded.
 const OFFICIAL_META: &str = "official";
 /// ergo's away reason when an always-on user has no connected devices.
@@ -110,6 +113,7 @@ enum Pending {
     Block {
         nick: String,
     },
+    Report,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,6 +194,8 @@ pub struct Net {
     typing_sent: HashMap<String, Instant>,
     connected: bool,
     synced: bool,
+    /// The home channel's `chad/report`.
+    report_to: Option<String>,
     /// Always-on, per `PERSISTENCE STATUS`. ergo's default (D11).
     persistent: bool,
     joined: HashSet<String>,
@@ -254,6 +260,7 @@ impl Net {
             typing_sent: HashMap::new(),
             connected: false,
             synced: false,
+            report_to: None,
             persistent: true,
             joined: HashSet::new(),
             who_wanted: HashSet::new(),
@@ -448,7 +455,8 @@ impl Net {
             | Pending::History { .. }
             | Pending::Targets
             | Pending::Devices { .. }
-            | Pending::Block { .. } => {}
+            | Pending::Block { .. }
+            | Pending::Report => {}
         }
     }
 

@@ -16,7 +16,7 @@ use chad_proto::discovery::{Discovery, Registration};
 use crate::ConnState;
 use crate::net::{
     ACTIVITY_KEY, AVATAR_KEY, CHANNELS_KEY, DEVICES_KEY, DISPLAY_NAME_KEY, Net, RECEIPTS_KEY,
-    VOICE_KEY, failure,
+    REPORT_KEY, VOICE_KEY, failure,
 };
 
 /// Who's logging in.
@@ -207,6 +207,7 @@ impl Login {
                 ACTIVITY_KEY,
                 DEVICES_KEY,
                 CHANNELS_KEY,
+                REPORT_KEY,
                 RECEIPTS_KEY,
             ];
             out.push(Message::new(

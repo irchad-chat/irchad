@@ -219,6 +219,7 @@ impl Net {
             NetCommand::Part { channel } => self.out.push(Message::new("PART", [channel])),
             NetCommand::OpenDm { .. } => {}
             NetCommand::Block { nick, account } => self.block(&nick, account),
+            NetCommand::Report(r) => self.report(r),
             NetCommand::Unblock { mask } => self.unblock(&mask),
             // The connection handles it while live (conn.rs), so here we're offline or a guest.
             NetCommand::DeleteAccount => self.events.push(Event::Error {

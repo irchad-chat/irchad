@@ -477,3 +477,9 @@ If the IRC connection drops, chad-core ends the call and the page leaves the roo
 
 Production serves `web/dist` from `/var/www/irchad-chat` at `/chat/` on the network's own origin, so the page finds its network from `location.origin` and needs no config. `vite build` sets the base to `/chat/`, and `vite dev` keeps `/`. Caddy strips the prefix and sends any unknown path to `index.html`. The content-hashed `assets/` are cached as immutable, `index.html` is `no-cache`, and responses are compressed (the wasm goes from 3.7 MB to 1.4 MB with zstd).
 The site's hero links it as "Join in your browser", next to the app download, and the web app itself keeps pointing people at the app (the first-visit notice and the sidebar link, both to `/invite`).
+
+## D82: Reports are a hidden DM to the home channel's `chad/report` account (2026-11-13)
+
+Play's UGC policy wants report next to block. A report is a PRIVMSG to the nick that the home channel's `chad/report` metadata names, so moderators need no new tooling and plain IRC clients see a readable `[Report] …` line. It is set by ops like `chad/channels` (D56), not parsed out of the MOTD, which every client shows as text.
+On the reporter's side it is tagged `+chad/report` and never shown: its echo is answered by the label, its copies and history are dropped, and TARGETS skips that account. The shortcut: a moderator's reply sent while the reporter is offline opens no DM until they write again live.
+Only Android and iOS have the button for now.

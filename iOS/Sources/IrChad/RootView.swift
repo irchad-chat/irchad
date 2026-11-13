@@ -7,6 +7,7 @@ struct RootView: View {
     /// before deciding there are none. A join in progress is listed too, so
     /// the join screen stays up by `adding`, not by the list being empty.
     @State private var settled = false
+    @State private var reason = ""
 
     var body: some View {
         let _ = model.tick
@@ -28,6 +29,28 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .bottom) { Toast() }
+        .alert(
+            model.reporting?.msgid != nil ? "Report message" : "Report \(model.reporting?.nick ?? "")",
+            isPresented: Binding(get: { model.reporting != nil }, set: { if !$0 { model.reporting = nil } }),
+            presenting: model.reporting
+        ) { r in
+            TextField("What's wrong? (optional)", text: $reason)
+            Button("Report") {
+                model.client.report(
+                    network: r.network, nick: r.nick, target: r.target,
+                    msgid: r.msgid, text: r.text, reason: reason
+                )
+                reason = ""
+            }
+            Button("Cancel", role: .cancel) { reason = "" }
+        } message: { r in
+            Text((r.text.map { "\"\($0)\"\n\n" } ?? "") + "This goes privately to the server's moderators.")
+        }
+        .alert("Report sent", isPresented: Binding(get: { model.reported }, set: { model.reported = $0 })) {
+            Button("OK") {}
+        } message: {
+            Text("Thanks for letting us know. The moderators of this server will look into it.")
+        }
         .sheet(isPresented: Binding(get: { model.verify != nil }, set: { if !$0 { closeVerify() } })) {
             if let v = model.verify { VerifySheet(v: v) }
         }

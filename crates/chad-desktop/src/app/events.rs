@@ -255,6 +255,8 @@ impl App {
                 }
             }
             Event::HistoryStart { .. }
+            | Event::ReportTo { .. }
+            | Event::Reported { .. }
             | Event::Members { .. }
             | Event::Typing { .. }
             | Event::Voice { .. }

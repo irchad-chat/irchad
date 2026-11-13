@@ -107,6 +107,7 @@ impl Listener for Nop {
     fn verification(&self, _: String, _: String, _: Sas) {}
     fn sounds(&self, _: String, _: Vec<Clip>, _: Option<String>) {}
     fn sound(&self, _: String, _: String, _: Option<Vec<u8>>) {}
+    fn reported(&self, _: String) {}
 }
 impl Voice for Nop {
     fn join(&self, _: u64, _: String, _: String, _: Arc<Call>) {}

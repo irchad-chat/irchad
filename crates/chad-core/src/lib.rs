@@ -333,6 +333,8 @@ pub enum NetCommand {
         nick: String,
         account: Option<String>,
     },
+    /// To the home channel's `chad/report`: `Event::Reported` or `Event::Error`.
+    Report(Report),
     /// `Block::mask` from `Event::Blocks`.
     Unblock {
         mask: String,
@@ -502,11 +504,30 @@ pub enum Event {
         nick: String,
         state: VerifyState,
     },
+    /// The server took a `NetCommand::Report`.
+    Reported {
+        network: String,
+    },
+    /// Who takes reports on this network (home channel's `chad/report`); `None` hides Report.
+    ReportTo {
+        network: String,
+        account: Option<String>,
+    },
     /// The network's whole block list, at startup and after every change.
     Blocks {
         network: String,
         blocks: Vec<Block>,
     },
+}
+
+/// Someone (`nick`), or their message `msgid` with `text` in `target`, reported.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    pub nick: String,
+    pub target: Option<String>,
+    pub msgid: Option<String>,
+    pub text: Option<String>,
+    pub reason: String,
 }
 
 /// Someone blocked: nothing from them is shown.

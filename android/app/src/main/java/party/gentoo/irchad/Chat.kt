@@ -170,6 +170,15 @@ fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: 
     }
     val verify by app.verify.collectAsState()
     verify?.let { VerifyDialog(app, it) }
+    val reported by app.reported.collectAsState()
+    if (reported) {
+        AlertDialog(
+            onDismissRequest = { app.reported.value = false },
+            title = { Text("Report sent") },
+            text = { Text("Thanks for letting us know. The moderators of this server will look into it.") },
+            confirmButton = { TextButton(onClick = { app.reported.value = false }) { Text("OK") } },
+        )
+    }
     // The core lists saved networks shortly after start; give it a moment
     // before deciding there are none. A join in progress is listed too, so
     // the join screen stays up by `adding`, not by the list being empty.
@@ -316,6 +325,12 @@ private fun ChatScreen(
                                             dialog = "devices"
                                         })
                                     }
+                                    if (buf.dm && c.reportTo(net.network) != null) {
+                                        DropdownMenuItem(text = { Text("Report") }, onClick = {
+                                            more = false
+                                            dialog = "report"
+                                        })
+                                    }
                                     if (buf.dm) {
                                         DropdownMenuItem(text = { Text("Block") }, onClick = {
                                             more = false
@@ -444,6 +459,7 @@ private fun ChatScreen(
         "profile" -> ProfileDialog(app, tick, net) { dialog = null }
         "leave" -> LeaveDialog(app, net) { dialog = null }
         "devices" -> buf?.let { DevicesDialog(app, tick, net, it.target) { dialog = null } } ?: run { dialog = null }
+        "report" -> buf?.let { ReportDialog(app, net, it.target, it.target, null) { dialog = null } } ?: run { dialog = null }
         "channel", "dm" -> AddDialog(app, net, dialog!!, onOpen = { selected[net.network] = it }) { dialog = null }
     }
 }
@@ -469,6 +485,30 @@ private fun AddDialog(app: IrChad, net: Network, kind: String, onOpen: (String) 
                 onOpen(n)
                 onDismiss()
             }) { Text(if (kind == "channel") "Join" else "Open") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** Report `nick` (or their message `msg`) to whoever the network names; `Root` says when it's sent. */
+@Composable
+private fun ReportDialog(app: IrChad, net: Network, nick: String, target: String?, msg: Message?, onDismiss: () -> Unit) {
+    var reason by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (msg != null) "Report message" else "Report $nick") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                msg?.let { Text("\"${it.text}\"", maxLines = 3, overflow = TextOverflow.Ellipsis) }
+                Text("This goes privately to the server's moderators.")
+                OutlinedTextField(reason, { reason = it }, label = { Text("What's wrong? (optional)") })
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                app.client.report(net.network, nick, target, msg?.msgid, msg?.text, reason)
+                onDismiss()
+            }) { Text("Report") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
@@ -833,6 +873,8 @@ private fun Log(
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf<Message?>(null) }
     var reactTo by remember { mutableStateOf<String?>(null) }
+    var reporting by remember { mutableStateOf<Message?>(null) }
+    val reportTo = remember(tick, net.network) { c.reportTo(net.network) }
     @Suppress("DEPRECATION")
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
@@ -929,6 +971,12 @@ private fun Log(
                                 menu = null
                             })
                         }
+                        if (!m.own && reportTo != null) {
+                            DropdownMenuItem(text = { Text("Report") }, onClick = {
+                                reporting = m
+                                menu = null
+                            })
+                        }
                         if (!m.own) {
                             DropdownMenuItem(text = { Text("Block ${m.shown}") }, onClick = {
                                 c.block(net.network, m.nick, m.account)
@@ -938,6 +986,9 @@ private fun Log(
                     }
                 }
             }
+        }
+        reporting?.let { m ->
+            ReportDialog(app, net, m.nick, buf.target, m) { reporting = null }
         }
         reactTo?.let { id ->
             Picker(app, net.network, null, onEmoji = {
