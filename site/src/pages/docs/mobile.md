@@ -21,7 +21,7 @@ Android closes an app's connection in the background, so the app asks once how y
 
 | Choice | How it works |
 |---|---|
-| **Push** | The network sends notifications through a UnifiedPush app such as [ntfy](https://ntfy.sh), which you install separately. Without one, phones with Google Play services push through Google instead, with nothing to install. Best for battery. Only DMs and mentions are pushed, and the text is encrypted so ntfy or Google can't read it. |
+| **Push** | The network sends notifications through a UnifiedPush app such as [ntfy](https://ntfy.sh), which you install separately. Phones with Google Play services can also push through Google, with nothing to install; with both, pick one in the settings. Best for battery. Only DMs and mentions are pushed, and the text is encrypted so ntfy or Google can't read it. |
 | **Stay connected** | IrChad keeps its own connection open, with a permanent notification. Uses more battery. Not in the Play Store build. |
 | **Off** | No notifications while the app is closed. You catch up when you open it. |
 

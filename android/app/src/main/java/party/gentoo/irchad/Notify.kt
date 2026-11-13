@@ -79,6 +79,10 @@ class Notifier(private val app: IrChad) {
     )
         private set
 
+    /** The push app pushes come through; our own package means Google (D84). */
+    var distributor by mutableStateOf(UnifiedPush.getSavedDistributor(app))
+        private set
+
     init {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL, "Messages", NotificationManager.IMPORTANCE_HIGH),
@@ -103,6 +107,7 @@ class Notifier(private val app: IrChad) {
         }
         app.client.background(false)
         keepConnected()
+        distributor = UnifiedPush.getSavedDistributor(app)
         // The distributor was uninstalled: pushes stopped, so ask again.
         if (mode == Background.PUSH && !hasDistributor()) {
             mode = null
@@ -114,11 +119,11 @@ class Notifier(private val app: IrChad) {
     /** Our own package counts: the embedded FCM distributor, when Play services is there (D84). */
     fun hasDistributor() = UnifiedPush.getDistributors(app).isNotEmpty()
 
-    /** Push would go through Google, as no UnifiedPush app is installed. */
-    fun onlyEmbedded() = UnifiedPush.getDistributors(app) == listOf(app.packageName)
-
-    /** Picking push may ask which distributor, which needs [activity]. */
-    fun choose(m: Background, activity: Activity) {
+    /**
+     * Picking push without [via] lets the connector pick a push app, which may
+     * ask, so it needs [activity]. With [via], pushes go through that one.
+     */
+    fun choose(m: Background, activity: Activity, via: String? = null) {
         val was = mode
         mode = m
         prefs.edit().putString("background", m.name).apply()
@@ -126,9 +131,16 @@ class Notifier(private val app: IrChad) {
             // Unregisters every network; ergo drops a subscription that 404s.
             UnifiedPush.removeDistributor(app)
             vapids.keys.forEach { app.client.push(it, null) }
+            distributor = null
         }
-        if (m == Background.PUSH && was != Background.PUSH) {
+        if (m == Background.PUSH && via != null && via != distributor) {
+            // The new endpoints replace the old ones at ergo (Net::set_push).
+            UnifiedPush.saveDistributor(app, via)
+            distributor = via
+            vapids.forEach { (n, v) -> register(n, v) }
+        } else if (m == Background.PUSH && via == null && was != Background.PUSH) {
             UnifiedPush.tryUseCurrentOrDefaultDistributor(activity) { ok ->
+                distributor = UnifiedPush.getSavedDistributor(app)
                 if (ok) vapids.forEach { (n, v) -> register(n, v) } else app.notices.tryEmit("No push app answered.")
             }
         }
@@ -293,17 +305,20 @@ class BootReceiver : android.content.BroadcastReceiver() {
     }
 }
 
-/** The three ways (D39), for onboarding and the settings dialog. */
+private data class Choice(val mode: Background, val label: String, val sub: String, val via: String? = null)
+
+/** The three ways (D39), push once per push app (D84), for onboarding and the settings dialog. */
 @Composable
 fun BackgroundChoices(app: IrChad) {
     val n = app.notifier
     val ctx = LocalContext.current
     // In a dialog LocalContext is a ContextThemeWrapper, not the Activity.
     val activity = LocalActivity.current!!
-    val has = remember(n.resumes) { n.hasDistributor() }
+    val pushApps = remember(n.resumes) { UnifiedPush.getDistributors(ctx) }
+    val has = pushApps.isNotEmpty()
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    fun pick(m: Background) {
-        n.choose(m, activity)
+    fun pick(m: Background, via: String?) {
+        n.choose(m, activity, via)
         if (m != Background.OFF && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -311,26 +326,26 @@ fun BackgroundChoices(app: IrChad) {
         }
     }
     Column {
-        for ((m, label, sub) in listOf(
-            Triple(
-                Background.PUSH, "Push",
-                when {
-                    !has -> "Needs a UnifiedPush app such as ntfy"
-                    n.onlyEmbedded() -> "Through Google Play services"
-                    else -> "Through your UnifiedPush app, such as ntfy"
-                },
-            ),
-            Triple(Background.SOCKET, "Stay connected", "Shows a permanent notification, and uses some battery"),
-            Triple(Background.OFF, "Off", "Only while IrChad is open"),
-        ).filter { it.first != Background.SOCKET || BuildConfig.STAY_CONNECTED }) {
+        // One push row per push app; our own package is the embedded FCM one (D84).
+        val push = pushApps.map { pkg ->
+            val name = if (pkg == ctx.packageName) "Google Play services" else runCatching {
+                ctx.packageManager.run { getApplicationLabel(getApplicationInfo(pkg, 0)).toString() }
+            }.getOrDefault(pkg)
+            Choice(Background.PUSH, "Push", "Through $name", pkg)
+        }.ifEmpty { listOf(Choice(Background.PUSH, "Push", "Needs a UnifiedPush app such as ntfy")) }
+        for ((m, label, sub, via) in push + listOf(
+            Choice(Background.SOCKET, "Stay connected", "Shows a permanent notification, and uses some battery"),
+            Choice(Background.OFF, "Off", "Only while IrChad is open"),
+        ).filter { it.mode != Background.SOCKET || BuildConfig.STAY_CONNECTED }) {
             val enabled = m != Background.PUSH || has
+            val selected = n.mode == m && (via == null || via == n.distributor)
             Row(
                 Modifier.fillMaxWidth()
-                    .selectable(n.mode == m, enabled = enabled, role = Role.RadioButton) { pick(m) }
+                    .selectable(selected, enabled = enabled, role = Role.RadioButton) { pick(m, via) }
                     .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                RadioButton(selected = n.mode == m, onClick = null, enabled = enabled)
+                RadioButton(selected = selected, onClick = null, enabled = enabled)
                 Column(Modifier.padding(start = 12.dp)) {
                     Text(label)
                     Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

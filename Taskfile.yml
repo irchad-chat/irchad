@@ -27,3 +27,21 @@ tasks:
       - JAVA_HOME=/usr/lib/jvm/openjdk-bin-21 ABIS=arm64-v8a PROFILE=release IRCHAD_KEYSTORE="$IRCHAD_PLAY_KEYSTORE" IRCHAD_KEYSTORE_PASSWORD="$IRCHAD_PLAY_KEYSTORE_PASSWORD" ./gradlew --no-daemon bundlePlayRelease
       - cmd: echo "built android/app/build/outputs/bundle/playRelease/app-play-release.aab"
         silent: true
+
+  apk:
+    desc: Build the signed sideload APK (arm64, full flavor)
+    dir: android
+    preconditions:
+      # Without these the APK gets the debug key and won't install over a release build.
+      - sh: test -f "$IRCHAD_KEYSTORE" && test -n "$IRCHAD_KEYSTORE_PASSWORD"
+        msg: set IRCHAD_KEYSTORE (the APK release .p12, key alias irchad) and IRCHAD_KEYSTORE_PASSWORD
+    cmds:
+      # ABIS and PROFILE reach build-rust.sh: its defaults are the x86_64 emulator and a debug build.
+      - JAVA_HOME=/usr/lib/jvm/openjdk-bin-21 ABIS=arm64-v8a PROFILE=release ./gradlew assembleFullRelease
+      - cmd: echo "built android/app/build/outputs/apk/full/release/app-full-release.apk"
+        silent: true
+
+  apk:install:
+    desc: Install the built APK over adb, keeping app data (DEVICE=ip:port picks a device)
+    cmds:
+      - adb {{if .DEVICE}}-s {{.DEVICE}}{{end}} install -r android/app/build/outputs/apk/full/release/app-full-release.apk
