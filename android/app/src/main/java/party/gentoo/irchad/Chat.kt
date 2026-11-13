@@ -115,6 +115,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Modifier
@@ -889,8 +890,15 @@ private fun Log(
     LaunchedEffect(nearTop, msgs.size, buf.historyStart) {
         if (nearTop && !buf.historyStart && connected) c.loadOlder(net.network, buf.target)
     }
+    // Follow new messages unless the user scrolled up. Only scrolling changes it: a catch-up batch
+    // (reconnect) keeps the list anchored, so the index alone would read as "scrolled up".
+    var follow by remember(net.network, buf.target) { mutableStateOf(true) }
+    LaunchedEffect(list) {
+        snapshotFlow { list.isScrollInProgress to list.firstVisibleItemIndex }
+            .collect { (scrolling, i) -> if (scrolling) follow = i <= 1 }
+    }
     LaunchedEffect(msgs.lastOrNull()?.key) {
-        if (list.firstVisibleItemIndex <= 1) list.animateScrollToItem(0)
+        if (follow) list.animateScrollToItem(0)
     }
 
     val rev = msgs.asReversed()
