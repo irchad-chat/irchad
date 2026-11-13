@@ -24,7 +24,41 @@ RequestExecutionLevel user
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
+; IrChad running from $INSTDIR locks irchad.exe: offer to close it (silent
+; installs just do). Forced, since closing its window may only hide it in the tray.
+!macro CLOSE_RUNNING un
+Function ${un}CloseRunning
+  StrCpy $R0 0
+check:
+  IfFileExists "$INSTDIR\irchad.exe" 0 done
+  ; A running exe can't be opened for writing.
+  ClearErrors
+  FileOpen $0 "$INSTDIR\irchad.exe" a
+  IfErrors 0 free
+  StrCmp $R0 0 0 stuck
+  MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "IrChad is running. Close it and continue?" /SD IDOK IDOK close
+  Abort
+close:
+  StrCpy $R0 1
+  ; Only the copy in $INSTDIR, passed through the environment so the path needs no quoting.
+  System::Call 'Kernel32::SetEnvironmentVariable(t "IRCHAD_EXE", t "$INSTDIR\irchad.exe")i'
+  nsExec::Exec `powershell -NoProfile -NonInteractive -Command "Get-Process irchad -EA 0 | ? { $$_.Path -eq $$env:IRCHAD_EXE } | Stop-Process -Force -PassThru | Wait-Process -Timeout 10 -EA 0"`
+  Pop $0
+  Sleep 500
+  Goto check
+stuck:
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "IrChad didn't close. Quit it from the tray icon, then retry." /SD IDCANCEL IDRETRY check
+  Abort
+free:
+  FileClose $0
+done:
+FunctionEnd
+!macroend
+!insertmacro CLOSE_RUNNING ""
+!insertmacro CLOSE_RUNNING "un."
+
 Section "IrChad"
+  Call CloseRunning
   SetOutPath "$INSTDIR"
   File "/oname=irchad.exe" "${EXE}"
   File "irchad.ico"
@@ -50,6 +84,7 @@ Section "IrChad"
 SectionEnd
 
 Section "Uninstall"
+  Call un.CloseRunning
   Delete "$INSTDIR\irchad.exe"
   Delete "$INSTDIR\irchad.ico"
   Delete "$INSTDIR\LICENSE"
