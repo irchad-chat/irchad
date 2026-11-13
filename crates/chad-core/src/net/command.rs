@@ -456,6 +456,8 @@ impl Net {
     }
 
     fn send_read(&mut self, key: &str, target: &str, msgid: &str, t: i64) {
+        // Anything held back is older than this one.
+        self.read_due.remove(key);
         self.read_sent.insert(key.to_owned(), Instant::now());
         if self.connected && self.caps.enabled("draft/read-marker") {
             let ts = format!("timestamp={}", time::format(t));

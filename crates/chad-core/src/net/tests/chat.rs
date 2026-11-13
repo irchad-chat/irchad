@@ -250,6 +250,30 @@ fn read_markers_and_mentions() {
     n.flush_reads();
     assert_eq!(out(&mut n), [format!("MARKREAD #c timestamp={}", ts(4000))]);
     assert_eq!(n.read_due_at(), None);
+
+    // A held-back read that a newer one overtakes never goes out after it.
+    feed(
+        &mut n,
+        &format!("@msgid=g;time={} :alice!u@h PRIVMSG #c :again", ts(5000)),
+    );
+    n.command(NetCommand::MarkRead {
+        target: "#c".into(),
+    });
+    assert!(out(&mut n).is_empty());
+    feed(
+        &mut n,
+        &format!("@msgid=h;time={} :alice!u@h PRIVMSG #c :last", ts(6000)),
+    );
+    let due = n.read_due_at().unwrap();
+    n.read_sent
+        .insert("#c".into(), due.checked_sub(READ_EVERY * 2).unwrap());
+    n.command(NetCommand::MarkRead {
+        target: "#c".into(),
+    });
+    assert_eq!(out(&mut n), [format!("MARKREAD #c timestamp={}", ts(6000))]);
+    assert_eq!(n.read_due_at(), None);
+    n.flush_reads();
+    assert!(out(&mut n).is_empty());
 }
 
 #[test]
