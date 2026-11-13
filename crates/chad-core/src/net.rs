@@ -434,6 +434,19 @@ impl Net {
         }
     }
 
+    /// Back in front with the socket still up: it may have died silently while
+    /// frozen, so catch up now; the sends also make the keepalive check in
+    /// seconds rather than after its idle wait.
+    pub fn resumed(&mut self) {
+        if !self.synced {
+            return;
+        }
+        let keys: Vec<String> = self.buffers.keys().cloned().collect();
+        for key in &keys {
+            self.fetch_new(key);
+        }
+    }
+
     /// What happened since last time, for the UI. A member list that changed
     /// many times (a netsplit, a big WHO) goes out once.
     pub fn drain_events(&mut self) -> std::vec::Drain<'_, Event> {

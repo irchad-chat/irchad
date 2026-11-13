@@ -596,7 +596,13 @@ async fn live(
                         net.command(c);
                     }
                 }
-                Some(ToNet::Background(on)) => p.background = on,
+                Some(ToNet::Background(on)) => {
+                    // Every return to the front, even within the pause delay or with "Stay connected".
+                    if !on {
+                        net.resumed();
+                    }
+                    p.background = on;
+                }
                 Some(ToNet::Remove) => {
                     net.unpublish();
                     for m in std::mem::take(&mut net.out) {

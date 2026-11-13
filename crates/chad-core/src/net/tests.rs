@@ -183,6 +183,22 @@ fn reattach_trusts_the_server_channel_list_and_fills_gaps() {
 }
 
 #[test]
+fn resuming_catches_up_on_a_live_socket() {
+    let mut n = net();
+    n.resumed();
+    assert!(out(&mut n).is_empty(), "nothing before sync");
+    attach(&mut n, &["#general"]);
+    n.store.insert("#general", &msg("g2", 2000, "alice", "seen"));
+    n.resumed();
+    let sent = out(&mut n);
+    assert!(
+        sent.iter()
+            .any(|l| l.ends_with("CHATHISTORY AFTER #general msgid=g2 100")),
+        "{sent:?}"
+    );
+}
+
+#[test]
 fn without_always_on_cached_channels_are_rejoined() {
     let mut n = net();
     n.store
