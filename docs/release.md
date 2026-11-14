@@ -15,6 +15,7 @@
 4. **Bump and tag:** `./scripts/release.sh v0.2.0` bumps `version` in the root `Cargo.toml` and the `<releases>` entry in `packaging/linux/party.gentoo.IrChad.metainfo.xml`, commits, tags and pushes.
 5. **Build:** `.gitea/workflows/release.yml` builds everything into a draft release and publishes it once every job passes:
    - `irchad-linux-x86_64.tar.gz` (binary plus `install.sh`; the name is unversioned so `latest/` links work)
+   - `irchad-linux-x86_64.deb` (the same binary), pushed to the apt repo on Gitea's Debian registry once the release is published (D94)
    - `irchad-windows-x86_64-setup.exe` (per-user, no admin)
    - `irchad-windows-x86_64.zip` (`irchad.exe` for the in-app updater)
    - the tarball and the zip are signed for the updater with `UPDATE_SIGNING_KEY` (D76); the job fails if the signature doesn't verify against `packaging/update.pub`

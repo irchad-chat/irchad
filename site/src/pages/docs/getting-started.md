@@ -20,7 +20,18 @@ To get a nightly build, add `-s -- --nightly` after `sh`. To remove IrChad, add 
 
 To do it by hand, download the tarball from the [home page](/#download), unpack it and run `irchad/install.sh`. `./install.sh --uninstall` removes it.
 
-### Gentoo
+### Ubuntu and Debian
+
+On Ubuntu 24.04 or newer, or Debian 13 or newer, add the apt repository and install IrChad:
+
+```sh
+sudo curl -fsSLo /etc/apt/keyrings/irchad.asc https://git.gentoo.party/api/packages/sam/debian/repository.key
+echo "deb [signed-by=/etc/apt/keyrings/irchad.asc] https://git.gentoo.party/api/packages/sam/debian stable main" | sudo tee /etc/apt/sources.list.d/irchad.list
+sudo apt update && sudo apt install irchad
+```
+
+New versions arrive with your normal system updates.
+
 
 There's an overlay:
 

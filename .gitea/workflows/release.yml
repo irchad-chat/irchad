@@ -71,10 +71,16 @@ jobs:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: packaging/sign.sh irchad-linux-x86_64.tar.gz
 
-      - name: Upload asset
+      # Goes into the apt repo once the release is published (`publish`).
+      - name: Deb
+        run: packaging/linux/deb.sh
+
+      - name: Upload assets
         run: |
-          curl -fsS -X POST -H "Authorization: token ${{ github.token }}" -F "attachment=@irchad-linux-x86_64.tar.gz" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-linux-x86_64.tar.gz"
+          for f in irchad-linux-x86_64.tar.gz irchad-linux-x86_64.deb; do
+            curl -fsS -X POST -H "Authorization: token ${{ github.token }}" -F "attachment=@$f" \
+              "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=$f"
+          done
 
   # Disabled for now; flip `if` to bring the Flatpak bundle back (and add it
   # to `publish`'s needs).
@@ -235,6 +241,16 @@ jobs:
           curl -fsS -X PATCH -H "Authorization: token ${{ github.token }}" -H "Content-Type: application/json" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}" \
             -d '{"draft":false}'
+      # Gitea's Debian registry is the apt repo (signed by Gitea): one
+      # `stable` distribution, since the deb runs on any glibc >= 2.39.
+      - name: Push the deb to the apt repo
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          curl -fsSL -o irchad.deb -H "Authorization: token ${{ github.token }}" \
+            "${{ github.server_url }}/${{ github.repository }}/releases/download/v${{ needs.release.outputs.version }}/irchad-linux-x86_64.deb"
+          curl -fsS --user "sam:$TOKEN" --upload-file irchad.deb \
+            https://git.gentoo.party/api/packages/sam/debian/pool/stable/main/upload
       # CHADSTER_PASSWORD: SASL password of the `chadster` account on irchad.chat.
       # Best effort: a failed announcement doesn't fail a published release.
       - name: Announce in #chad

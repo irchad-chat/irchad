@@ -142,7 +142,12 @@ fn writable(data_dir: &Path) -> Vec<PathBuf> {
             .filter(|p| p.is_absolute())
             .or_else(|| home.as_ref().map(|h| h.join(fallback)))
     };
-    let _ = std::fs::create_dir_all(data_dir);
+    // eframe keeps `app.ron` under the app ID, beside our data dir.
+    let eframe = eframe::storage_dir(crate::platform::APP_ID);
+    // Ours may not exist yet, and a rule needs the folder.
+    for d in std::iter::once(data_dir).chain(eframe.as_deref()) {
+        let _ = std::fs::create_dir_all(d);
+    }
     let mut paths = vec![
         data_dir.to_owned(),
         // GPU, sound and video devices are opened for writing.
@@ -156,6 +161,7 @@ fn writable(data_dir: &Path) -> Vec<PathBuf> {
     ];
     // Shader and font caches (Mesa, Nvidia, fontconfig).
     paths.extend(xdg("XDG_CACHE_HOME", ".cache"));
+    paths.extend(eframe);
     paths.extend(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from));
     paths.extend(downloads());
     // Self-update swaps the program file; the check also writes its probe
