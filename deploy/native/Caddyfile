@@ -9,8 +9,11 @@
 	handle /invite* {
 		reverse_proxy 127.0.0.1:8080
 	}
-	# Meeting links (D86).
+	# Meeting (D86) and public stream (D87) links.
 	handle /meet/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /watch/* {
 		reverse_proxy 127.0.0.1:8080
 	}
 	handle /api/* {

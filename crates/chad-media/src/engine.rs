@@ -278,9 +278,11 @@ impl Shared {
     /// ended or its call did (then dropping it unpublishes and stops it).
     pub fn set_share(&self, share: Share, camera: bool) {
         let mut s = lock(self.slot(camera));
+        // A public share's tracks are in its stream's room; it belongs to the call it was started from (D87).
+        let call = share.public.as_ref().map_or(&share.room, |(call, _)| call);
         let live = lock(&self.room)
             .as_ref()
-            .is_some_and(|r| Arc::ptr_eq(r, &share.room));
+            .is_some_and(|r| Arc::ptr_eq(r, call));
         let stored = live && self.ended[usize::from(camera)].load(Relaxed) != share.id;
         if stored {
             *s = Some(share);
