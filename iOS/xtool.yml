@@ -1,4 +1,4 @@
 version: 1
-bundleID: party.gentoo.irchad
+bundleID: chat.irchad.IrChad
 infoPath: Info.plist
 iconPath: Icon.png
