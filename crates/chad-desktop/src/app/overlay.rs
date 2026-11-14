@@ -94,7 +94,7 @@ impl App {
         call.participants
             .iter()
             .map(|p| {
-                let nick = voice::nick_of(roster, &p.identity);
+                let nick = voice::nick_of(roster, p);
                 let name = n.map_or(nick.as_str(), |n| chatlog::shown(&n.profiles, &nick));
                 let avatar = n
                     .and_then(|n| n.profiles.get(&key(&nick)))

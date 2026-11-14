@@ -111,6 +111,29 @@ impl App {
                     b.channels = Some(channels);
                 }
             }
+            Event::Invite {
+                network,
+                from,
+                channel,
+            } => {
+                let what = if chad_core::meeting::is_meeting(&channel) {
+                    "a meeting".to_owned()
+                } else {
+                    channel.clone()
+                };
+                if !ctx.input(|i| i.focused) {
+                    platform::notify(format!("{from} invited you"), format!("to {what}"));
+                }
+                // D14: one card per channel, and only a few.
+                self.invites.retain(|i| !(i.0 == network && i.2 == channel));
+                self.invites.push((network, from, channel));
+                if self.invites.len() > 3 {
+                    self.invites.remove(0);
+                }
+            }
+            Event::Invited { nick, channel, .. } => {
+                self.toast(format!("Invited {nick} to {channel}."));
+            }
             Event::Error { network, error } => {
                 let name = self.net_name(&network);
                 self.toast(format!("{name}: {error}"));

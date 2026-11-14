@@ -466,6 +466,18 @@ pub enum Event {
         network: String,
         channels: Vec<ListedChannel>,
     },
+    /// `from` invited us to `channel`: offer to join it (`JoinMeeting` for a meeting).
+    Invite {
+        network: String,
+        from: String,
+        channel: String,
+    },
+    /// Our `/invite` of `nick` to `channel` went through.
+    Invited {
+        network: String,
+        nick: String,
+        channel: String,
+    },
     /// Something went wrong, in words a user understands.
     Error {
         network: String,

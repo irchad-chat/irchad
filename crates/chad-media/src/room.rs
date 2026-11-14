@@ -799,6 +799,19 @@ async fn permit(shared: &Shared, room: &Room, last: &mut Option<Grants>) {
     *last = Some(grants);
 }
 
+/// A guest picks their own name, so it's marked as such (D86). D14: one line, 32 chars.
+fn guest_name(identity: &str, name: &str) -> Option<String> {
+    if !identity.starts_with("guest:") {
+        return None;
+    }
+    let name: String = name.chars().filter(|c| !c.is_control()).take(32).collect();
+    let name = name.trim();
+    Some(format!(
+        "{} (guest)",
+        if name.is_empty() { "Guest" } else { name }
+    ))
+}
+
 /// Rebuilds the participant list from the room.
 fn snapshot(
     shared: &Shared,
@@ -844,6 +857,7 @@ fn snapshot(
         watchers: watchers.get(&local_id).copied().unwrap_or(0),
         camera: shared.camera_on(),
         whispering: whisperers.contains(&local_id),
+        name: guest_name(&local_id, &local.name()),
         identity: local_id,
     }];
     let mut remote: Vec<Participant> = remotes
@@ -875,6 +889,7 @@ fn snapshot(
                     .any(|t| t.source() == TrackSource::Camera && !t.is_muted()),
                 watchers: watchers.get(&identity).copied().unwrap_or(0),
                 whispering: whisperers.contains(&identity),
+                name: guest_name(&identity, &p.name()),
                 identity,
             }
         })
@@ -910,7 +925,17 @@ fn snapshot(
         sharing,
         watchers: others,
     });
+    // The one we watch stopped sharing, turned their camera off, or left.
+    let gone = lock(&shared.watching).clone().is_some_and(|(id, camera)| {
+        id != participants[0].identity
+            && !remote
+                .iter()
+                .any(|p| p.identity == id && if camera { p.camera } else { p.sharing })
+    });
     participants.extend(remote);
+    if gone {
+        watch(shared, None);
+    }
     let quality = match local.connection_quality() {
         ConnectionQuality::Excellent => Quality::Excellent,
         ConnectionQuality::Good => Quality::Good,

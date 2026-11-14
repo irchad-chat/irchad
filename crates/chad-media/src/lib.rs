@@ -114,6 +114,8 @@ pub struct CallState {
 pub struct Participant {
     /// The ergo account (chadd mints tokens with identity = account).
     pub identity: String,
+    /// A guest's own name with " (guest)" (D86); `None` for members.
+    pub name: Option<String>,
     pub speaking: bool,
     pub muted: bool,
     pub local: bool,

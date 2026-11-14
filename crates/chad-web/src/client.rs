@@ -74,6 +74,8 @@ pub(crate) struct Inner {
     retry: Option<Timer>,
     /// Errors for the page to show (`takeNotices`).
     notices: Vec<String>,
+    /// Invites for the page to offer (`takeInvites`): (from, channel).
+    invites: Vec<(String, String)>,
     /// The view changed without an event from `net` (chadd's emoji, say).
     pub(crate) dirty: bool,
     on_change: js_sys::Function,
@@ -134,6 +136,7 @@ impl Client {
                 backoff: Backoff::new(),
                 retry: None,
                 notices: Vec::new(),
+                invites: Vec::new(),
                 dirty: false,
                 on_change,
             })),
@@ -208,6 +211,21 @@ impl Client {
     }
 
     /// Errors since the last call, for the page to show once.
+    /// Who invited us where since the last call, to offer joining (`isMeeting`: `joinMeeting`).
+    #[wasm_bindgen(js_name = takeInvites, unchecked_return_type = "{ from: string; channel: string }[]")]
+    pub fn take_invites(&self) -> JsValue {
+        #[derive(serde::Serialize)]
+        struct Invite {
+            from: String,
+            channel: String,
+        }
+        let invites: Vec<Invite> = std::mem::take(&mut self.inner.borrow_mut().invites)
+            .into_iter()
+            .map(|(from, channel)| Invite { from, channel })
+            .collect();
+        crate::snapshot::to_js(&invites)
+    }
+
     #[wasm_bindgen(js_name = takeNotices)]
     pub fn take_notices(&self) -> Vec<String> {
         std::mem::take(&mut self.inner.borrow_mut().notices)
@@ -638,6 +656,15 @@ impl Inner {
         let mut changed = std::mem::take(&mut self.dirty) || !self.notices.is_empty();
         for ev in self.net.drain_events() {
             self.view.apply(&ev);
+            match &ev {
+                Event::Invite { from, channel, .. } if self.invites.len() < MAX_NOTICES => {
+                    self.invites.push((from.clone(), channel.clone()));
+                }
+                Event::Invited { nick, channel, .. } if self.notices.len() < MAX_NOTICES => {
+                    self.notices.push(format!("Invited {nick} to {channel}."));
+                }
+                _ => {}
+            }
             if let Event::Error { error, .. } | Event::SignUpFailed { error, .. } = ev
                 && self.notices.len() < MAX_NOTICES
             {

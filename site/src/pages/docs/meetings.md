@@ -20,6 +20,7 @@ The meeting shows in your channel list as **Meeting**. Its right-click menu (des
 - **From the link, in a browser:** pick **Join in browser**, type your name, choose whether your mic and camera start on, then **Join now**.
   You see everyone's camera in a grid. A screen share takes the big spot. The bar at the bottom has mute, camera, screen share, chat, copy link and leave.
 - **From the link, in the app:** pick **Open in IrChad**. If you're already on that network, you join the meeting right away.
+- **Invited:** type `/invite nick` in the meeting's chat. They get a notice with **Join** in the desktop or browser app.
 - **People on the network** can also paste the link into **Join a network**, or join its channel (`#meet-…`) like any other.
 
 Guests show with **(guest)** after their name, so nobody can pass as a member.

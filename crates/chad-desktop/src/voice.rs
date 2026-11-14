@@ -341,7 +341,11 @@ fn soundboard(
 
 /// The nick of a LiveKit identity, which is an account; profiles are keyed by nick.
 /// shortcut: ASCII-only account match, falls back to the account itself.
-pub fn nick_of(roster: &[Member], id: &str) -> String {
+pub fn nick_of(roster: &[Member], p: &chad_media::Participant) -> String {
+    let id = p.identity.as_str();
+    if let Some(name) = &p.name {
+        return name.clone();
+    }
     roster
         .iter()
         .find(|m| {
@@ -373,7 +377,6 @@ pub fn members(
 ) -> Option<(String, bool)> {
     let mut watch = None;
     let dark = ui.visuals().dark_mode;
-    let nick_of = |id: &str| nick_of(roster, id);
     // `note`: whispering, or on the whisper list. `reserve`: width kept free on
     // the right for the LIVE/camera badges, so the name truncates before them.
     let mut row = |ui: &mut egui::Ui,
@@ -438,7 +441,7 @@ pub fn members(
                     if p.sharing { 48.0 } else { 0.0 } + if p.camera { 44.0 } else { 0.0 };
                 let (r, name) = row(
                     ui,
-                    &nick_of(&p.identity),
+                    &nick_of(roster, p),
                     p.speaking,
                     p.whispering && p.local,
                     p.muted,

@@ -86,6 +86,8 @@ pub struct App {
     /// "Browse channels…": the network's LIST.
     browse: Option<ChannelBrowser>,
     toasts: Vec<(String, Instant)>,
+    /// Invites to answer, with the toasts: (network, from, channel).
+    invites: Vec<(String, String, String)>,
     /// Toasts from background tasks.
     toast_rx: (mpsc::Sender<String>, mpsc::Receiver<String>),
     /// Where the logs (and caches) live.
@@ -488,6 +490,7 @@ impl App {
             adding: None,
             browse: None,
             toasts: Vec::new(),
+            invites: Vec::new(),
             toast_rx: mpsc::channel(),
             data_dir: data_dir.to_owned(),
             last_badge: (false, 0),
@@ -816,7 +819,12 @@ impl App {
         } else {
             "screen"
         };
-        let title = format!("{}'s {what}", self.voice.watching().unwrap_or_default());
+        let who = self.voice.watching().unwrap_or_default();
+        let shown = self
+            .voice
+            .call()
+            .and_then(|c| c.participants.into_iter().find(|p| p.identity == who)?.name);
+        let title = format!("{}'s {what}", shown.unwrap_or(who));
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
             .with_app_id(platform::APP_ID)

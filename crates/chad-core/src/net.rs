@@ -867,6 +867,7 @@ pub fn failure(item: &Item) -> Option<String> {
         (_, Some(473)) => format!("{} is invite-only.", p(1)),
         (_, Some(474)) => format!("You're banned from {}.", p(1)),
         (_, Some(475)) => format!("{} needs a password.", p(1)),
+        (_, Some(443)) => format!("{} is already in {}.", p(1), p(2)),
         (_, Some(482)) => "Only channel operators can do that.".into(),
         // 9xx is SASL, handled during registration.
         (_, Some(400..=599)) => m.params.last().cloned().unwrap_or_default(),

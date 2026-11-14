@@ -322,10 +322,10 @@ pub fn stage(
 ) -> Option<StageAction> {
     let who = voice.watching()?;
     let camera = voice.watching_camera();
-    let (watchers, own) = voice
+    let (watchers, own, name) = voice
         .call()
         .and_then(|c| c.participants.into_iter().find(|p| p.identity == who))
-        .map_or((0, false), |p| (p.watchers, p.local));
+        .map_or((0, false, None), |p| (p.watchers, p.local, p.name));
     let mut action = None;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -376,7 +376,7 @@ pub fn stage(
                 let title = if own {
                     format!("{icon} Your {what}")
                 } else {
-                    format!("{icon} {who}'s {what}")
+                    format!("{icon} {}'s {what}", name.as_deref().unwrap_or(&who))
                 };
                 let title = RichText::new(title).strong();
                 match tile {

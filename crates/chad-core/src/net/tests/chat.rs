@@ -725,3 +725,36 @@ fn rebuild_cache_refetches_channels_only() {
     });
     assert!(out(&mut n).is_empty());
 }
+
+#[test]
+fn invite_sends_and_offers_only_our_own_invites() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    events(&mut n);
+    out(&mut n);
+
+    n.command(NetCommand::Send {
+        target: "#c".into(),
+        text: "/invite alice carol".into(),
+        reply_to: None,
+        mentions: Vec::new(),
+    });
+    assert_eq!(out(&mut n), ["INVITE alice #c", "INVITE carol #c"]);
+    assert!(messages(&events(&mut n)).is_empty(), "not sent as text");
+
+    feed(&mut n, ":s 341 bob alice #c");
+    // Ours, a channel we're already in, someone else's (invite-notify), and junk.
+    feed(&mut n, ":alice!a@h INVITE bob #secret");
+    feed(&mut n, ":alice!a@h INVITE bob #c");
+    feed(&mut n, ":alice!a@h INVITE carol #secret");
+    feed(&mut n, ":alice!a@h INVITE bob notachannel");
+    let got: Vec<_> = events(&mut n)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Invite { from, channel, .. } => Some(format!("from {from} {channel}")),
+            Event::Invited { nick, channel, .. } => Some(format!("to {nick} {channel}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(got, ["to alice #c", "from alice #secret"]);
+}

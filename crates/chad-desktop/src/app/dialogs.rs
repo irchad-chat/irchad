@@ -611,15 +611,32 @@ impl App {
         }
     }
 
-    /// Errors and notices, bottom right.
+    /// Invites, then errors and notices, bottom right.
     fn toasts(&mut self, ctx: &egui::Context) {
         self.toasts.retain(|(_, t)| t.elapsed() < TOAST_TTL);
-        if !self.toasts.is_empty() {
+        let mut answered = None;
+        if !self.toasts.is_empty() || !self.invites.is_empty() {
             ctx.request_repaint_after(Duration::from_secs(1));
             egui::Area::new(egui::Id::unique("toasts"))
                 .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -72.0))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
+                    for (i, (_, from, channel)) in self.invites.iter().enumerate() {
+                        let meeting = chad_core::meeting::is_meeting(channel);
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.set_max_width(320.0);
+                            let what = if meeting { "a meeting" } else { channel };
+                            ui.label(format!("{from} invited you to {what}."));
+                            ui.horizontal(|ui| {
+                                if ui.button("Join").clicked() {
+                                    answered = Some((i, true));
+                                }
+                                if ui.button("Dismiss").clicked() {
+                                    answered = Some((i, false));
+                                }
+                            });
+                        });
+                    }
                     let mut dismiss = HashSet::new();
                     for (i, (text, _)) in self.toasts.iter().enumerate() {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -638,6 +655,23 @@ impl App {
                         !dismiss.contains(&(i - 1))
                     });
                 });
+        }
+        if let Some((i, join)) = answered {
+            let (network, _, channel) = self.invites.remove(i);
+            if join {
+                if let Some(n) = self.net_idx(&network) {
+                    select(&mut self.view.nets[n], &key(&channel));
+                }
+                let cmd = if chad_core::meeting::is_meeting(&channel) {
+                    NetCommand::JoinMeeting {
+                        channel,
+                        new: false,
+                    }
+                } else {
+                    NetCommand::JoinChannel { channel }
+                };
+                self.send(&network, cmd);
+            }
         }
     }
 }

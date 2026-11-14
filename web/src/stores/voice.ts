@@ -342,7 +342,11 @@ export const useVoice = defineStore('voice', () => {
     camera.value = on
     if (!room) return
     try {
-      await room.localParticipant.setCameraEnabled(on)
+      const lp = room.localParticipant
+      // Off unpublishes, as desktop does: a muted camera would leave its last frame up everywhere.
+      const track = on ? null : lp.getTrackPublication(Track.Source.Camera)?.track
+      if (on) await lp.setCameraEnabled(true)
+      else if (track) await lp.unpublishTrack(track)
     } catch (err) {
       camera.value = false
       client.notify(`No camera: ${message(err)}`)

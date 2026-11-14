@@ -316,7 +316,10 @@ impl Net {
     pub(super) fn message(&mut self, m: Message) {
         let from = m.source_nick().unwrap_or_default().to_owned();
         let me = self.cm.eq(&from, &self.info.nick);
-        let chat = matches!(m.command.as_str(), "PRIVMSG" | "NOTICE" | "TAGMSG");
+        let chat = matches!(
+            m.command.as_str(),
+            "PRIVMSG" | "NOTICE" | "TAGMSG" | "INVITE"
+        );
         // Typing, reactions, CTCP and verification included: blocked is silent.
         if chat && self.blocked(&m) {
             return;
@@ -342,6 +345,33 @@ impl Net {
                 if let Some(msgid) = m.param(1) {
                     self.store.redact(msgid);
                     self.refresh(msgid);
+                }
+            }
+            // invite-notify also tells ops about others' invites: only ours.
+            "INVITE" if m.param(0).is_some_and(|t| self.cm.eq(t, &self.info.nick)) => {
+                let Some(channel) = m.param(1).filter(|c| valid_name(c) && self.is_channel(c))
+                else {
+                    return;
+                };
+                if !me && valid_name(&from) && !self.joined.contains(&self.fold(channel)) {
+                    self.events.push(Event::Invite {
+                        network: self.id(),
+                        from,
+                        channel: channel.to_owned(),
+                    });
+                }
+            }
+            // RPL_INVITING `<me> <nick> <channel>`.
+            "341" => {
+                if let (Some(nick), Some(channel)) = (m.param(1), m.param(2))
+                    && valid_name(nick)
+                    && valid_name(channel)
+                {
+                    self.events.push(Event::Invited {
+                        network: self.id(),
+                        nick: nick.to_owned(),
+                        channel: channel.to_owned(),
+                    });
                 }
             }
             "JOIN" => self.join(&m, &from, me),

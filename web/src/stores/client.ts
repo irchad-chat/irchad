@@ -10,6 +10,7 @@ import {
   type Member,
   type Msg,
   type NetState,
+  isMeeting,
   meetingChannel,
 } from '../wasm/chad_web'
 
@@ -30,6 +31,8 @@ export const useClient = defineStore('client', () => {
   const selected = ref<string>()
   const error = ref<string>()
   const notices = ref<{ id: number; text: string }[]>([])
+  // Invites to answer; one per channel, the newest few.
+  const invites = ref<{ from: string; channel: string }[]>([])
   // The composer's mode: replying to or editing a message in the selected buffer.
   const replying = shallowRef<Msg | null>(null)
   const editing = shallowRef<Msg | null>(null)
@@ -80,6 +83,8 @@ export const useClient = defineStore('client', () => {
     }
 
     for (const text of client.takeNotices()) notify(text)
+    for (const inv of client.takeInvites())
+      invites.value = [...invites.value.filter((i) => i.channel !== inv.channel), inv].slice(-3)
 
     // Typing indicators expire on their own; look again while any are up.
     clearTimeout(typingTimer)
@@ -165,6 +170,12 @@ export const useClient = defineStore('client', () => {
   const voiceConnected = () => client.voiceConnected()
   const leaveVoice = (error: string | null) => client.leaveVoice(error)
   // Meetings (D86): chad-core joins the call once the channel is joined.
+  function answerInvite(channel: string, join: boolean) {
+    invites.value = invites.value.filter((i) => i.channel !== channel)
+    if (!join) return
+    if (isMeeting(channel)) joinMeeting(channel)
+    else open(channel)
+  }
   function joinMeeting(channel: string) {
     want = channel
     client.joinMeeting(channel)
@@ -242,6 +253,8 @@ export const useClient = defineStore('client', () => {
     selected,
     error,
     notices,
+    invites,
+    answerInvite,
     replying,
     editing,
     connected,

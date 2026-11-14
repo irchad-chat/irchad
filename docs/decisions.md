@@ -539,3 +539,9 @@ Nvidia screen shares stay AV1 (D23, D89). Some browsers' WebRTC won't receive AV
 The LiveKit Rust SDK can't publish a backup codec, so the SFU can't fall back per viewer. Switching Nvidia to H.264 would cost every viewer quality for the sake of a few browsers.
 So the watch page notices when the share is AV1 and no video arrives, and it tells the viewer to use a Chromium-based browser (Chrome, Edge, Brave).
 If the SDK gains backup codecs, publish AV1 with H.264 as the backup and drop the notice.
+
+## D91: `/invite` is a plain IRC INVITE, answered from a notice (2026-11-14)
+`/invite nick...` typed in a channel (chad-core, so every client sends it) becomes `INVITE nick #channel`, which works for meetings (D86) and for ordinary or `+i` channels alike. ergo decides who may invite (ops only on `+i`). Its `341` becomes `Event::Invited`, and errors show as usual.
+- **Receiving.** An `INVITE` addressed to us (`invite-notify` also shows ops others' invites, which are ignored) for a valid channel we aren't in becomes `Event::Invite`. Blocked senders are dropped. Desktop and web show a card with **Join**/**Dismiss**: one per channel, the newest three (D14). Join is `JoinMeeting` for a meeting, `JoinChannel` otherwise. Desktop also sends a system notification when unfocused.
+- **No chadd, no tags.** Plain IRC clients send and receive the same INVITE, so there's nothing IrChad-only.
+- **Known limits.** Android and iOS send invites but don't show received ones yet. An invite that arrives while offline is lost (ergo doesn't replay INVITE).

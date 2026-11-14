@@ -33,11 +33,18 @@ The member list shows who's online and away, and each person's role in the chann
 | Emoji | The emoji button, or a shortcode like `:smile:` |
 | [Custom emoji](#custom-emoji) | The top of the emoji picker, or its name like `:chad:` |
 | GIF | The **GIFs** tab of the emoji picker, or `/gif happy cat` |
+| Invite someone to the channel | `/invite nick` (several nicks work too) |
 | Bold, italic, code | `**bold**`, `*italic*`, `` `code` ``, and ```` ``` ```` around a code block |
 | Edit your last message | <kbd>↑</kbd> in an empty message box |
 | Cancel a reply or edit | <kbd>Esc</kbd> |
 
-`/gif` is the only slash command. Other IRC commands such as `/join` are sent as text.
+`/gif` and `/invite` are the only slash commands. Other IRC commands such as `/join` are sent as text.
+
+### Invites
+
+`/invite nick` lets someone into the channel you type it in, including an invite-only one (only its operators can invite people there).
+They get a notice in the app with **Join** and **Dismiss**. On a meeting, **Join** also puts them in its call.
+People using other IRC clients get a normal IRC invite. Mobile can send invites but doesn't show ones you receive yet.
 
 > **Server setting:** GIF search needs `chadd.toml` → `[gifs]` with a `key`. Without it the app says "This network doesn't have GIFs."
 >

@@ -11,7 +11,10 @@ impl Net {
                 text,
                 reply_to,
                 mentions,
-            } => self.send_text(&target, &text, reply_to, None, &mentions),
+            } => match invite_args(&text) {
+                Some(nicks) => self.invite(&target, nicks),
+                None => self.send_text(&target, &text, reply_to, None, &mentions),
+            },
             NetCommand::Edit {
                 target,
                 msgid,
@@ -547,6 +550,23 @@ impl Net {
         }
     }
 
+    /// `/invite <nick>...` typed in channel `channel` (a plain IRC INVITE).
+    fn invite(&mut self, channel: &str, nicks: Vec<&str>) {
+        if !self.is_channel(channel) {
+            return self.error("Use /invite in the channel you're inviting them to.");
+        }
+        if nicks.is_empty() {
+            return self.error("Who? Type /invite and their nick.");
+        }
+        // ergo answers each with 341 (`Event::Invited`) or an error.
+        for nick in nicks.into_iter().take(10) {
+            if !valid_name(nick) || self.is_channel(nick) {
+                return self.error(format!("{} isn't a nick.", truncate(nick, 64)));
+            }
+            self.out.push(Message::new("INVITE", [nick, channel]));
+        }
+    }
+
     /// A line typed in the server buffer, sent as is (`/` and `/quote ` optional).
     fn raw(&mut self, line: &str) {
         let line = line.trim();
@@ -566,5 +586,33 @@ impl Net {
             }
             _ => self.error("That isn't an IRC command."),
         }
+    }
+}
+
+/// The nicks in `/invite nick...`, if `text` is that command.
+fn invite_args(text: &str) -> Option<Vec<&str>> {
+    let text = text.trim();
+    let head = text.get(..7)?;
+    let rest = &text[7..];
+    (head.eq_ignore_ascii_case("/invite")
+        && (rest.is_empty() || rest.starts_with(char::is_whitespace)))
+    .then(|| rest.split_whitespace().collect())
+}
+
+#[cfg(test)]
+mod invite_tests {
+    #[test]
+    fn invite_args() {
+        assert_eq!(super::invite_args("/invite bob"), Some(vec!["bob"]));
+        assert_eq!(
+            super::invite_args(" /INVITE  bob  carol "),
+            Some(vec!["bob", "carol"])
+        );
+        assert_eq!(super::invite_args("/invite"), Some(vec![]));
+        assert_eq!(super::invite_args("/invite\tbob"), Some(vec!["bob"]));
+        assert_eq!(super::invite_args("/invitebob"), None);
+        assert_eq!(super::invite_args("invite bob"), None);
+        assert_eq!(super::invite_args("/inv"), None);
+        assert_eq!(super::invite_args("/invité"), None);
     }
 }
