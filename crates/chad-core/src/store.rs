@@ -269,14 +269,24 @@ impl Store {
 
     pub fn remove_buffer(&self, key: &str) {
         let r = self.atomic(|| {
-            self.exec(
-                "DELETE FROM reactions WHERE msgid IN (SELECT msgid FROM messages WHERE buffer = ?1)",
-                [key],
-            )?;
-            self.exec("DELETE FROM messages WHERE buffer = ?1", [key])?;
+            self.delete_messages(key)?;
             self.exec("DELETE FROM buffers WHERE key = ?1", [key])
         });
         ok("remove buffer", r.map(drop));
+    }
+
+    /// Forgets a buffer's scrollback (and its reactions) but keeps the buffer.
+    pub fn clear_messages(&self, key: &str) {
+        let r = self.atomic(|| self.delete_messages(key));
+        ok("clear messages", r.map(drop));
+    }
+
+    fn delete_messages(&self, key: &str) -> rusqlite::Result<usize> {
+        self.exec(
+            "DELETE FROM reactions WHERE msgid IN (SELECT msgid FROM messages WHERE buffer = ?1)",
+            [key],
+        )?;
+        self.exec("DELETE FROM messages WHERE buffer = ?1", [key])
     }
 
     /// `draft/channel-rename`: the buffer and its scrollback move to `new`.

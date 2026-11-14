@@ -33,6 +33,19 @@ impl Net {
                     self.fetch_new(&key);
                 }
             }
+            NetCommand::RebuildCache { channel } => {
+                let key = self.fold(&channel);
+                if self
+                    .buffers
+                    .get(&key)
+                    .is_some_and(|b| b.kind == BufferKind::Channel)
+                {
+                    self.store.clear_messages(&key);
+                    self.gap_from.remove(&key);
+                    // Offline, the reconnect's catch-up finds nothing cached and asks for LATEST.
+                    self.history(&key, Hist::Latest, "*");
+                }
+            }
             NetCommand::CloseDm { nick } => {
                 let key = self.fold(&nick);
                 if self

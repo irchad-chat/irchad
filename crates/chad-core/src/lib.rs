@@ -226,6 +226,11 @@ pub enum NetCommand {
     /// Unregister our account on the server (ergo's two-step `NS UNREGISTER`),
     /// then forget the network as [`Command::Remove`] does. Only while connected.
     DeleteAccount,
+    /// Drop a channel's cached messages and fetch the latest page again, for a
+    /// cache with holes. Channels only: encrypted DMs can't be decrypted twice.
+    RebuildCache {
+        channel: String,
+    },
     /// Hide a DM and forget its local history; a new message reopens it.
     CloseDm {
         nick: String,

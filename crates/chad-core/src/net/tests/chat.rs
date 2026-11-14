@@ -708,3 +708,20 @@ fn chadd_redactions() {
     assert!(!n.store.get("m2").unwrap().1.redacted);
     assert_eq!(n.store.meta(REDACTED_CURSOR).as_deref(), Some("7"));
 }
+
+#[test]
+fn rebuild_cache_refetches_channels_only() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    n.store.insert("#c", &msg("m1", 1000, "alice", "hi"));
+    n.command(NetCommand::RebuildCache {
+        channel: "#c".into(),
+    });
+    assert!(n.store.recent("#c", 10).is_empty());
+    assert!(out(&mut n)[0].ends_with("CHATHISTORY LATEST #c * 100"));
+
+    n.command(NetCommand::RebuildCache {
+        channel: "alice".into(),
+    });
+    assert!(out(&mut n).is_empty());
+}

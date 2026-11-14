@@ -307,6 +307,7 @@ impl App {
         let network = self.view.nets[ni].info.network.clone();
         let mut pick = None;
         let mut part = None;
+        let mut rebuild = None;
         let mut close = None;
         let mut block: Option<(String, Option<String>)> = None;
         let mut join_voice = None;
@@ -447,6 +448,13 @@ impl App {
                                 {
                                     overlay_pick = Some(b.key.clone());
                                 }
+                                if ui
+                                    .button("Rebuild local cache")
+                                    .on_hover_text("Forget this channel's saved messages and download them again")
+                                    .clicked()
+                                {
+                                    rebuild = Some(b.info.target.clone());
+                                }
                                 if ui.button("Leave channel").clicked() {
                                     part = Some(b.info.target.clone());
                                 }
@@ -544,6 +552,14 @@ impl App {
         }
         if let Some(channel) = part {
             self.send(&network, NetCommand::Part { channel });
+        }
+        if let Some(channel) = rebuild {
+            let n = &mut self.view.nets[ni];
+            if let Some(bi) = n.buffer(&key(&channel)) {
+                n.buffers[bi].msgs = Default::default();
+                n.buffers[bi].history_start = false;
+            }
+            self.send(&network, NetCommand::RebuildCache { channel });
         }
         if let Some(nick) = close {
             self.send(&network, NetCommand::CloseDm { nick });
