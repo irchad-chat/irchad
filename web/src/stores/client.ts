@@ -16,8 +16,6 @@ import {
 // Production serves the page from the network's own origin; dev sets it in .env.development.
 const NETWORK: string = import.meta.env.VITE_IRCHAD_NETWORK ?? location.origin
 const ORIGIN = new URL(NETWORK).origin
-// A meeting link's code (`?meet=`, from chadd's /meet page): this tab is that meeting (D86).
-const MEETING: string | null = meetingChannel(new URLSearchParams(location.search).get('meet') ?? '') ?? null
 // Proxied images kept as blob: URLs; past this the oldest are let go.
 const MAX_MEDIA = 300
 
@@ -36,6 +34,9 @@ export const useClient = defineStore('client', () => {
   const replying = shallowRef<Msg | null>(null)
   const editing = shallowRef<Msg | null>(null)
   const client = new Client(NETWORK, refresh)
+  // A meeting link's code (`?meet=`, from chadd's /meet page): this tab is that meeting (D86).
+  // In here, not at module level: the wasm isn't loaded until main.ts's `await init()`.
+  const meeting: string | null = meetingChannel(new URLSearchParams(location.search).get('meet') ?? '') ?? null
   // Guards markRead against looping if the server never confirms it.
   let marked = ''
   // Opened but not there yet (a JOIN waits for the server): select it when it is.
@@ -230,7 +231,7 @@ export const useClient = defineStore('client', () => {
 
   return {
     network: ORIGIN,
-    meeting: MEETING,
+    meeting,
     state,
     buffers,
     buffer,

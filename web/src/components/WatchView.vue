@@ -1,7 +1,7 @@
 <!-- A public stream's link (D87): someone's screen share, watch only.
      No IRC and no account: chadd hands out a hidden, subscribe-only token. -->
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Room, RoomEvent, Track, type RemoteTrack, type RemoteTrackPublication } from 'livekit-client'
 import { streamToken } from '../lib/stream'
 
@@ -14,7 +14,12 @@ const audio = ref<HTMLDivElement>()
 const status = ref<'connecting' | 'waiting' | 'live' | 'ended'>('connecting')
 const error = ref<string>()
 const muted = ref(false)
-const room = new Room({ adaptiveStream: true })
+// The browser refused to start the video without a click (autoplay blocked).
+const blocked = ref(false)
+// Ours: the sound is in the hidden <audio> elements, so the video's own mute does nothing.
+const silenced = ref(false)
+// No adaptiveStream: one video, and it would pause the track while the element is still hidden.
+const room = new Room()
 
 // Nvidia sharers publish AV1 with no backup codec (D90). A browser whose
 // WebRTC won't take AV1 (LibreWolf) rejects the video without an error, so
@@ -39,8 +44,12 @@ function attach(track: RemoteTrack) {
     track.attach(video.value)
     status.value = 'live'
     noAv1.value = false
+    // Attached while hidden (v-show): browsers don't start it on their own once shown.
+    void nextTick(() => video.value?.play().catch(() => (blocked.value = true)))
   } else if (track.kind === Track.Kind.Audio && audio.value && audio.value.childElementCount < MAX_AUDIO) {
-    audio.value.append(track.attach())
+    const el = track.attach()
+    el.muted = silenced.value
+    audio.value.append(el)
   }
 }
 
@@ -60,7 +69,8 @@ async function start() {
       .on(RoomEvent.AudioPlaybackStatusChanged, () => (muted.value = !room.canPlaybackAudio))
       .on(RoomEvent.Disconnected, () => (status.value = 'ended'))
     await room.connect(body.livekit, body.token)
-    status.value = 'waiting'
+    // Tracks can arrive before connect() resolves: don't undo a 'live' they set.
+    if (status.value === 'connecting') status.value = 'waiting'
     for (const p of room.remoteParticipants.values())
       for (const pub of p.trackPublications.values()) {
         published(pub)
@@ -71,6 +81,18 @@ async function start() {
     error.value = e instanceof Error ? e.message : String(e)
     status.value = 'ended'
   }
+}
+
+// A click is the one thing every autoplay policy accepts: start the picture and the sound.
+function play() {
+  blocked.value = false
+  video.value?.play().catch(() => (blocked.value = true))
+  void room.startAudio()
+}
+
+function silence(on: boolean) {
+  silenced.value = on
+  audio.value?.querySelectorAll('audio').forEach((a) => (a.muted = on))
 }
 
 function fullscreen() {
@@ -103,9 +125,20 @@ onBeforeUnmount(() => {
         <p class="dim">{{ error ?? 'Ask whoever sent the link for a new one if they share again.' }}</p>
       </template>
     </div>
+    <button v-if="status === 'live' && blocked" class="primary start" @click="play">
+      <i class="ph ph-play" /> Click to watch
+    </button>
     <div v-if="status === 'live'" class="controls">
       <button v-if="muted" class="primary" @click="room.startAudio()">
         <i class="ph ph-speaker-slash" /> Turn on sound
+      </button>
+      <button
+        :title="silenced ? 'Unmute' : 'Mute'"
+        :aria-label="silenced ? 'Unmute' : 'Mute'"
+        :aria-pressed="silenced"
+        @click="silence(!silenced)"
+      >
+        <i class="ph" :class="silenced ? 'ph-speaker-slash' : 'ph-speaker-high'" />
       </button>
       <button title="Full screen" aria-label="Full screen" @click="fullscreen">
         <i class="ph ph-corners-out" />
@@ -132,6 +165,11 @@ video {
 .note {
   text-align: center;
   padding: 16px;
+}
+.start {
+  position: absolute;
+  font-size: 1.25em;
+  padding: 12px 20px;
 }
 .controls {
   position: absolute;
