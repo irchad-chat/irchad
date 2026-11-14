@@ -483,7 +483,14 @@ impl App {
                             let stamp = chad_core::time::format(chad_core::time::now_ms());
                             let name = format!("irchad-logs-{}.zip", stamp.replace(':', "-"));
                             tokio::spawn(async move {
-                                let Some(f) = rfd::AsyncFileDialog::new()
+                                let dialog = rfd::AsyncFileDialog::new();
+                                // The sandbox lets us write there (D93).
+                                #[cfg(target_os = "linux")]
+                                let dialog = match crate::platform::downloads() {
+                                    Some(d) => dialog.set_directory(d),
+                                    None => dialog,
+                                };
+                                let Some(f) = dialog
                                     .set_file_name(name)
                                     .add_filter("Zip", &["zip"])
                                     .save_file()

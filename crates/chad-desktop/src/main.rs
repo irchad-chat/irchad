@@ -37,12 +37,6 @@ fn main() -> eframe::Result {
         unsafe { std::env::remove_var("LIBVA_DRIVER_NAME") };
     }
 
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-    let _guard = rt.enter();
-
-    let wake = platform::Wake::default();
-    let (os_tx, os_rx) = mpsc::channel();
-    let os_tx = platform::OsTx::new(os_tx, wake.clone());
     // Dev: `IRCHAD_PROFILE=bob` runs another instance beside the normal one (to
     // test calls) with its own data and settings, and passwords kept in memory.
     let profile = std::env::var("IRCHAD_PROFILE")
@@ -50,9 +44,23 @@ fn main() -> eframe::Result {
         .filter(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric()));
     let mut data_dir =
         eframe::storage_dir("IrChad").unwrap_or_else(|| PathBuf::from("irchad-data"));
+    match &profile {
+        Some(p) => data_dir = data_dir.join("profiles").join(p),
+        // Before the sandbox: it writes outside our folders and runs xdg-mime.
+        None => platform::register_scheme(),
+    }
+    // Before the runtime: threads that already run would escape it (D93).
+    #[cfg(target_os = "linux")]
+    let sandbox = platform::sandbox(&data_dir);
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let _guard = rt.enter();
+
+    let wake = platform::Wake::default();
+    let (os_tx, os_rx) = mpsc::channel();
+    let os_tx = platform::OsTx::new(os_tx, wake.clone());
     // Held until exit: owning the bus name (or pipe) is what makes us the instance.
-    let _instance = if let Some(p) = &profile {
-        data_dir = data_dir.join("profiles").join(p);
+    let _instance = if profile.is_some() {
         init_logs(&data_dir);
         None
     } else {
@@ -62,9 +70,10 @@ fn main() -> eframe::Result {
             return Ok(());
         };
         init_logs(&data_dir);
-        platform::register_scheme();
         Some(instance)
     };
+    #[cfg(target_os = "linux")]
+    tracing::info!("{sandbox}");
     let tray = rt.block_on(platform::Tray::spawn(os_tx));
 
     let options = eframe::NativeOptions {
@@ -88,6 +97,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();
+            #[cfg(target_os = "linux")]
+            if platform::sandboxed() {
+                ctx.add_plugin(platform::OpenUrls);
+            }
             let _ = wake.set(ctx.clone());
             let repaint = ctx.clone();
             let voice = chad_media::Voice::new(Arc::new(move || repaint.request_repaint()));

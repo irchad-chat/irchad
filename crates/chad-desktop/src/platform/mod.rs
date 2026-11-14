@@ -31,6 +31,10 @@ mod rpc_windows;
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{Tray, register_scheme, single_instance};
+#[cfg(target_os = "linux")]
+mod sandbox_linux;
+#[cfg(target_os = "linux")]
+pub use sandbox_linux::{OpenUrls, downloads, sandbox, sandboxed};
 
 #[cfg(windows)]
 mod windows;
