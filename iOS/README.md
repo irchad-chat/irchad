@@ -36,6 +36,7 @@ So `icon/` is committed output, made on any Mac with Xcode. Redo it when `Icon.p
 
 ```sh
 cp Icon.png Assets.xcassets/AppIcon.appiconset/Icon.png
+mkdir -p icon
 xcrun actool Assets.xcassets --compile icon --platform iphoneos --minimum-deployment-target 18.0 \
     --app-icon AppIcon --target-device iphone --target-device ipad \
     --output-partial-info-plist icon/partial.plist --output-format human-readable-text
