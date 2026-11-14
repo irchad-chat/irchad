@@ -29,8 +29,14 @@ const DOWNLOADS: &str = "https://git.gentoo.party/sam/irchad-ng/releases/downloa
 const KEY: self_update::VerifyingKey = *include_bytes!("../../../packaging/update.pub");
 /// Bigger than any build we ship (25 MiB) by a wide margin.
 const MAX_DOWNLOAD: u64 = 256 << 20;
-/// Looked for again this often while nothing newer is out.
-const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
+/// How long until the next check while nothing newer is out: anywhere in 1–6 h,
+/// so clients don't all ask the release server at once.
+fn recheck() -> Duration {
+    use std::hash::{BuildHasher, Hasher};
+    // std's per-process random keys: plenty for jitter, no RNG crate needed.
+    let r = std::hash::RandomState::new().build_hasher().finish();
+    Duration::from_secs(60 * 60 + r % (5 * 60 * 60 + 1))
+}
 
 /// The commit this nightly was built from; `None` for any other build.
 const NIGHTLY: Option<&str> = option_env!("IRCHAD_NIGHTLY");
@@ -127,7 +133,7 @@ pub enum Status {
     },
 }
 
-/// Looks for a newer build (again every few hours until there is one), and
+/// Looks for a newer build (again every 1–6 h until there is one), and
 /// with `auto` downloads and stages it. `dir` is ours to empty.
 pub async fn run(
     auto: bool,
@@ -141,7 +147,7 @@ pub async fn run(
         if let Some(a) = check().await {
             break a;
         }
-        tokio::time::sleep(RECHECK).await;
+        tokio::time::sleep(recheck()).await;
     };
     let status = match found.download.as_deref() {
         Some(url) if auto => match stage(url, &found.expected, &dir).await {
@@ -439,7 +445,14 @@ pub fn relaunch() {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Asset, Release};
+    use super::{Asset, Duration, Release, recheck};
+
+    #[test]
+    fn recheck_is_one_to_six_hours() {
+        let all: Vec<Duration> = (0..200).map(|_| recheck()).collect();
+        assert!(all.iter().all(|d| (3600..=6 * 3600).contains(&d.as_secs())));
+        assert!(all.iter().any(|d| *d != all[0]), "not random");
+    }
 
     #[test]
     fn versions() {
