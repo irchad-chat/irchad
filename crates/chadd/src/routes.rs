@@ -287,6 +287,7 @@ fn invite_page(
     shell(
         state,
         &format!("Join {name}"),
+        "",
         &format!(
             r#"  <span class="logo">{LOGO}</span>
   <p class="kicker">You're invited to</p>
@@ -314,6 +315,7 @@ pub fn meeting_page(state: &AppState, code: Option<String>) -> String {
         return shell(
             state,
             "Meeting ended",
+            "",
             &format!(
                 r#"  <span class="logo">{LOGO}</span>
   <p class="kicker">{name}</p>
@@ -338,6 +340,7 @@ pub fn meeting_page(state: &AppState, code: Option<String>) -> String {
     shell(
         state,
         &format!("Meeting on {name}"),
+        "",
         &format!(
             r#"  <span class="logo">{LOGO}</span>
   <p class="kicker">You're invited to a meeting on</p>
@@ -358,6 +361,7 @@ pub fn stream_ended_page(state: &AppState) -> String {
     shell(
         state,
         "Stream ended",
+        "",
         &format!(
             r#"  <span class="logo">{LOGO}</span>
   <p class="kicker">{name}</p>
@@ -368,8 +372,49 @@ pub fn stream_ended_page(state: &AppState) -> String {
     )
 }
 
-/// An HTML page in the invite page's style, `main` its card's contents.
-fn shell(state: &AppState, title: &str, main: &str) -> String {
+/// `/watch/<code>` while live: link previews (crawlers don't run JS) from
+/// Open Graph tags, then the script sends browsers on to the web viewer.
+pub fn stream_page(state: &AppState, code: &str, web: &Url) -> String {
+    let name = escape(&state.discovery.name);
+    let title = format!("Live stream on {name}");
+    let description = "Someone's sharing their screen. Watch in your browser, no account needed.";
+    let link = state
+        .config
+        .origin
+        .join(&format!("/watch/{code}"))
+        .map(|u| escape(u.as_str()))
+        .unwrap_or_default();
+    let web = escape(web.as_str());
+    let head = format!(
+        r#"<meta name="description" content="{description}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{name}">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="{description}">
+<meta property="og:url" content="{link}">
+<meta name="twitter:card" content="summary">
+"#
+    );
+    shell(
+        state,
+        &title,
+        &head,
+        &format!(
+            r#"  <span class="logo">{LOGO}</span>
+  <p class="kicker">A live stream on</p>
+  <h1>{name}</h1>
+  <div class="actions">
+    <a id="watch" class="btn primary" href="{web}">Watch in browser</a>
+  </div>
+  <script>location.replace(document.getElementById("watch").href)</script>
+"#
+        ),
+    )
+}
+
+/// An HTML page in the invite page's style, `main` its card's contents and
+/// `head` extra tags for `<head>`.
+fn shell(state: &AppState, title: &str, head: &str, main: &str) -> String {
     // shortcut: the logo inlined as a data URI on every page; serve it from a route if pages multiply.
     let light = state.config.colors.light.css(LIGHT);
     let dark = state.config.colors.dark.css(DARK);
@@ -382,7 +427,7 @@ fn shell(state: &AppState, title: &str, main: &str) -> String {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,{favicon}">
-<style>
+{head}<style>
   :root {{ color-scheme: light dark; {light} }}
   @media (prefers-color-scheme: dark) {{ :root {{ {dark} }} }}
   :root {{ --line: color-mix(in srgb, var(--fg) 12%, transparent); }}
@@ -512,6 +557,27 @@ mod tests {
         let (status, body) = get_body("/invite").await;
         assert_eq!(status, 200);
         assert!(body.contains(r#"href="irchad://join?origin=https%3A%2F%2Fchat.example.com""#));
+    }
+
+    #[test]
+    fn stream_page_has_link_preview() {
+        let config = Config::parse(&format!(
+            "origin = \"https://chat.example.com\"\nname = \"Chad <Network>\"\n{}",
+            crate::config::tests::KEYS
+        ))
+        .unwrap();
+        let state = AppState::new(config).unwrap();
+        let web = Url::parse("https://chat.example.com/chat/?watch=abc").unwrap();
+        let body = stream_page(&state, "abc", &web);
+        assert!(body.contains(
+            r#"<meta property="og:title" content="Live stream on Chad &lt;Network&gt;">"#
+        ));
+        assert!(
+            body.contains(
+                r#"<meta property="og:url" content="https://chat.example.com/watch/abc">"#
+            )
+        );
+        assert!(body.contains(r#"href="https://chat.example.com/chat/?watch=abc""#));
     }
 
     #[tokio::test]

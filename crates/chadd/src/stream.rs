@@ -8,7 +8,7 @@ use axum::{
     Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
 };
 use chad_proto::chadd::ApiError;
 use chad_proto::stream::{
@@ -150,7 +150,8 @@ pub async fn token(
     }))
 }
 
-/// `GET /watch/{code}`: on to the web client's viewer, or "expired".
+/// `GET /watch/{code}`: a preview card that goes on to the web client's
+/// viewer, or "expired".
 pub async fn page(State(state): State<Arc<AppState>>, Path(code): Path<String>) -> Response {
     let valid = state
         .config
@@ -163,7 +164,7 @@ pub async fn page(State(state): State<Arc<AppState>>, Path(code): Path<String>) 
         u
     });
     match (valid, web) {
-        (Some(_), Some(u)) => Redirect::to(u.as_str()).into_response(),
+        (Some(_), Some(u)) => Html(routes::stream_page(&state, &code, &u)).into_response(),
         _ => Html(routes::stream_ended_page(&state)).into_response(),
     }
 }

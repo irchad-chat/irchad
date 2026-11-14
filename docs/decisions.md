@@ -574,3 +574,8 @@ A PPA builds from source with no network, so it would need libwebrtc's prebuilt 
 - There is one distribution, `stable`, not one per Ubuntu series. The CI image is Ubuntu 24.04, so the binary needs glibc ≥ 2.39 and runs on Ubuntu 24.04+ and Debian 13+. If the CI image moves to a newer base, that floor moves with it (`Depends: libc6 (>= …)` in `deb.sh`).
 - `Depends` lists what the binary links plus what winit and wgpu dlopen. A `t64` alternative is given where Ubuntu 24.04 renamed a package.
 - The in-app updater already stands aside for `/usr/bin` installs (`update::writable`), so apt owns updates.
+
+## D95: `/watch/<code>` serves a preview page instead of redirecting (2026-11-14)
+Supersedes D87's "`GET /watch/<code>` redirects there". Chat apps unfurl links with crawlers that don't run JS, so a 302 to the web client's SPA only gave them a bare "IrChad".
+chadd now answers a live link with a page in the invite page's style. Its Open Graph tags say "Live stream on <network>", with `og:url` set to the `/watch` link, and a script calls `location.replace` to the viewer. A crawler that doesn't run JS stays on the page that has the tags. The page has no `meta refresh`, because some crawlers follow one.
+Codes are stateless, so the preview can't name the streamer, and it has no `og:image` (we serve no raster logo). Expired links still get the "expired" page.

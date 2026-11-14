@@ -172,6 +172,7 @@ fn run(
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
     let core = context.connect_fd_rc(fd, None)?;
+    let registry = core.get_registry_rc()?;
     let stream = pw::stream::StreamRc::new(
         core,
         "irchad-screen",
@@ -244,6 +245,20 @@ fn run(
         })
         .process(process)
         .register()?;
+    // A closed window removes its node without touching our stream's state;
+    // disconnecting turns that into the Unconnected end above.
+    let _registry_listener = registry
+        .add_listener_local()
+        .global_remove({
+            let stream = stream.clone();
+            move |id| {
+                if id == node {
+                    tracing::info!("screen capture source removed");
+                    let _ = stream.disconnect();
+                }
+            }
+        })
+        .register();
 
     let formats = [format_pod(fps, true)?, format_pod(fps, false)?];
     let mut params: Vec<&Pod> = formats.iter().filter_map(|b| Pod::from_bytes(b)).collect();
