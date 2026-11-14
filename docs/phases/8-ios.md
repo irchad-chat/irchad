@@ -22,6 +22,11 @@ Decisions: D58 (TLS roots), D59 (shape of the app), D60 (notifications while sus
 - [ ] Share extension: send text, photos and files to a channel or DM from other apps (Android's "Send to…" sheet). It runs in its own process, so it needs an app group and a way to hand the upload to the app.
 - [ ] Ongoing-call controls outside the app (Android's notification with mute, deafen and leave): a Live Activity or CallKit.
 - [ ] App Store: a privacy manifest (`PrivacyInfo.xcprivacy`) for the app's own API use, the export-compliance answer (TLS and Olm), screenshots, and a release build (`PROFILE=release`, `xtool dev build -c release --ipa`).
+  - [x] Distribution certificate, App Store profile and App Store Connect API key for `chat.irchad.IrChad` (kept in `~/irchad-signing`, see `iOS/README.md`).
+  - [x] `PrivacyInfo.xcprivacy` (UserDefaults, file timestamps, disk space; account ID, messages, media and other content for app functionality).
+  - [x] `iOS/release.sh` + `finish-app.py`: xtool can't sign for distribution, writes no DT* keys and stamps the deployment target as the SDK version (xtool #351), so the script fixes these and signs with rcodesign.
+  - [ ] `iOS/icon/`: Assets.car built once on a Mac with `actool` (no Linux compiler that App Store processing accepts yet).
+  - [ ] Install Transporter for Linux and do a first TestFlight upload; answer export compliance there, then set `ITSAppUsesNonExemptEncryption`.
 - [ ] CI: no job builds iOS. The CI image would need Swift and xtool's SDK, which comes out of Xcode's `.xip`.
 
 ## Done when

@@ -20,6 +20,27 @@ Run `build-rust.sh` again whenever the Rust side changes (`PROFILE=release` for 
 It writes `rust/`, `Sources/IrChad/Generated/` and `Sources/chad_ffiFFI/include/chad_ffiFFI.h`, which aren't committed.
 `xtool dev build` builds without a device; `xtool devices` lists connected ones.
 
+## App Store
+
+The bundle ID is `chat.irchad.IrChad`, on team `8YBK7EUM7W`.
+xtool 1.24 only signs for development, so `./release.sh` builds a release with xtool and then finishes the bundle as Xcode would (`finish-app.py`).
+It adds the DT* keys and the SDK version in the binary, and signs with `rcodesign` (`cargo install apple-codesign`).
+`./release.sh --upload` also sends the `.ipa` to App Store Connect with Apple's Transporter (`iTMSTransporter`).
+
+Signing material lives outside the repo, in `~/irchad-signing/` (override with `SIGNING=`):
+`dist.key` and `dist.pem` (the Apple Distribution key and certificate), the App Store `.mobileprovision`,
+and `asc.env` (`ASC_KEY_ID`, `ASC_ISSUER_ID`) with its `AuthKey_<id>.p8`.
+
+The App Store wants the icon as a compiled asset catalog, which only Apple's `actool` builds, and that only runs on macOS.
+So `icon/` is committed output, made on any Mac with Xcode. Redo it when `Icon.png` changes:
+
+```sh
+cp Icon.png Assets.xcassets/AppIcon.appiconset/Icon.png
+xcrun actool Assets.xcassets --compile icon --platform iphoneos --minimum-deployment-target 18.0 \
+    --app-icon AppIcon --target-device iphone --target-device ipad \
+    --output-partial-info-plist icon/partial.plist --output-format human-readable-text
+```
+
 ## Testing against a server
 
 The phone can't reach `chat.localhost`, so the easiest test is a real deployment (`irchad.chat`).

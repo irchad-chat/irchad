@@ -2,3 +2,5 @@ version: 1
 bundleID: chat.irchad.IrChad
 infoPath: Info.plist
 iconPath: Icon.png
+resources:
+  - PrivacyInfo.xcprivacy
