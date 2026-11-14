@@ -13,7 +13,8 @@ Our changes (each is marked `irchad:` in the source):
   `USE_NVIDIA_VIDEO_CODEC`. Without it, a cargo warning and no NVENC, as on
   Linux. `scripts/cuda-headers.ps1` fetches the header. NVDEC stays Linux-only
   behind a new `USE_NVIDIA_VIDEO_DECODER`, since it would need the Video Codec
-  SDK's `nvcuvid.lib`.
+  SDK's `nvcuvid.lib`. On Linux, a missing `cuda.h` is no longer a cargo
+  warning, only a line in the build script output (`cargo build -vv`).
 - `src/nvidia/cuda_loader_win.cpp` (new): defines the `cu*` driver calls the
   encoder makes and forwards them to `nvcuda.dll`, loaded on first use. It's
   the Windows twin of the Linux implib trampolines in

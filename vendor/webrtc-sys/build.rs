@@ -342,7 +342,9 @@ fn main() {
                         ["cuda", "nvcuvid"].map(String::from).to_vec(),
                     );
                 } else {
-                    println!("cargo:warning=cuda.h not found; building without hardware accelerated video codec support for NVidia GPUs");
+                    // irchad: not a warning; most Linux builds have no CUDA
+                    // headers. Shows in the build script output (`cargo build -vv`).
+                    eprintln!("cuda.h not found; building without hardware accelerated video codec support for NVidia GPUs");
                 }
             }
 
