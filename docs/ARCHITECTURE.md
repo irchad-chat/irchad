@@ -175,8 +175,9 @@ Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback fo
   Device choice is a PipeWire `target.object`. Without one, WirePlumber follows the default and handles unplug.
 - Screen share uses a single layer with no simulcast. Codec preference, by the PCI vendor of the first render node (D23):
   - H.264 via VAAPI on AMD/Intel.
-  - AV1 via NVENC on Nvidia.
-  - Software VP9 otherwise (and on Windows for now).
+  - AV1 via NVENC on Nvidia. Public-stream viewers need a browser that receives AV1, and the watch page says so (D90).
+  - Software VP9 otherwise.
+  On Windows, any Nvidia DXGI adapter means AV1 via NVENC (D89), and everything else gets VP9 in software.
   The SDK falls back to software if the asked-for encoder isn't there, and 5 s in we log the encoder libwebrtc actually picked. Presets: 720p30, 1080p60, source, plus a bitrate cap.
   The content hint maps to libwebrtc's degradation preference: "Text" keeps resolution, "Motion" keeps the frame rate.
 - Capture backends implement `ScreenSource` and hand BGRA/RGBA (cameras also YUY2/NV12) frames to one sink, which converts to I420 (libyuv), scales to the preset and feeds a `NativeVideoSource`.

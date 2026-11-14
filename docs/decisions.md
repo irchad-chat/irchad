@@ -440,7 +440,6 @@ Focus: KWin and wlroots set XWayland's `_NET_ACTIVE_WINDOW` (D74's X11 path) to 
 Avatars: the main renderer's avatar textures are registered with the layer's renderer (`Layer::import`, `register_native_texture` on the same GPU texture), so nothing is decoded or uploaded twice. Its context gets eframe's system font provider too (CJK, emoji). Not yet: fractional scale (it draws at the scale rounded up), native-Wayland focus on Sway (i3 IPC) and KWin (a script), and gamescope's overlay atom.
 Rejected: a winit viewport (an `xdg_toplevel` can't stay on top or be placed), and rendering the overlay through the main egui context (eframe owns its viewports' surfaces).
 
-
 ## D76: Desktop self-update with `self_update`, archives signed with zipsign (2026-11-10)
 
 Supersedes D27's last sentence and D53's asset list. The client will download and install updates itself through the `self_update` crate's Gitea backend, then offer a restart. On Linux that's only when the running binary is writable by the user (the tarball's `~/.local/bin`). A binary the user can't write is taken to be from a package manager, and the setting is disabled there, which leaves D27's notice and link. Windows updates the per-user install in place from a new asset, `irchad-windows-x86_64.zip` (`irchad.exe` and `VERSION`). The installer stays the download for new users. An exe swapped in place leaves the uninstall entry's `DisplayVersion` at the installed version.
@@ -528,3 +527,15 @@ Supersedes D87's "Go live" mid-share copy, which encoded and uploaded the screen
 - **The call's audio (optional, "Include the call's audio").** The streamer's client publishes one more track, `call-audio` (source `unknown`, which the publisher grant now allows). It's the mixer's sources at unity gain, whatever our volume or deafen, plus the mic frame we send. Whispers (D71) and others' screen-share audio are left out. While it's on, every member's client shows "<who> is streaming this call's audio publicly". Nobody can opt out except by muting or leaving.
 - **Ending.** Stopping the share closes the stream room and clears the attributes. A stream room that drops ends the share.
 - **Known limits.** Starting a public share is desktop-only. Android and iOS don't watch stream rooms yet, so a public share shows to them as nobody sharing. The web meeting grid doesn't show public shares. Viewers are hidden and not counted.
+
+## D89: webrtc-sys is vendored so NVENC builds on Windows (2026-11-14)
+Upstream webrtc-sys compiles its NVENC encoder on Linux only. We vendor 0.3.51 in `vendor/webrtc-sys` (`[patch.crates-io]`), and on Windows it builds NVENC whenever `cuda.h` is found through `CUDA_HOME`/`CUDA_PATH` (`vendor/README.md` lists the changes).
+No CUDA toolkit is needed. `scripts/cuda-headers.ps1` fetches NVIDIA's 3.5 MB `cuda_cudart` redist (hash-pinned) for the header, and the CUDA driver calls resolve from `nvcuda.dll` at runtime, so the exe still runs on machines without Nvidia. NVDEC stays Linux-only.
+This extends D23 to Windows: if any hardware DXGI adapter is Nvidia, the screen share asks for AV1 via NVENC, and otherwise for VP9 in software (there's no VAAPI on Windows).
+The cost is re-vendoring on every livekit bump until upstream does this itself.
+
+## D90: Public streams of AV1 shares need an AV1-capable browser (2026-11-14)
+Nvidia screen shares stay AV1 (D23, D89). Some browsers' WebRTC won't receive AV1. LibreWolf's subscriber SDP offers only VP8, VP9 and H.264, so it rejects the video outright (the m-section comes back with port 0), while Brave plays it.
+The LiveKit Rust SDK can't publish a backup codec, so the SFU can't fall back per viewer. Switching Nvidia to H.264 would cost every viewer quality for the sake of a few browsers.
+So the watch page notices when the share is AV1 and no video arrives, and it tells the viewer to use a Chromium-based browser (Chrome, Edge, Brave).
+If the SDK gains backup codecs, publish AV1 with H.264 as the backup and drop the notice.

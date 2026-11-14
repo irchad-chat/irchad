@@ -38,7 +38,10 @@
 - [ ] VAAPI H.264 on the Raphael iGPU delivers 46–51 fps at 1080p60 through libwebrtc's wrapper, against 55–60 for OpenH264 ([perf](../notes/screenshare-perf.md)). Measure on a discrete AMD/Intel card before changing the codec order.
 - [ ] `LIBVA_DRIVER_NAME=nvidia` (hybrid Nvidia boxes) breaks VAAPI on the AMD/Intel node, and we silently get OpenH264. Consider choosing the Nvidia path when that variable is set.
 - [ ] NVENC is compiled only when CUDA headers exist at build time. The release build needs them, or Nvidia users get software AV1.
-- [ ] Windows: no GPU probe yet (VP9 in software). Probe the DXGI adapter vendor once NVENC builds there.
+- [x] Windows: NVENC builds there through a vendored webrtc-sys (D89), and a DXGI probe sends Nvidia to NVENC. `encoder_check` (no server needed) shows `NVIDIA AV1 Encoder` and, with `CODEC=h264`, `NVIDIA H264 Encoder` (both `hardware: true`) at 1080p on an RTX 4090.
+- [x] Upstream bug, Linux too: webrtc-sys's NVENC H.264 took its level from the SDP's `42e01f` (3.1, max 720p), so 1080p failed `nvEncInitializeEncoder` with `NV_ENC_ERR_INVALID_PARAM` and libwebrtc fell back to OpenH264. The vendored copy uses `NV_ENC_LEVEL_AUTOSELECT`.
+- [x] Public-stream viewers on LibreWolf got no video from an Nvidia sharer. Its subscriber SDP offers only VP8, VP9 and H.264, so it rejected the AV1 m-section (port 0). We keep AV1, and the watch page tells a viewer whose browser takes no AV1 video to use a Chromium-based one (D90).
+- [ ] Check that the watch page's AV1 notice shows in LibreWolf and stays hidden in Chromium.
 - [x] Self-preview: your own LIVE badge, or "Preview" in the voice panel, opens your share on the stage as it is sent (after scaling, before encoding). The encoder copies frames only while the preview is open. It doesn't count toward "N watching" and closes when the share ends.
 - [x] Choose where a watched share goes from its bar: fill the chat area (the default), float in a small movable, resizable window over the chat, tile as a pane in the pane grid (drag its title to swap it with a chat pane), or pop out. The choice is remembered (`Settings::stage`). Only "fill" stops watching when you open another buffer.
 - [ ] Live `shots` scenario for float and tile. It needs a share to watch, so it was checked headless with a fake watch only.

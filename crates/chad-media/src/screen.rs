@@ -729,11 +729,20 @@ fn app_sink(source: NativeAudioSource) -> AppSink {
 
 /// Hardware encoder by GPU vendor (`docs/decisions.md` D23). The SDK falls
 /// back to software if the one we ask for isn't there; [`log_encoder`] says.
+///
+/// For debugging, `IRCHAD_SCREEN_ENCODER=software` keeps the codec but
+/// encodes it in software.
 fn codec() -> (VideoCodec, VideoEncoderBackend) {
-    match gpu_vendor() {
+    let picked = match gpu_vendor() {
+        // Public-stream viewers need a browser that takes AV1 (D90).
         Some(0x10de) => (VideoCodec::AV1, VideoEncoderBackend::Nvenc),
+        #[cfg(target_os = "linux")]
         Some(0x1002 | 0x8086) => (VideoCodec::H264, VideoEncoderBackend::Vaapi),
         _ => (VideoCodec::VP9, VideoEncoderBackend::Software),
+    };
+    match std::env::var("IRCHAD_SCREEN_ENCODER").as_deref() {
+        Ok("software") => (picked.0, VideoEncoderBackend::Software),
+        _ => picked,
     }
 }
 
@@ -758,9 +767,24 @@ fn gpu_vendor() -> Option<u32> {
     })
 }
 
-// shortcut: no GPU probe off Linux, so Windows encodes VP9 in software; use
-// DXGI adapter vendor ids if NVENC builds there.
-#[cfg(not(target_os = "linux"))]
+/// Nvidia if any hardware DXGI adapter is one, since NVENC runs on the CUDA
+/// device whichever adapter drives the display (hybrid laptops list the iGPU
+/// first). Windows has no VAAPI, so other vendors don't matter here.
+#[cfg(windows)]
+fn gpu_vendor() -> Option<u32> {
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
+    };
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.ok()?;
+    (0..)
+        .map_while(|i| unsafe { factory.EnumAdapters1(i) }.ok())
+        .filter_map(|a| unsafe { a.GetDesc1() }.ok())
+        .filter(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0)
+        .any(|d| d.VendorId == 0x10de)
+        .then_some(0x10de)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn gpu_vendor() -> Option<u32> {
     None
 }

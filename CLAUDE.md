@@ -67,6 +67,7 @@ deploy/               docker compose: ergo + livekit + chadd + caddy
 android/              (Phase 6)
 iOS/                  (Phase 8)
 site/                 project website (Astro, static); user docs are Markdown in site/src/pages/docs/
+vendor/webrtc-sys      patched webrtc-sys (NVENC on Windows, D89); see vendor/README.md
 docs/
 ```
 
@@ -76,6 +77,8 @@ docs/
   To keep output small, use `-q`, scope to the crate you touched, and use short diagnostics:
   `cargo clippy -q -p <crate> --all-targets --message-format=short`, `cargo test -q -p <crate>`. Building `chad-media` examples needs clang ≥ 21 (webrtc-sys) and PipeWire headers.
 - Run the client: `cargo run -p chad-desktop` (binary `irchad`)
+- Windows NVENC: set `CUDA_HOME` to the output of `powershell -ExecutionPolicy Bypass -File scripts\cuda-headers.ps1` before building. Without it, webrtc-sys builds without NVENC and a cargo warning says so.
+  `cargo run -p chad-media --example encoder_check` shows which encoder actually runs, no server needed.
 - Screenshots of the UI (to check visual changes): `cargo test -p chad-desktop shots -- --nocapture` renders the real `App` headless and writes `target/shots/*.png`.
   To add a scenario, put a test in `crates/chad-desktop/src/shots.rs` that drives the UI through accesskit (`get_by_label(..).click()`) and then calls `shot("name")`.
 - Dev server stack: `docker compose -f deploy/compose.yaml up -d --build` (podman compose works).

@@ -104,6 +104,14 @@ jobs:
             if ($gb -gt 40) { Remove-Item $d -Recurse -Force; "wiped" }
           }
 
+      # cuda.h, so webrtc-sys builds NVENC in (vendor/README.md). Fetched
+      # once into a fixed dir on the runner, hash-checked.
+      - name: CUDA headers
+        shell: pwsh
+        run: |
+          $h = scripts\cuda-headers.ps1 C:\gitea-runner\cuda
+          "CUDA_HOME=$h" >> $env:GITHUB_ENV
+
       - run: cargo build --release --locked -p chad-desktop
         env:
           # Read by the update check (crates/chad-desktop/src/update.rs).

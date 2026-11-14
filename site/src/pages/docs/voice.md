@@ -33,6 +33,8 @@ When you share your screen in the desktop app, tick **Get a public link** in the
 
 Viewers see your screen and hear its app audio. If you also tick **Include the call's audio**, they hear the call too: everyone's voice, and yours. Everyone in the call sees a warning while that's on. Whispers never go out.
 
+If you have an Nvidia graphics card, your share is AV1 video, and viewers need a browser whose WebRTC plays AV1. Chromium-based browsers like Chrome, Edge and Brave do, but some Firefox builds like LibreWolf don't. The watch page tells viewers when theirs can't.
+
 Stop sharing to end the stream. The link stops working when it expires, after a day by default.
 
 ## Per-person volume
