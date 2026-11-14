@@ -163,7 +163,7 @@ pub fn panel(
             .as_ref()
             .and_then(|c| c.participants.iter().find(|p| p.local))
             .map_or(0, |p| p.watchers);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(
                 RichText::new(format!(
                     "{} Sharing your screen · {} {watchers} watching",
@@ -190,7 +190,7 @@ pub fn panel(
             }
         });
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let (muted, deaf) = (voice.muted(), voice.deafened());
         let mic = if muted {
             icons::MICROPHONE_SLASH
