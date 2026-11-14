@@ -951,11 +951,15 @@ fn reaction(m: &Message) -> Option<(&str, bool)> {
 }
 
 impl Net {
+    /// Our own display name, if we set one.
+    pub(crate) fn own_display_name(&self) -> Option<&str> {
+        (self.profiles.get(&self.fold(&self.info.nick))).and_then(|p| p.display_name.as_deref())
+    }
+
     /// `text` names us: our account in its `+chad/mentions`, or our nick or
     /// display name as a whole word.
     fn mentioned(&self, text: &str, tagged: &[Mention]) -> bool {
-        let display_name = (self.profiles.get(&self.fold(&self.info.nick)))
-            .and_then(|p| p.display_name.as_deref());
+        let display_name = self.own_display_name();
         (self.account.as_deref()).is_some_and(|a| tagged.iter().any(|m| self.cm.eq(&m.account, a)))
             || mentions(text, &self.info.nick)
             || display_name.is_some_and(|d| mentions(text, d))

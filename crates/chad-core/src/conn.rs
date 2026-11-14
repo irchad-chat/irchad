@@ -757,9 +757,16 @@ fn fetch(
             });
         }
         NetCommand::CreateStream => {
+            // Viewers see who's streaming: our display name, if we set one.
+            let req = chad_proto::stream::CreateStreamRequest {
+                name: net.own_display_name().map(str::to_owned),
+            };
             tokio::spawn(async move {
                 let result = client
-                    .call(|api, t| async move { chadd::create_stream(&api, &t).await })
+                    .call(|api, t| {
+                        let req = req.clone();
+                        async move { chadd::create_stream(&api, &t, &req).await }
+                    })
                     .await
                     .map(|r| StreamLink {
                         url: r.url,

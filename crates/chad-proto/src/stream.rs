@@ -21,6 +21,16 @@ pub fn room_of(code: &str) -> Option<String> {
     valid_code(code).then(|| format!("{ROOM_PREFIX}{}", code.to_ascii_lowercase()))
 }
 
+/// The most a streamer's name may be, in chars; longer is cut.
+pub const MAX_NAME: usize = 64;
+
+/// What the streamer sends with `POST <api>/stream`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateStreamRequest {
+    /// Their display name, shown to viewers; the account when `None`.
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateStreamResponse {
     /// The link to hand out: `<origin>/watch/<code>`.
@@ -46,6 +56,8 @@ pub struct StreamTokenRequest {
 pub struct StreamTokenResponse {
     pub livekit: url::Url,
     pub token: String,
+    /// The network's name, for the watch page's "join us" pitch.
+    pub network: String,
 }
 
 #[cfg(test)]

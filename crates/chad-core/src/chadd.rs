@@ -255,9 +255,10 @@ pub async fn create_meeting(
 pub async fn create_stream(
     api: &Url,
     session: &str,
+    req: &chad_proto::stream::CreateStreamRequest,
 ) -> Result<chad_proto::stream::CreateStreamResponse, Error> {
     let r: chad_proto::stream::CreateStreamResponse =
-        post(api, chadd::STREAM, Some(session), &()).await?;
+        post(api, chadd::STREAM, Some(session), req).await?;
     // Server input (D14): a link and a LiveKit URL we'd open, a sane token.
     let ok = matches!(r.url.scheme(), "https" | "http")
         && livekit_url(&r.livekit)

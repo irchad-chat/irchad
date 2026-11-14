@@ -11,7 +11,9 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 use chad_proto::chadd::ApiError;
-use chad_proto::stream::{self, CreateStreamResponse, StreamTokenRequest, StreamTokenResponse};
+use chad_proto::stream::{
+    self, CreateStreamRequest, CreateStreamResponse, StreamTokenRequest, StreamTokenResponse,
+};
 use livekit_api::access_token::{AccessToken, VideoGrants};
 
 use crate::api::{self, ApiResult, fail};
@@ -72,8 +74,14 @@ fn livekit(state: &AppState) -> url::Url {
 pub async fn create(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Json(req): Json<CreateStreamRequest>,
 ) -> ApiResult<CreateStreamResponse> {
     let account = api::session_account(&state, &headers)?;
+    let name = req
+        .name
+        .map(|n| chad_proto::one_line(&n, stream::MAX_NAME))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| account.clone());
     let m = state.config.meetings.as_ref().ok_or_else(off)?;
     if !state.meetings.allow(account.to_ascii_lowercase()) {
         return Err(fail(
@@ -93,12 +101,12 @@ pub async fn create(
     let lk = &state.config.livekit;
     let token = AccessToken::with_api_key(&lk.key, &lk.secret)
         .with_identity(&account)
-        .with_name(&account)
+        .with_name(&name)
         .with_ttl(api::VOICE_TTL)
         .with_grants(publisher(room.clone()))
         .to_jwt()
         .map_err(|e| api::internal(&e))?;
-    tracing::info!(%account, "stream started");
+    tracing::info!(%account, %name, "stream started");
     Ok(Json(CreateStreamResponse {
         url,
         expires,
@@ -138,6 +146,7 @@ pub async fn token(
     Ok(Json(StreamTokenResponse {
         livekit: livekit(&state),
         token,
+        network: state.discovery.name.clone(),
     }))
 }
 
