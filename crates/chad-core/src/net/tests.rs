@@ -152,10 +152,10 @@ fn reattach_trusts_the_server_channel_list_and_fills_gaps() {
     );
     // No JOINs sent: always-on already has us in our channels.
     assert!(!sent.iter().any(|l| l.contains("JOIN")), "{sent:?}");
-    assert!(
-        sent.iter()
-            .any(|l| l.ends_with("CHATHISTORY AFTER #general msgid=g1 100"))
-    );
+    assert!(sent.iter().any(|l| l.ends_with(&format!(
+        "CHATHISTORY AFTER #general timestamp={} 100",
+        ts(999)
+    ))));
     assert!(
         sent.iter()
             .any(|l| l.ends_with("CHATHISTORY LATEST alice * 100"))
@@ -194,10 +194,38 @@ fn resuming_catches_up_on_a_live_socket() {
     n.resumed();
     let sent = out(&mut n);
     assert!(
-        sent.iter()
-            .any(|l| l.ends_with("CHATHISTORY AFTER #general msgid=g2 100")),
+        sent.iter().any(|l| l.ends_with(&format!(
+            "CHATHISTORY AFTER #general timestamp={} 100",
+            ts(1999)
+        ))),
         "{sent:?}"
     );
+}
+
+#[test]
+fn catch_up_starts_before_live_messages() {
+    let mut n = net();
+    n.store
+        .put_buffer("#general", "#general", BufferKind::Channel);
+    n.store.insert("#general", &msg("g1", 1000, "alice", "old"));
+    n.store.set_meta("autojoined", "1");
+    n.load_cache();
+    n.attach("bob");
+    let label = label_of(&out(&mut n)[1]).to_owned();
+    feed(&mut n, ":s PERSISTENCE STATUS DEFAULT ON");
+    feed(&mut n, ":bob!u@h JOIN #general bob :bob");
+    // Live, before the sync reply: catch-up must still start at g1.
+    feed(
+        &mut n,
+        &format!(
+            "@msgid=g9;time={} :alice!u@h PRIVMSG #general :new",
+            ts(9000)
+        ),
+    );
+    feed(&mut n, &format!("@label={label} :s PONG s sync"));
+    let sent = out(&mut n);
+    let want = format!("CHATHISTORY AFTER #general timestamp={} 100", ts(999));
+    assert!(sent.iter().any(|l| l.ends_with(&want)), "{sent:?}");
 }
 
 #[test]

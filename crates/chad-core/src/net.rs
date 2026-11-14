@@ -243,6 +243,9 @@ pub struct Net {
     ctcp_at: Option<Instant>,
     /// A lag `PING` is unanswered; D14: never more than one.
     lag_out: bool,
+    /// Each buffer's newest cached message time as this connection began: where
+    /// catch-up starts, since live messages may be cached before it runs.
+    gap_from: HashMap<String, i64>,
     /// Where ergo pushes to, and whether this connection has registered it.
     push: Option<PushSubscription>,
     push_registered: bool,
@@ -298,6 +301,7 @@ impl Net {
             version: "IrChad".into(),
             members_dirty: Vec::new(),
             ctcp_at: None,
+            gap_from: HashMap::new(),
             lag_out: false,
             push: None,
             push_registered: false,
@@ -367,6 +371,11 @@ impl Net {
         self.synced = false;
         self.joined.clear();
         self.who_wanted.clear();
+        self.gap_from = self
+            .buffers
+            .keys()
+            .filter_map(|k| self.store.newest(k).map(|(_, t)| (k.clone(), t)))
+            .collect();
         self.set_state(ConnState::Connected);
         self.persistent = !self.guest && self.caps.enabled("draft/persistence");
         if let Some(m) = &self.away {
@@ -576,12 +585,21 @@ impl Net {
 
     /// Whatever arrived since the newest cached message.
     fn fetch_new(&mut self, key: &str) {
-        match self.store.newest(key) {
-            Some((msgid, _)) => {
-                self.history(key, Hist::After { pages: 1 }, &format!("msgid={msgid}"))
-            }
+        let from = self.gap_from.remove(key);
+        match from.or_else(|| self.store.newest(key).map(|(_, t)| t)) {
+            Some(t) => self.fetch_after(key, t, 1),
             None => self.history(key, Hist::Latest, "*"),
         }
+    }
+
+    /// Page `pages` of what came after time `t`.
+    /// By time, not msgid: ergo answers an msgid it no longer has (redacted, expired)
+    /// with an empty page, which would leave the gap for good. One ms back, so a
+    /// message sharing its millisecond isn't skipped; the one at `t` comes back
+    /// and is ignored as a duplicate.
+    pub(super) fn fetch_after(&mut self, key: &str, t: i64, pages: u8) {
+        let r = format!("timestamp={}", time::format(t.saturating_sub(1)));
+        self.history(key, Hist::After { pages }, &r);
     }
 
     fn join_all(&mut self, channels: &[String]) {

@@ -171,12 +171,13 @@ fn history_pages_dedupe_and_stop() {
     let sent = attach(&mut n, &["#c"]);
     let after = sent
         .iter()
-        .find(|l| l.contains("AFTER #c msgid=m149"))
+        .find(|l| l.contains(&format!("AFTER #c timestamp={}", ts(149_000 - 1))))
         .unwrap();
     for l in page(label_of(after), 150, 100) {
         feed(&mut n, &l);
     }
-    assert!(out(&mut n)[0].ends_with("CHATHISTORY AFTER #c msgid=m249 100"));
+    let next = format!("CHATHISTORY AFTER #c timestamp={} 100", ts(249_000 - 1));
+    assert!(out(&mut n)[0].ends_with(&next));
 }
 
 #[test]

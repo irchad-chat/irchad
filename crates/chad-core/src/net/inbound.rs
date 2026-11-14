@@ -116,6 +116,13 @@ impl Net {
                     }
                     _ => Vec::new(),
                 };
+                // The next AFTER page goes on from this one, not from the newest
+                // cached: a live message may be cached past the gap.
+                let last = inner
+                    .iter()
+                    .filter_map(|i| self.chat(i))
+                    .map(|(_, m)| m.time)
+                    .max();
                 let n = self.store_history(&target, inner);
                 let name = self.buffers.get(&target).map(|b| b.name.clone());
                 match (kind, name) {
@@ -127,9 +134,8 @@ impl Net {
                         });
                     }
                     (Hist::After { pages }, _) if n >= PAGE as usize && pages < MAX_GAP_PAGES => {
-                        if let Some((msgid, _)) = self.store.newest(&target) {
-                            let r = format!("msgid={msgid}");
-                            self.history(&target, Hist::After { pages: pages + 1 }, &r);
+                        if let Some(t) = last {
+                            self.fetch_after(&target, t, pages + 1);
                         }
                     }
                     _ => {}
