@@ -39,7 +39,18 @@ RUN wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc https://apt.llvm.org/llvm-s
     && rm -rf /var/lib/apt/lists/* \
     && clang++-21 --version
 
-ENV CC=clang-21 \
+# cuda.h (NVIDIA's cuda_cudart redist, hash-pinned) so webrtc-sys compiles
+# NVENC/NVDEC in. No toolkit: libcuda and libnvcuvid are dlopened at runtime,
+# so the binary still runs without Nvidia. Same version as cuda-headers.ps1.
+RUN curl -fsSLo /tmp/cudart.tar.xz https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.9.79-archive.tar.xz \
+    && echo "1f6ad42d4f530b24bfa35894ccf6b7209d2354f59101fd62ec4a6192a184ce99  /tmp/cudart.tar.xz" | sha256sum -c \
+    && mkdir -p /opt/cuda \
+    && tar -xJf /tmp/cudart.tar.xz -C /opt/cuda --strip-components=1 \
+    && rm /tmp/cudart.tar.xz \
+    && test -f /opt/cuda/include/cuda.h
+
+ENV CUDA_HOME=/opt/cuda \
+    CC=clang-21 \
     CXX=clang++-21 \
     LIBCLANG_PATH=/usr/lib/llvm-21/lib \
     RUSTUP_HOME=/usr/local/rustup \
