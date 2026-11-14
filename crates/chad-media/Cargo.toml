@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 futures-util = "0.3"
 livekit.workspace = true
+# The vendored one (root Cargo.toml), for `nvenc_av1_supported`.
+webrtc-sys = "0.3.51"
 nnnoiseless = { version = "0.5.2", default-features = false }
 rtrb = "0.4.1"
 serde.workspace = true

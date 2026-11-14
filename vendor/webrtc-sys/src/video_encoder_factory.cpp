@@ -300,6 +300,16 @@ using Factory = webrtc::VideoEncoderFactoryTemplate<
 #endif
     webrtc::LibvpxVp9EncoderTemplateAdapter>;
 
+// irchad: see webrtc.rs.
+bool nvenc_av1_supported() {
+#if defined(USE_NVIDIA_VIDEO_CODEC)
+  return webrtc::NvidiaVideoEncoderFactory::IsSupported() &&
+         webrtc::NvidiaVideoEncoderFactory::IsAv1Supported();
+#else
+  return false;
+#endif
+}
+
 rust::Vec<VideoEncoderBackend> video_encoder_backend_list() {
   rust::Vec<VideoEncoderBackend> backends;
   backends.push_back(VideoEncoderBackend::Auto);

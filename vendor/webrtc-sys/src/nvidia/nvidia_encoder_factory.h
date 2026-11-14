@@ -18,6 +18,8 @@ class NvidiaVideoEncoderFactory : public VideoEncoderFactory {
   ~NvidiaVideoEncoderFactory() override;
 
   static bool IsSupported();
+  // irchad: public, for nvenc_av1_supported() (webrtc.rs).
+  static bool IsAv1Supported();
 
   std::unique_ptr<VideoEncoder> Create(const Environment& env,
                                        const SdpVideoFormat& format) override;
@@ -33,8 +35,6 @@ class NvidiaVideoEncoderFactory : public VideoEncoderFactory {
   }
 
  private:
-  static bool IsAv1Supported();
-
   std::vector<SdpVideoFormat> supported_formats_;
   livekit_ffi::CudaContext* cu_context_ = nullptr;
 };

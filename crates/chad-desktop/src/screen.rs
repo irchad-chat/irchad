@@ -55,6 +55,36 @@ struct Planes {
     bind: wgpu::BindGroup,
 }
 
+/// Quality, content hint and bitrate cap: grid rows (two columns), shared by
+/// the share dialog and the Screen Sharing settings.
+pub fn options(ui: &mut egui::Ui, settings: &mut ScreenSettings) {
+    ui.label("Quality");
+    ui.horizontal(|ui| {
+        for p in [Preset::P720p30, Preset::P1080p60, Preset::Source] {
+            ui.selectable_value(&mut settings.preset, p, p.label());
+        }
+    });
+    ui.end_row();
+
+    ui.label("Optimize for");
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut settings.hint, ContentHint::Motion, "Motion")
+            .on_hover_text("Games and video: keeps it smooth.");
+        ui.selectable_value(&mut settings.hint, ContentHint::Detail, "Text")
+            .on_hover_text("Code and documents: keeps it sharp.");
+    });
+    ui.end_row();
+
+    let l = ui.label("Bitrate cap");
+    ui.add(
+        egui::Slider::new(&mut settings.max_kbps, 1000..=20_000)
+            .suffix(" kbps")
+            .logarithmic(true),
+    )
+    .labelled_by(l.id);
+    ui.end_row();
+}
+
 /// Sets up the I420 → RGB pipeline once, at startup.
 pub fn install(cc: &eframe::CreationContext<'_>) {
     let Some(rs) = cc.wgpu_render_state.as_ref() else {
@@ -626,30 +656,7 @@ impl ShareDialog {
                             );
                         ui.end_row();
 
-                        ui.label("Quality");
-                        ui.horizontal(|ui| {
-                            for p in [Preset::P720p30, Preset::P1080p60, Preset::Source] {
-                                ui.selectable_value(&mut settings.preset, p, p.label());
-                            }
-                        });
-                        ui.end_row();
-
-                        ui.label("Optimize for");
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut settings.hint, ContentHint::Motion, "Motion")
-                                .on_hover_text("Games and video: keeps it smooth.");
-                            ui.selectable_value(&mut settings.hint, ContentHint::Detail, "Text")
-                                .on_hover_text("Code and documents: keeps it sharp.");
-                        });
-                        ui.end_row();
-
-                        ui.label("Bitrate cap");
-                        ui.add(
-                            egui::Slider::new(&mut settings.max_kbps, 1000..=20_000)
-                                .suffix(" kbps")
-                                .logarithmic(true),
-                        );
-                        ui.end_row();
+                        options(ui, settings);
                     });
                 if self.streams {
                     ui.add_space(8.0);

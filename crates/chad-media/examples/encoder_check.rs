@@ -138,13 +138,16 @@ async fn main() -> anyhow::Result<()> {
             found = true;
             println!(
                 "encoder: {} (hardware: {}), codec {mime}, asked for {backend:?}; \
-                 {} frames encoded, {}x{} at {:.0} fps",
+                 {} frames encoded, {}x{} at {:.0} fps, {:.2} ms/frame encode, \
+                 limited by {:?}",
                 o.outbound.encoder_implementation,
                 o.outbound.power_efficient_encoder,
                 o.outbound.frames_encoded,
                 o.outbound.frame_width,
                 o.outbound.frame_height,
                 o.outbound.frames_per_second,
+                o.outbound.total_encode_time * 1000.0 / f64::from(o.outbound.frames_encoded.max(1)),
+                o.outbound.quality_limitation_reason,
             );
         }
     }

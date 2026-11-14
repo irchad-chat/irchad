@@ -1,8 +1,9 @@
 //! User preferences, persisted by eframe's storage (per user).
 
 use std::collections::HashMap;
+use std::sync::{Once, OnceLock};
 
-use chad_media::{AudioSettings, ScreenSettings};
+use chad_media::{AudioSettings, Encoder, ScreenSettings};
 use egui::{FontId, ThemePreference, Visuals};
 use serde::{Deserialize, Serialize};
 
@@ -249,6 +250,36 @@ impl Settings {
                     );
                     ui.end_row();
                 }
+                Section::Screen => {
+                    let hint = |ui: &mut egui::Ui, text: &str| {
+                        ui.label(egui::RichText::new(text).small().weak());
+                    };
+                    ui.label("Encoder");
+                    ui.vertical(|ui| {
+                        let e = &mut self.screen.encoder;
+                        ui.radio_value(e, Encoder::Auto, "Automatic");
+                        hint(ui, "The best your graphics card can do.");
+                        ui.radio_value(e, Encoder::Compatible, "Best compatibility (H.264)");
+                        hint(ui, "Plays in every browser and is lighter for viewers.");
+                        ui.radio_value(e, Encoder::Software, "Software");
+                        hint(
+                            ui,
+                            "Uses the CPU. Try it if your share stutters or won't start.",
+                        );
+                        ui.add_space(4.0);
+                        match hardware_encoder(ui.ctx()) {
+                            Some(Some(hw)) => hint(ui, &format!("Graphics card encoder: {hw}")),
+                            Some(None) => hint(
+                                ui,
+                                "No graphics card encoder found, so it's always the CPU.",
+                            ),
+                            None => hint(ui, "Looking for a graphics card encoder…"),
+                        }
+                    });
+                    ui.end_row();
+
+                    crate::screen::options(ui, &mut self.screen);
+                }
                 Section::General => {
                     let l = ui.label("Away");
                     ui.horizontal(|ui| {
@@ -323,6 +354,21 @@ impl Settings {
     }
 }
 
+/// [`chad_media::hardware_encoder`], probed off the UI thread on first use
+/// (it can take a moment to wake the GPU). `None` until it's done.
+fn hardware_encoder(ctx: &egui::Context) -> Option<Option<&'static str>> {
+    static FOUND: OnceLock<Option<&'static str>> = OnceLock::new();
+    static STARTED: Once = Once::new();
+    STARTED.call_once(|| {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = FOUND.set(chad_media::hardware_encoder());
+            ctx.request_repaint();
+        });
+    });
+    FOUND.get().copied()
+}
+
 /// The settings window's pages, in its side nav.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Section {
@@ -330,6 +376,7 @@ pub enum Section {
     Appearance,
     Chat,
     Voice,
+    Screen,
     Overlay,
     General,
     Blocked,
@@ -342,6 +389,7 @@ impl Section {
         Section::Appearance,
         Section::Chat,
         Section::Voice,
+        Section::Screen,
         Section::Overlay,
         Section::General,
         Section::Blocked,
@@ -354,6 +402,7 @@ impl Section {
             Section::Appearance => "Appearance",
             Section::Chat => "Chat",
             Section::Voice => "Voice",
+            Section::Screen => "Screen Sharing",
             Section::Overlay => "Game Overlay",
             Section::General => "General",
             Section::Blocked => "Blocked Users",

@@ -50,4 +50,27 @@ Results on 2026-10-29 (Ryzen 7 7800X3D with the Raphael iGPU as `renderD128`, pl
 - With `LIBVA_DRIVER_NAME=nvidia` set (common on hybrid Nvidia boxes, and set on the test machine), VAAPI can't open the AMD node. libwebrtc then silently falls back to OpenH264, and the log line says so.
 - **NVENC wasn't measured.** It's compiled only when CUDA headers are present at build time (`/usr/local/cuda/include/cuda.h`), and they weren't. The release build should have them, or Nvidia users get software AV1 (libaom).
 
+### 2026-11-14: hybrid AMD + Nvidia, after D92
+
+Same machine (RTX 4090 driver 620.70, Mesa 26.1.8), built with `CUDA_HOME` pointing at the cuda_cudart redist only. With the old vendor pick, a real 4K share from KDE Wayland logged `OpenH264 (hardware: false), 1920x1080 at 37 fps`, because `LIBVA_DRIVER_NAME=nvidia` broke VAAPI.
+
+`encoder_check` (no server; it now prints encode time per frame):
+
+| Encoder | 1080p fps | Encode ms/frame | Process CPU |
+|---|---|---|---|
+| NVIDIA AV1 Encoder | 63 | 2.3 | 14 % |
+| NVIDIA H264 Encoder | 62 | 2.6 | 9 % |
+| VAAPI H264 (radeonsi) | 45–62 | 4.0 | 11 % |
+| OpenH264 | 32–45 | 10–13 | 24 % |
+
+`screen_check` at 1080p60 (sharer and viewer in one process, `IRCHAD_SCREEN_ENCODER` to force one):
+
+| Encoder | Received | Encoder thread | Viewer decode |
+|---|---|---|---|
+| NVIDIA AV1 (auto) | 59.9 fps | ~1 % | dav1d 45 % |
+| VAAPI H264 | 52.7 fps | 3 % | NVDEC 3 % |
+| libaom AV1 (software) | 60.7 fps | 97 % + 17 % | dav1d 41 % |
+
+VAAPI still stops short of 60 fps through libwebrtc's synchronous wrapper, even though each encode takes only 4 ms. NVENC holds 60. AV1 shifts the cost to viewers, who decode it in software.
+
 Still owed (phase "Done when"): a real game share from KDE Wayland, GNOME Wayland and X11 with two viewers, and the encoder CPU on a discrete AMD or Intel card.

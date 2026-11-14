@@ -308,6 +308,8 @@ fn main() {
             }
 
             if x86 || arm {
+                // irchad: so setting CUDA_HOME rebuilds with NVENC.
+                println!("cargo:rerun-if-env-changed=CUDA_HOME");
                 let cuda_home = PathBuf::from(match env::var("CUDA_HOME") {
                     Ok(p) => p,
                     Err(_) => "/usr/local/cuda".to_owned(),

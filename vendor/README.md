@@ -14,7 +14,8 @@ Our changes (each is marked `irchad:` in the source):
   Linux. `scripts/cuda-headers.ps1` fetches the header. NVDEC stays Linux-only
   behind a new `USE_NVIDIA_VIDEO_DECODER`, since it would need the Video Codec
   SDK's `nvcuvid.lib`. On Linux, a missing `cuda.h` is no longer a cargo
-  warning, only a line in the build script output (`cargo build -vv`).
+  warning, only a line in the build script output (`cargo build -vv`), and
+  changing `CUDA_HOME` reruns the build script.
 - `src/nvidia/cuda_loader_win.cpp` (new): defines the `cu*` driver calls the
   encoder makes and forwards them to `nvcuda.dll`, loaded on first use. It's
   the Windows twin of the Linux implib trampolines in
@@ -28,6 +29,11 @@ Our changes (each is marked `irchad:` in the source):
   `NV_ENC_LEVEL_AUTOSELECT`. Upstream copies it from the SDP (3.1 in
   `42e01f`), which fails at 1080p and falls back to OpenH264. This change
   isn't Windows-specific.
+- `src/webrtc.rs`, `include/livekit/webrtc.h`, `src/video_encoder_factory.cpp`,
+  `src/nvidia/nvidia_encoder_factory.h` (`IsAv1Supported` made public):
+  a new `nvenc_av1_supported()` FFI call. The merged codec list can't tell
+  NVENC's AV1 from libaom's, and pre-Ada cards have NVENC without AV1, so
+  screen share asks for H.264 over NVENC there (D92).
 - `src/nvidia/NvCodec/include/Utils/Logger.h`: `winsock2.h` instead of
   `winsock.h`, which clashes with webrtc's.
 

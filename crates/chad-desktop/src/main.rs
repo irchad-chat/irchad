@@ -27,6 +27,16 @@ fn main() -> eframe::Result {
     // `irchad <url>`: the scheme handler (or a user) opening an invite.
     let open = std::env::args().nth(1).filter(|a| !a.starts_with('-'));
 
+    // Hybrid Nvidia boxes often set this for nvidia-vaapi-driver, which only
+    // decodes: libva would load it for the AMD/Intel node too, and screen
+    // share's VAAPI encoder would silently fall back to software. Unset, libva
+    // picks each node's own driver.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("LIBVA_DRIVER_NAME").is_some_and(|v| v == "nvidia") {
+        // SAFETY: no other threads yet (the tokio runtime starts below).
+        unsafe { std::env::remove_var("LIBVA_DRIVER_NAME") };
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let _guard = rt.enter();
 
@@ -97,6 +107,12 @@ fn main() -> eframe::Result {
             )))
         }),
     );
+    // The call's rooms close as the app drops; exiting first can hang in the
+    // Nvidia driver (`chad_media::wait_closed`).
+    let _ = rt.block_on(tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        chad_media::wait_closed(),
+    ));
     // "Restart to update": let go of the single-instance name (or pipe) and
     // everything on the runtime first, or the new one hands over to us.
     if update::installed() {

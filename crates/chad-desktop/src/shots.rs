@@ -113,7 +113,14 @@ fn settings() {
     s.shot("settings_mocha");
     s.click("Latte");
     s.shot("settings_latte");
-    for page in ["Chat", "Voice", "Game Overlay", "General", "Blocked Users"] {
+    for page in [
+        "Chat",
+        "Voice",
+        "Screen Sharing",
+        "Game Overlay",
+        "General",
+        "Blocked Users",
+    ] {
         s.click(page);
         s.shot(&format!(
             "settings_{}",

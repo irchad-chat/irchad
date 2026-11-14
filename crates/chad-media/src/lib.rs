@@ -16,10 +16,10 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-pub use room::Call;
+pub use room::{Call, wait_closed};
 pub use screen::{
-    AudioApp, ContentHint, Preset, Public, ScreenFrame, ScreenSettings, ShareSource, SourceId,
-    Target, Targets,
+    AudioApp, ContentHint, Encoder, Preset, Public, ScreenFrame, ScreenSettings, ShareSource,
+    SourceId, Target, Targets, hardware_encoder,
 };
 pub use sound::{MAX_SECS as MAX_SOUND_SECS, load as load_sound};
 

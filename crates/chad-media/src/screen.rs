@@ -4,8 +4,8 @@
 //! someone else's share decodes into [`ScreenFrame`]s for the UI.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use futures_util::FutureExt;
@@ -40,6 +40,7 @@ pub struct ScreenSettings {
     pub hint: ContentHint,
     /// Encoder ceiling.
     pub max_kbps: u32,
+    pub encoder: Encoder,
 }
 
 impl Default for ScreenSettings {
@@ -48,8 +49,23 @@ impl Default for ScreenSettings {
             preset: Preset::P1080p60,
             hint: ContentHint::Motion,
             max_kbps: 8000,
+            encoder: Encoder::Auto,
         }
     }
+}
+
+/// Which video encoder a share asks for (D92).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Encoder {
+    /// The GPU's best: AV1 on NVENC that has it, H.264 on any other GPU
+    /// encoder, else H.264 in software.
+    #[default]
+    Auto,
+    /// H.264 on whatever encodes it, GPU first. Every browser plays it, and
+    /// viewers decode it more cheaply than AV1.
+    Compatible,
+    /// H.264 on the CPU, for when a GPU encoder misbehaves.
+    Software,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,7 +224,7 @@ impl Drop for Share {
     fn drop(&mut self) {
         let (room, tracks) = (self.room.clone(), std::mem::take(&mut self.tracks));
         let public = self.public.take();
-        self.rt.spawn(async move {
+        crate::room::closing(self.rt.spawn(async move {
             let Some((call, _)) = public else {
                 for sid in tracks {
                     let _ = room.local_participant().unpublish_track(&sid).await;
@@ -223,7 +239,7 @@ impl Drop for Share {
             if let Err(e) = call.local_participant().set_attributes(off).await {
                 tracing::debug!("clearing the stream attributes: {e}");
             }
-        });
+        }));
     }
 }
 
@@ -344,13 +360,13 @@ pub(crate) async fn start(
     };
     let close = |room: Arc<Room>| {
         if public.is_some() {
-            tokio::spawn(async move {
+            crate::room::closing(tokio::spawn(async move {
                 let _ = room.close().await;
-            });
+            }));
         }
     };
 
-    let (codec, backend) = codec();
+    let (codec, backend) = codec(settings.encoder);
     let track = LocalVideoTrack::create_video_track("screen", RtcVideoSource::Native(source));
     let publication = room
         .local_participant()
@@ -727,66 +743,60 @@ fn app_sink(source: NativeAudioSource) -> AppSink {
     })
 }
 
-/// Hardware encoder by GPU vendor (`docs/decisions.md` D23). The SDK falls
-/// back to software if the one we ask for isn't there; [`log_encoder`] says.
-///
-/// For debugging, `IRCHAD_SCREEN_ENCODER=software` keeps the codec but
-/// encodes it in software.
-fn codec() -> (VideoCodec, VideoEncoderBackend) {
-    let picked = match gpu_vendor() {
-        // Public-stream viewers need a browser that takes AV1 (D90).
-        Some(0x10de) => (VideoCodec::AV1, VideoEncoderBackend::Nvenc),
-        #[cfg(target_os = "linux")]
-        Some(0x1002 | 0x8086) => (VideoCodec::H264, VideoEncoderBackend::Vaapi),
-        _ => (VideoCodec::VP9, VideoEncoderBackend::Software),
-    };
-    match std::env::var("IRCHAD_SCREEN_ENCODER").as_deref() {
-        Ok("software") => (picked.0, VideoEncoderBackend::Software),
-        _ => picked,
-    }
-}
-
-/// PCI vendor of the first render node that's a GPU we know.
-#[cfg(target_os = "linux")]
-fn gpu_vendor() -> Option<u32> {
-    let mut nodes: Vec<_> = std::fs::read_dir("/sys/class/drm")
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("renderD"))
-        })
-        .collect();
-    nodes.sort();
-    nodes.iter().find_map(|p| {
-        let v = std::fs::read_to_string(p.join("device/vendor")).ok()?;
-        let v = u32::from_str_radix(v.trim().trim_start_matches("0x"), 16).ok()?;
-        matches!(v, 0x10de | 0x1002 | 0x8086).then_some(v)
+/// The GPU encoder [`Encoder::Auto`] uses, by what libwebrtc's probes find
+/// (D92): NVENC (AV1 on Ada and later, H.264 before), then VAAPI (Linux only;
+/// the Windows build has none). Probed once, on first use: NVENC's probe
+/// wakes the GPU, which shouldn't happen just because IrChad started.
+fn hardware() -> Option<(VideoCodec, VideoEncoderBackend)> {
+    static HW: OnceLock<Option<(VideoCodec, VideoEncoderBackend)>> = OnceLock::new();
+    *HW.get_or_init(|| {
+        let have: Vec<_> = VideoEncoderBackend::list_available().into_iter().collect();
+        tracing::debug!("video encoders available: {have:?}");
+        if have.contains(&VideoEncoderBackend::Nvenc) {
+            // Pre-Ada cards have NVENC without AV1, and AV1 would then be libaom.
+            let codec = if webrtc_sys::webrtc::ffi::nvenc_av1_supported() {
+                VideoCodec::AV1
+            } else {
+                VideoCodec::H264
+            };
+            Some((codec, VideoEncoderBackend::Nvenc))
+        } else if have.contains(&VideoEncoderBackend::Vaapi) {
+            Some((VideoCodec::H264, VideoEncoderBackend::Vaapi))
+        } else {
+            None
+        }
     })
 }
 
-/// Nvidia if any hardware DXGI adapter is one, since NVENC runs on the CUDA
-/// device whichever adapter drives the display (hybrid laptops list the iGPU
-/// first). Windows has no VAAPI, so other vendors don't matter here.
-#[cfg(windows)]
-fn gpu_vendor() -> Option<u32> {
-    use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
-    };
-    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }.ok()?;
-    (0..)
-        .map_while(|i| unsafe { factory.EnumAdapters1(i) }.ok())
-        .filter_map(|a| unsafe { a.GetDesc1() }.ok())
-        .filter(|d| d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0)
-        .any(|d| d.VendorId == 0x10de)
-        .then_some(0x10de)
+/// What [`Encoder::Auto`] encodes with here, for the settings page. Blocks
+/// on the first call while the GPU is probed.
+pub fn hardware_encoder() -> Option<&'static str> {
+    hardware().map(|hw| match hw {
+        (VideoCodec::AV1, _) => "NVIDIA NVENC, AV1",
+        (_, VideoEncoderBackend::Nvenc) => "NVIDIA NVENC, H.264",
+        _ => "VAAPI, H.264",
+    })
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
-fn gpu_vendor() -> Option<u32> {
-    None
+/// The codec and encoder a share asks for. The SDK falls back to software if
+/// it can't open that encoder after all; [`log_encoder`] says which ran.
+///
+/// For debugging, `IRCHAD_SCREEN_ENCODER=software|vaapi|nvenc` overrides the
+/// backend (keeping the codec).
+fn codec(choice: Encoder) -> (VideoCodec, VideoEncoderBackend) {
+    let software = (VideoCodec::H264, VideoEncoderBackend::Software);
+    let (codec, backend) = match choice {
+        Encoder::Auto => hardware().unwrap_or(software),
+        Encoder::Compatible => hardware().map_or(software, |(_, b)| (VideoCodec::H264, b)),
+        Encoder::Software => software,
+    };
+    let backend = match std::env::var("IRCHAD_SCREEN_ENCODER").as_deref() {
+        Ok("software") => VideoEncoderBackend::Software,
+        Ok("nvenc") => VideoEncoderBackend::Nvenc,
+        Ok("vaapi") => VideoEncoderBackend::Vaapi,
+        _ => backend,
+    };
+    (codec, backend)
 }
 
 /// Logs which encoder libwebrtc actually picked, once it's running.

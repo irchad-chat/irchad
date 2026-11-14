@@ -78,6 +78,7 @@ docs/
   `cargo clippy -q -p <crate> --all-targets --message-format=short`, `cargo test -q -p <crate>`. Building `chad-media` examples needs clang ≥ 21 (webrtc-sys) and PipeWire headers.
 - Run the client: `cargo run -p chad-desktop` (binary `irchad`)
 - Windows NVENC: set `CUDA_HOME` to the output of `powershell -ExecutionPolicy Bypass -File scripts\cuda-headers.ps1` before building. Without it, webrtc-sys builds without NVENC and a cargo warning says so.
+  On Linux, NVENC is built when `$CUDA_HOME/include/cuda.h` exists (default `/usr/local/cuda`; Arch/Gentoo put it in `/opt/cuda`).
   `cargo run -p chad-media --example encoder_check` shows which encoder actually runs, no server needed.
 - Screenshots of the UI (to check visual changes): `cargo test -p chad-desktop shots -- --nocapture` renders the real `App` headless and writes `target/shots/*.png`.
   To add a scenario, put a test in `crates/chad-desktop/src/shots.rs` that drives the UI through accesskit (`get_by_label(..).click()`) and then calls `shot("name")`.

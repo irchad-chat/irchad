@@ -465,10 +465,10 @@ impl App {
             .show(ctx, |ui| {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
-                        ui.set_width(110.0);
+                        ui.set_width(120.0);
                         for &s in settings::Section::ALL {
                             let r = ui.add_sized(
-                                [110.0, 24.0],
+                                [120.0, 24.0],
                                 egui::Button::selectable(self.settings_section == s, s.name()),
                             );
                             if r.clicked() {

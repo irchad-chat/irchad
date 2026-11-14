@@ -73,6 +73,9 @@ pub mod ffi {
 
         fn create_random_uuid() -> String;
         fn video_encoder_backend_list() -> Vec<VideoEncoderBackend>;
+        // irchad: whether NVENC encodes AV1 (Ada and later), which the merged
+        // codec list can't tell apart from libaom.
+        fn nvenc_av1_supported() -> bool;
         fn new_log_sink(fnc: fn(String, LoggingSeverity)) -> UniquePtr<LogSink>;
     }
 }

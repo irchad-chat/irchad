@@ -27,7 +27,13 @@ While you share:
 - **Preview** shows your share as others see it,
 - **Stop sharing** ends it.
 
-IrChad uses your graphics card to encode video when it can (Linux, on AMD, Intel and Nvidia), which keeps games smooth while you share.
+IrChad uses your graphics card to encode video when it can (Nvidia on Linux and Windows, AMD and Intel on Linux), which keeps games smooth while you share. **Settings → Screen Sharing** shows which encoder it found, and sets the default quality options.
+
+| Encoder | When to pick it |
+|---|---|
+| Automatic | The default: the best your graphics card can do. Newer Nvidia cards (RTX 40 and later) send AV1, everything else sends H.264. |
+| Best compatibility (H.264) | Viewers watching a [public link](/docs/voice#streaming-to-a-public-link) in a browser that won't play AV1, or viewers on slower machines. H.264 is lighter for them to decode. |
+| Software | The share stutters or won't start with your graphics card. This uses a lot more CPU. |
 
 ## Camera
 

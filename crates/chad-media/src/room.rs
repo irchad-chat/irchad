@@ -72,6 +72,26 @@ impl Call {
     }
 }
 
+/// Rooms still closing in the background, for [`wait_closed`].
+static CLOSING: std::sync::Mutex<Vec<JoinHandle<()>>> = std::sync::Mutex::new(Vec::new());
+
+/// Keeps a background room close for [`wait_closed`].
+pub(crate) fn closing(task: JoinHandle<()>) {
+    let mut c = lock(&CLOSING);
+    c.retain(|t| !t.is_finished());
+    c.push(task);
+}
+
+/// Waits for the rooms that calls, shares and viewers were closing as they
+/// dropped. Call this before the process exits: exiting with a peer
+/// connection still on NVENC/NVDEC hangs in libnvcuvid's exit handler.
+pub async fn wait_closed() {
+    let tasks = std::mem::take(&mut *lock(&CLOSING));
+    for t in tasks {
+        let _ = t.await;
+    }
+}
+
 impl Drop for Call {
     fn drop(&mut self) {
         self.task.abort();
@@ -90,9 +110,9 @@ impl Drop for Call {
             shared.play_cue(Cue::Leave);
         }
         let room = self.room.clone();
-        tokio::spawn(async move {
+        closing(tokio::spawn(async move {
             let _ = room.close().await;
-        });
+        }));
         // Keep the speakers open until the leave chime has played.
         let voice = self.voice.clone();
         tokio::spawn(async move {
@@ -541,9 +561,9 @@ impl Drop for Viewer {
         self.shared.remove_sources(VIEWER_KEY);
         *lock(&self.shared.screen) = None;
         let room = self.room.clone();
-        tokio::spawn(async move {
+        closing(tokio::spawn(async move {
             let _ = room.close().await;
-        });
+        }));
     }
 }
 

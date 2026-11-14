@@ -9,14 +9,15 @@
 //! ```
 //!
 //! Env: LIVEKIT_URL (default wss://localhost:8443/livekit), CHECK_SECS (10),
-//! PRESET (720p30 | 1080p60 | source), ROOM (`screen-check`; a channel's
-//! voice room, e.g. `#dev`, puts the share in front of another client).
+//! PRESET (720p30 | 1080p60 | source), ENCODER (auto | compatible | software),
+//! ROOM (`screen-check`; a channel's voice room, e.g. `#dev`, puts the share in
+//! front of another client).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use chad_media::{Preset, ScreenSettings, Target, Voice};
+use chad_media::{Encoder, Preset, ScreenSettings, Target, Voice};
 use livekit_api::access_token::{AccessToken, VideoGrants};
 
 #[tokio::main]
@@ -50,6 +51,11 @@ async fn main() -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)?;
     let settings = ScreenSettings {
         preset,
+        encoder: match std::env::var("ENCODER").as_deref() {
+            Ok("compatible") => Encoder::Compatible,
+            Ok("software") => Encoder::Software,
+            _ => Encoder::Auto,
+        },
         ..Default::default()
     };
     sharer
@@ -125,6 +131,8 @@ async fn main() -> anyhow::Result<()> {
 
     viewer.watch(None);
     sharer.stop_share();
+    drop((_a, _b));
+    chad_media::wait_closed().await;
     Ok(())
 }
 

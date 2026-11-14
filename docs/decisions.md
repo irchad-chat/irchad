@@ -545,3 +545,17 @@ If the SDK gains backup codecs, publish AV1 with H.264 as the backup and drop th
 - **Receiving.** An `INVITE` addressed to us (`invite-notify` also shows ops others' invites, which are ignored) for a valid channel we aren't in becomes `Event::Invite`. Blocked senders are dropped. Desktop and web show a card with **Join**/**Dismiss**: one per channel, the newest three (D14). Join is `JoinMeeting` for a meeting, `JoinChannel` otherwise. Desktop also sends a system notification when unfocused.
 - **No chadd, no tags.** Plain IRC clients send and receive the same INVITE, so there's nothing IrChad-only.
 - **Known limits.** Android and iOS send invites but don't show received ones yet. An invite that arrives while offline is lost (ergo doesn't replay INVITE).
+
+## D92: The screen-share encoder is chosen by libwebrtc's probes (2026-11-14)
+Supersedes D23 and the DXGI probe in D89. Picking by the first render node's vendor sent a hybrid AMD + Nvidia desktop to VAAPI on the iGPU, which `LIBVA_DRIVER_NAME=nvidia` (decode-only nvidia-vaapi-driver) then broke, so shares silently ran OpenH264 at about 37 fps from a 4K source.
+Now `VideoEncoderBackend::list_available()` decides, since it probes the real encoders:
+- NVENC if present: AV1 when NVENC can encode it (Ada and later), H.264 otherwise. A pre-Ada card asked for AV1 would get libaom in software, and the merged codec list can't tell the two apart, so the vendored webrtc-sys gains `nvenc_av1_supported()`.
+- Otherwise VAAPI (Linux) as H.264.
+- Otherwise H.264 in software (OpenH264). This used to be VP9, but H.264 is the one codec every viewer can decode in hardware (NVDEC, browsers), and every browser plays it.
+The probe runs once, on first use and not at startup, because NVENC's probe wakes the GPU.
+**Settings → Screen Sharing → Encoder** offers Automatic (the order above), Best compatibility (H.264 on the GPU encoder, else on the CPU) and Software (H.264 on the CPU). A hybrid laptop on battery, a viewer whose browser won't take AV1 (D90), and a misbehaving GPU encoder each have a way out without environment variables. The page says which GPU encoder was found.
+The desktop client unsets `LIBVA_DRIVER_NAME=nvidia` at startup, before any thread exists, so libva picks each node's own driver.
+Linux release builds get NVENC: the CI image carries `cuda.h` from NVIDIA's cuda_cudart redist (as Windows does, D89). libcuda and libnvcuvid are dlopened, so the binary still runs without Nvidia.
+`IRCHAD_SCREEN_ENCODER=software|vaapi|nvenc` overrides the backend, for debugging.
+A process that exits while a peer connection is still on NVENC/NVDEC hangs in libnvcuvid's exit handler. Calls, shares and viewers close their rooms in the background as they drop, so `chad_media::wait_closed()` waits for those closes, and the desktop client calls it (with a 3 s cap) before it exits.
+Hybrid laptops now encode on the dGPU when NVENC exists. That costs battery if the dGPU was asleep, but a shared game is usually rendering there anyway.
