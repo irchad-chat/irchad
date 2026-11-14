@@ -94,6 +94,9 @@ docs/
 - `App` (`chad-desktop/src/app.rs`) and `Net` (`chad-core/src/net.rs`) keep their `impl` split by concern across `app/*.rs` and `net/*.rs`.
   Put new methods in the matching file. Still find the spot with grep or the LSP rather than reading whole files.
 - Prefer the LSP (go-to-definition, find-references, hover) over reading files to trace types and callers.
+- `vendor/webrtc-sys` is a vendored third-party crate (D89): about 280 files and 250k lines of C++, generated bindings and assembly.
+  Don't search or read it unless the task is about webrtc-sys itself, such as NVENC, the encoder factories or re-vendoring.
+  Scope searches to `crates/` (or the relevant dir) so it stays out of the results. Our changes are listed in `vendor/README.md` and marked `irchad:` in the source.
 
 ## Conventions
 
