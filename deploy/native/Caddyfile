@@ -9,6 +9,10 @@
 	handle /invite* {
 		reverse_proxy 127.0.0.1:8080
 	}
+	# Meeting links (D86).
+	handle /meet/* {
+		reverse_proxy 127.0.0.1:8080
+	}
 	handle /api/* {
 		# Uploads are capped by chadd's uploads.max_bytes.
 		# chadd takes bearer tokens, never cookies, so any page may call it:

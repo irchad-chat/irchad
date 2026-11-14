@@ -121,6 +121,27 @@ impl Client {
     }
 }
 
+impl Client {
+    /// A LiveKit token for `channel`'s call: with our session, or as `guest`
+    /// (our nick) for a meeting (D86).
+    pub async fn voice_token(
+        &self,
+        channel: &str,
+        guest: Option<&str>,
+    ) -> Result<VoiceTokenResponse, String> {
+        if let Some(name) = guest {
+            return meeting_token(&self.api, channel, name)
+                .await
+                .map_err(Error::message);
+        }
+        self.call(|api, t| {
+            let channel = channel.to_owned();
+            async move { voice_token(&api, &t, &channel).await }
+        })
+        .await
+    }
+}
+
 pub async fn login(api: &Url, account: &str, password: &str) -> Result<Session, Error> {
     let req = LoginRequest {
         account: account.to_owned(),
@@ -199,6 +220,35 @@ pub async fn voice_token(
         channel: channel.to_owned(),
     };
     post(api, chadd::VOICE_TOKEN, Some(session), &req).await
+}
+
+/// A guest's token for a meeting's call (D86): no session, just the link.
+pub async fn meeting_token(
+    api: &Url,
+    channel: &str,
+    name: &str,
+) -> Result<VoiceTokenResponse, Error> {
+    let req = chad_proto::meeting::MeetingTokenRequest {
+        channel: channel.to_owned(),
+        name: name.to_owned(),
+    };
+    post(api, chadd::MEETING_TOKEN, None, &req).await
+}
+
+/// Starts a meeting (D86).
+pub async fn create_meeting(
+    api: &Url,
+    session: &str,
+) -> Result<chad_proto::meeting::CreateMeetingResponse, Error> {
+    let r: chad_proto::meeting::CreateMeetingResponse =
+        post(api, chadd::MEETING, Some(session), &()).await?;
+    // Server input (D14): it must name a meeting channel.
+    if !chad_proto::meeting::is_meeting(&r.channel) {
+        return Err(Error::Other(
+            "The server sent something odd. Try again later.".into(),
+        ));
+    }
+    Ok(r)
 }
 
 /// Uploads a file; the URL it's served at.

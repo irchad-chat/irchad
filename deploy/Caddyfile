@@ -15,6 +15,10 @@
 	handle /invite* {
 		reverse_proxy {args[1]}:8080
 	}
+	# Meeting links (D86).
+	handle /meet/* {
+		reverse_proxy {args[1]}:8080
+	}
 	handle /api/* {
 		# chadd takes bearer tokens, never cookies, so any page may call it:
 		# the web client in dev (Vite's origin) or served from elsewhere.

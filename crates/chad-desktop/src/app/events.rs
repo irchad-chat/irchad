@@ -115,6 +115,17 @@ impl App {
                 let name = self.net_name(&network);
                 self.toast(format!("{name}: {error}"));
             }
+            Event::MeetingCreated { network, result } => match result {
+                Ok((channel, url)) => {
+                    ctx.copy_text(url.to_string());
+                    self.toast("Meeting link copied. Anyone with it can join.".into());
+                    if let Some(i) = self.net_idx(&network) {
+                        select(&mut self.view.nets[i], &key(&channel));
+                    }
+                    self.send(&network, NetCommand::JoinMeeting { channel, new: true });
+                }
+                Err(e) => self.toast(format!("Couldn't start a meeting: {e}")),
+            },
             Event::Uploaded {
                 network,
                 target,

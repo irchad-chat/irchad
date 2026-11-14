@@ -276,6 +276,7 @@ pub fn discovered(net: &mut Net, d: &Discovery, guest: bool) {
         .filter(|_| !guest)
         .map(|g| g.provider.chars().take(40).collect());
     net.info.games = d.chadd.games && !guest;
+    net.info.meetings = d.chadd.meetings && !guest;
     net.info.emoji = d.chadd.emoji;
 }
 
@@ -319,6 +320,7 @@ mod tests {
                 uploads: None,
                 gifs: None,
                 games: false,
+                meetings: false,
                 emoji: false,
                 receipts: false,
                 lag_ms: None,

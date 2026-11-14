@@ -119,6 +119,65 @@ fn guests_get_no_voice() {
     );
 }
 
+const MEET: &str = "#meet-0123456789abcdefghijklmnopqrstuv0123";
+
+#[test]
+fn guests_get_voice_in_meetings() {
+    let mut n = net();
+    attach(&mut n, &["#dev", MEET]);
+    n.guest = true;
+    n.command(NetCommand::JoinVoice {
+        channel: MEET.into(),
+    });
+    assert_eq!(n.voice_request.take().as_deref(), Some(MEET));
+}
+
+#[test]
+fn meetings_join_their_call_and_hanging_up_leaves() {
+    let mut n = net();
+    attach(&mut n, &["#dev"]);
+    out(&mut n);
+    n.command(NetCommand::JoinMeeting {
+        channel: "#dev".into(),
+        new: true,
+    });
+    assert!(out(&mut n).is_empty(), "not a meeting");
+
+    n.command(NetCommand::JoinMeeting {
+        channel: MEET.into(),
+        new: true,
+    });
+    assert_eq!(out(&mut n), [format!("JOIN {MEET}")]);
+    feed(&mut n, &format!(":bob!u@h JOIN {MEET} bob :bob"));
+    assert!(out(&mut n).contains(&format!("MODE {MEET} +s")));
+    assert_eq!(n.voice_request.take().as_deref(), Some(MEET));
+    n.voice_connected();
+    out(&mut n);
+
+    // Switching calls leaves the meeting; so does hanging up.
+    n.command(NetCommand::JoinVoice {
+        channel: "#dev".into(),
+    });
+    assert!(out(&mut n).contains(&format!("PART {MEET}")));
+    n.command(NetCommand::LeaveVoice);
+    assert!(!out(&mut n).iter().any(|l| l.starts_with("PART")));
+
+    // Joining someone else's: no +s, and a dropped call keeps the chat.
+    n.command(NetCommand::JoinMeeting {
+        channel: MEET.into(),
+        new: false,
+    });
+    feed(&mut n, &format!(":bob!u@h JOIN {MEET} bob :bob"));
+    assert!(!out(&mut n).iter().any(|l| l.starts_with("MODE")));
+    n.voice_ended(Some("Lost the voice connection.".into()));
+    assert!(!out(&mut n).iter().any(|l| l.starts_with("PART")));
+    n.command(NetCommand::JoinVoice {
+        channel: MEET.into(),
+    });
+    n.command(NetCommand::LeaveVoice);
+    assert!(out(&mut n).contains(&format!("PART {MEET}")));
+}
+
 #[test]
 fn profiles_and_away() {
     let mut n = net();

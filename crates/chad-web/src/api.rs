@@ -95,6 +95,29 @@ impl Client {
         })
     }
 
+    /// Start a meeting (D86) and join it. Resolves with its channel and the
+    /// link to hand out; join its call once the channel shows up.
+    #[wasm_bindgen(
+        js_name = createMeeting,
+        unchecked_return_type = "Promise<{ channel: string, url: string }>"
+    )]
+    pub fn create_meeting(&self) -> js_sys::Promise {
+        self.chadd(move |client, w| async move {
+            let r = client
+                .call(|api, t| async move { chadd::create_meeting(&api, &t).await })
+                .await?;
+            if let Some(rc) = w.upgrade() {
+                run(&rc, |i, _| {
+                    i.command(NetCommand::JoinMeeting {
+                        channel: r.channel.clone(),
+                        new: true,
+                    });
+                });
+            }
+            Ok(to_js(&r))
+        })
+    }
+
     /// Ask for the custom emoji again, as when a picker opens.
     #[wasm_bindgen(js_name = refreshEmoji)]
     pub fn refresh_emoji(&self) {
@@ -152,4 +175,16 @@ fn emoji(i: &Inner, client: &Rc<chadd::Client>, w: &W) {
             });
         }
     });
+}
+
+/// The channel of a meeting link's code, or `undefined` if it isn't one.
+#[wasm_bindgen(js_name = meetingChannel)]
+pub fn meeting_channel(code: &str) -> Option<String> {
+    chad_proto::meeting::channel_of(code)
+}
+
+/// Whether a channel is a meeting's (D86).
+#[wasm_bindgen(js_name = isMeeting)]
+pub fn is_meeting(channel: &str) -> bool {
+    chad_proto::meeting::is_meeting(channel)
 }

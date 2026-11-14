@@ -2,6 +2,12 @@
 port: 7880
 log_level: info
 
+# A meeting (D86) or voice channel's room closes this long after the last one
+# leaves (departure) or if nobody ever joins (empty). LiveKit's defaults.
+room:
+  empty_timeout: 300
+  departure_timeout: 20
+
 rtc:
   # ICE over TCP fallback, and the UDP range for media. Both are published by
   # compose. Media goes direct to these ports, not through Caddy.

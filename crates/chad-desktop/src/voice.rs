@@ -108,6 +108,11 @@ pub fn panel(
             }
         });
     });
+    let channel = if chad_core::meeting::is_meeting(channel) {
+        "Meeting"
+    } else {
+        channel
+    };
     ui.label(
         RichText::new(format!("{channel} · {network}"))
             .small()

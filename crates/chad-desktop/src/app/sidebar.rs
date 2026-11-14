@@ -179,6 +179,9 @@ impl App {
                             error: None,
                         });
                     }
+                    if self.view.nets[ni].info.meetings && ui.button("New meeting").clicked() {
+                        self.send(&network, NetCommand::CreateMeeting);
+                    }
                     if ui.button("Browse channels…").clicked() {
                         self.browse = Some(ChannelBrowser::new(network.clone()));
                         self.send(&network, NetCommand::ListChannels);
@@ -355,8 +358,10 @@ impl App {
                     let n = &mut self.view.nets[ni];
                     for b in n.buffers.iter().filter(|b| b.info.kind == kind) {
                         let selected = n.ui.selected.as_deref() == Some(&b.key);
+                        let meeting = chad_core::meeting::code_of(&b.info.target);
                         let name = match kind {
                             BufferKind::Dm => chatlog::shown(&n.profiles, &b.info.target),
+                            _ if meeting.is_some() => "Meeting",
                             BufferKind::Channel | BufferKind::Server => &b.info.target,
                         };
                         let mut text = RichText::new(name);
@@ -368,6 +373,10 @@ impl App {
                         // The name truncates, not the DM dot pushed in front of it.
                         let mut atoms = egui::Atoms::new(egui::AtomExt::atom_shrink(text, true));
                         let mut tip = None;
+                        if meeting.is_some() {
+                            atoms.push_left(RichText::new(icons::VIDEO_CAMERA));
+                            tip = Some(b.info.target.clone());
+                        }
                         if kind == BufferKind::Dm {
                             let (dot, color, t) = match (b.info.online, b.info.away) {
                                 (Some(true), false) => ("●", voice::ONLINE, "Online"),
@@ -425,6 +434,11 @@ impl App {
                             BufferKind::Channel => {
                                 if b.info.voice && !in_call && ui.button("Join voice").clicked() {
                                     join_voice = Some(b.info.target.clone());
+                                }
+                                if let Some(code) = &meeting
+                                    && ui.button("Copy meeting link").clicked()
+                                {
+                                    ui.ctx().copy_text(format!("{network}/meet/{code}"));
                                 }
                                 let mut shown = self.settings.overlay.shows(&network, &b.key);
                                 if ui

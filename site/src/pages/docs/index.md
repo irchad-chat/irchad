@@ -16,6 +16,7 @@ You don't need to know anything else to use it. Start with [Getting started](/do
 | [Getting started](/docs/getting-started) | Install, join a network from an invite link, make an account |
 | [Chat](/docs/chat) | Channels, DMs, replies, reactions, uploads, GIFs, notifications, your profile |
 | [Voice](/docs/voice) | Voice channels, push to talk, whisper, the soundboard |
+| [Meetings](/docs/meetings) | A call anyone can join from a link, no account needed |
 | [Screen share and camera](/docs/screen-share) | Sharing a screen or window with sound, and watching |
 | [Game overlay](/docs/game-overlay) | Voice and messages over the game you're playing, and its show/hide shortcut |
 | [Encrypted DMs](/docs/encrypted-dms) | What's encrypted, and how to verify someone |

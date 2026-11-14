@@ -5,7 +5,7 @@ description: "Voice channels in IrChad: joining, push to talk, whisper, the soun
 order: 3
 ---
 
-Every channel has a voice room. You need an [account](/docs/getting-started#guest-or-account) to use it. Guests can't join voice.
+Every channel has a voice room. You need an [account](/docs/getting-started#guest-or-account) to use it. Guests can't join voice, except in a [meeting](/docs/meetings).
 
 ## Joining and leaving
 

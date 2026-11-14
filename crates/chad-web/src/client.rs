@@ -112,6 +112,7 @@ impl Client {
             uploads: None,
             gifs: None,
             games: false,
+            meetings: false,
             emoji: false,
             receipts: false,
             lag_ms: None,
@@ -307,6 +308,15 @@ impl Client {
                 Err(JsError::new("That's not a channel or a nick."))
             }
         })
+    }
+
+    /// Join someone's meeting (D86); its call follows once we're in.
+    #[wasm_bindgen(js_name = joinMeeting)]
+    pub fn join_meeting(&self, channel: String) {
+        self.cmd(NetCommand::JoinMeeting {
+            channel,
+            new: false,
+        });
     }
 
     /// Leave a channel (on every device: always-on).

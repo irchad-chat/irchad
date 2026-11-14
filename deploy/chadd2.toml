@@ -12,6 +12,12 @@ home = "#general"
 api = "http://ergo2:8089"
 token = "chad-dev-api-token"
 
+# Meetings guests join from a link, no account (D86). Leave out to turn off.
+# The secret signs the links; changing it ends every link handed out.
+[meetings]
+secret = "chad-dev-meeting-secret-0123456789abcdef"
+ttl_hours = 24
+
 [livekit]
 key = "devkey"
 secret = "chad-dev-livekit-secret-0123456789abcdef"

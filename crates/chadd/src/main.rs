@@ -12,6 +12,7 @@ mod fetch;
 mod files;
 mod games;
 mod gifs;
+mod meeting;
 mod routes;
 mod sounds;
 

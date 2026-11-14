@@ -60,6 +60,14 @@ impl Net {
                 });
             }
             NetCommand::LeaveVoice => self.voice_ended(None),
+            // `conn` runs it while connected.
+            NetCommand::CreateMeeting => {
+                let network = self.id();
+                self.events.push(Event::MeetingCreated {
+                    network,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
             NetCommand::SetAway { message } => {
                 let message = message.map(|m| truncate(m.trim(), 200).to_owned());
                 // AWAY with an empty reason would mean "back".
@@ -219,6 +227,20 @@ impl Net {
             }
             NetCommand::RemoveDevice { id } => self.remove_device(&id),
             NetCommand::JoinChannel { channel } => self.out.push(Message::new("JOIN", [channel])),
+            NetCommand::JoinMeeting { channel, new } => {
+                if self.classic() || !chad_proto::meeting::is_meeting(&channel) {
+                    return self.error("That isn't a meeting.");
+                }
+                let key = self.fold(&channel);
+                // Already in (back after a drop, or a second link click): just the call.
+                if self.joined.contains(&key) {
+                    return self.join_voice(&channel);
+                }
+                if self.meeting_joins.len() < 16 {
+                    self.meeting_joins.insert(key, new);
+                }
+                self.out.push(Message::new("JOIN", [channel]));
+            }
             NetCommand::ListChannels => {
                 self.send_labeled(Message::new("LIST", [""; 0]), Pending::Browse)
             }

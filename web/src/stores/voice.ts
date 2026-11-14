@@ -3,6 +3,8 @@
 // desktop's rules (chad-media's room.rs): auto-subscribe off, microphones and
 // the soundboard always, a screen share and its audio or a camera only while
 // it's watched, and the `watching` attribute for the sharer's count (D22).
+// A meeting (D86) is different: everyone's camera and screen are on the grid,
+// so all of them are subscribed, and guests show by their LiveKit name.
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import {
@@ -16,6 +18,7 @@ import {
   Track,
 } from 'livekit-client'
 import { message, useClient } from './client'
+import { isMeeting } from '../wasm/chad_web'
 
 // D14: the SFU decides who's in the room, so cap what we hold of it.
 const MAX_PARTICIPANTS = 500
@@ -35,6 +38,9 @@ export type Person = {
   camera: boolean
   /** Who watches their screen share, us included. */
   watchers: number
+  /** Their camera and screen share, once subscribed: in a meeting, always. */
+  cameraTrack: VideoTrack | null
+  screenTrack: VideoTrack | null
 }
 export type Watched = { identity: string; camera: boolean }
 
@@ -48,6 +54,11 @@ export const useVoice = defineStore('voice', () => {
   let gen = 0
   const people = shallowRef<Person[]>([])
   const muted = ref(false)
+  // Publishing our camera or screen.
+  const camera = ref(false)
+  const screen = ref(false)
+  // A join under way: its channel, so a second one for it isn't started.
+  let joining: string | null = null
   const deafened = ref(false)
   const watching = ref<Watched | null>(null)
   // The video on the stage: the watched share or camera, once it arrives.
@@ -59,7 +70,11 @@ export const useVoice = defineStore('voice', () => {
   audio.hidden = true
   document.body.append(audio)
 
-  function shown(identity: string): string {
+  const meeting = computed(() => !!call.value && isMeeting(call.value.channel))
+
+  function shown(p: Participant, identity: string): string {
+    // A guest's name is theirs to pick, so it's marked as such (D86).
+    if (identity.startsWith('guest:')) return `${short(p.name || 'Guest')} (guest)`
     // shortcut: ASCII-only account match, as desktop's nick_of; else the account itself.
     const m = client.callMembers?.find((m) => m.account?.toLowerCase() === identity.toLowerCase())
     return m?.shown ?? identity
@@ -74,9 +89,9 @@ export const useVoice = defineStore('voice', () => {
         return pub.kind === Track.Kind.Audio && EXTRA_AUDIO.includes(pub.trackName)
       case Track.Source.ScreenShare:
       case Track.Source.ScreenShareAudio:
-        return w?.identity === identity && !w.camera
+        return meeting.value || (w?.identity === identity && !w.camera)
       case Track.Source.Camera:
-        return w?.identity === identity && w.camera
+        return meeting.value || (w?.identity === identity && w.camera)
     }
     return false
   }
@@ -121,17 +136,20 @@ export const useVoice = defineStore('voice', () => {
     }
     const w = watching.value
     if (w && !w.camera && w.identity !== localId) counts.set(w.identity, (counts.get(w.identity) ?? 0) + 1)
+    const video = (p: Participant, s: Track.Source) => (p.getTrackPublication(s)?.videoTrack as VideoTrack | undefined) ?? null
     const person = (p: Participant, isLocal: boolean): Person => {
       const identity = short(p.identity)
       return {
         identity,
-        shown: shown(identity),
+        shown: shown(p, identity),
         local: isLocal,
         speaking: p.isSpeaking,
         muted: isLocal ? muted.value : !p.isMicrophoneEnabled,
         screen: !!p.getTrackPublication(Track.Source.ScreenShare),
         camera: !!p.getTrackPublication(Track.Source.Camera),
         watchers: counts.get(identity) ?? 0,
+        cameraTrack: video(p, Track.Source.Camera),
+        screenTrack: video(p, Track.Source.ScreenShare),
       }
     }
     people.value = [person(local, true), ...remotes.map((p) => person(p, false))]
@@ -148,9 +166,18 @@ export const useVoice = defineStore('voice', () => {
   }
 
   async function join(channel: string) {
-    if (room && call.value?.channel === channel) return
+    if ((room && call.value?.channel === channel) || joining === channel) return
     disconnect()
     const g = ++gen
+    joining = channel
+    try {
+      await connect(channel, g)
+    } finally {
+      if (joining === channel) joining = null
+    }
+  }
+
+  async function connect(channel: string, g: number) {
     let join
     try {
       join = await client.joinVoice(channel)
@@ -170,6 +197,11 @@ export const useVoice = defineStore('voice', () => {
       .on(RoomEvent.TrackMuted, sync)
       .on(RoomEvent.TrackUnmuted, sync)
       .on(RoomEvent.LocalTrackPublished, sync)
+      .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+        // The browser's own "Stop sharing" button.
+        if (pub.source === Track.Source.ScreenShare) screen.value = false
+        sync()
+      })
       .on(RoomEvent.ActiveSpeakersChanged, sync)
       .on(RoomEvent.ParticipantAttributesChanged, sync)
       .on(RoomEvent.AudioPlaybackStatusChanged, () => (blocked.value = !r.canPlaybackAudio))
@@ -195,6 +227,7 @@ export const useVoice = defineStore('voice', () => {
     resubscribe()
     sync()
     await mic(!muted.value)
+    if (camera.value) await setCamera(true)
   }
 
   // Drops the room without telling chad-core.
@@ -203,6 +236,7 @@ export const useVoice = defineStore('voice', () => {
     const r = room
     room = null
     watching.value = null
+    screen.value = false
     blocked.value = false
     audio.replaceChildren()
     r?.disconnect()
@@ -221,6 +255,32 @@ export const useVoice = defineStore('voice', () => {
     } catch (err) {
       muted.value = true
       client.notify(`No microphone: ${message(err)}`)
+    }
+    sync()
+  }
+
+  // Before a join this only says whether to start with it on.
+  async function setCamera(on: boolean) {
+    camera.value = on
+    if (!room) return
+    try {
+      await room.localParticipant.setCameraEnabled(on)
+    } catch (err) {
+      camera.value = false
+      client.notify(`No camera: ${message(err)}`)
+    }
+    sync()
+  }
+
+  async function setScreen(on: boolean) {
+    if (!room) return
+    try {
+      await room.localParticipant.setScreenShareEnabled(on, { audio: true })
+      screen.value = on
+    } catch (err) {
+      screen.value = false
+      // Picking nothing in the browser's dialog isn't worth a notice.
+      if (!(err instanceof DOMException && err.name === 'NotAllowedError')) client.notify(`Couldn't share: ${message(err)}`)
     }
     sync()
   }
@@ -269,6 +329,8 @@ export const useVoice = defineStore('voice', () => {
   // The call ended in chad-core (IRC dropped, voice turned off, joined elsewhere).
   watch(call, (c) => {
     if (!c && room) disconnect()
+    // chad-core joined a meeting's call when its channel did (D86): run it.
+    else if (c && !c.connected && !room && isMeeting(c.channel)) void join(c.channel)
   })
   // Display names arrive with the member list.
   watch(() => client.callMembers, sync)
@@ -283,9 +345,14 @@ export const useVoice = defineStore('voice', () => {
     watching,
     stage,
     blocked,
+    camera,
+    screen,
+    meeting,
     join,
     leave,
     setMuted,
+    setCamera,
+    setScreen,
     setDeafened,
     watch: watch_,
     startAudio,

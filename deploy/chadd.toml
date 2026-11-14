@@ -17,6 +17,16 @@ discord_games = true
 api = "http://ergo:8089"
 token = "chad-dev-api-token"
 
+# Meetings guests join from a link, no account (D86). Leave out to turn off.
+# The secret signs the links; changing it ends every link handed out.
+# In dev the web client is Vite's (`cd web && pnpm dev`), not <origin>/chat/.
+[endpoints]
+web = "http://localhost:5173/"
+
+[meetings]
+secret = "chad-dev-meeting-secret-0123456789abcdef"
+ttl_hours = 24
+
 [livekit]
 key = "devkey"
 secret = "chad-dev-livekit-secret-0123456789abcdef"

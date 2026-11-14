@@ -10,13 +10,15 @@ import MemberList from './components/MemberList.vue'
 import Toasts from './components/Toasts.vue'
 import Stage from './components/Stage.vue'
 import AppNotice from './components/AppNotice.vue'
+import MeetingView from './components/MeetingView.vue'
 
 const client = useClient()
 const showMembers = ref(true)
 </script>
 
 <template>
-  <LoginForm v-if="!client.ready || client.state?.state === 'verifying'" />
+  <MeetingView v-if="client.meeting" />
+  <LoginForm v-else-if="!client.ready || client.state?.state === 'verifying'" />
   <div v-else class="app">
     <BufferList />
     <main class="chat">

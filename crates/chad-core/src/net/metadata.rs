@@ -15,7 +15,7 @@ impl Net {
         };
         let refuse = if self.classic() {
             Some("Voice isn't available on this network.".to_owned())
-        } else if self.guest {
+        } else if self.guest && !chad_proto::meeting::is_meeting(&b.name) {
             Some("Voice needs an account. Sign up to use it.".to_owned())
         } else if b.voice_off {
             Some(format!("Voice is turned off in {}.", b.name))
@@ -33,6 +33,7 @@ impl Net {
         {
             return;
         }
+        self.leave_meeting();
         self.voice = Some(Voice {
             channel: channel.clone(),
             connected: false,
@@ -56,11 +57,26 @@ impl Net {
         if self.voice_published {
             self.set_own_voice(None);
         }
+        // A dropped call keeps the chat, so there's something to rejoin from.
+        if error.is_none() {
+            self.leave_meeting();
+        }
         if self.voice.take().is_some() {
             self.emit_voice_state();
         }
         if let Some(e) = error {
             self.error(e);
+        }
+    }
+
+    /// A meeting is its call: hanging up leaves its channel too, or always-on
+    /// would keep it (and the link's chat) alive forever (D86).
+    fn leave_meeting(&mut self) {
+        if let Some(v) = &self.voice
+            && chad_proto::meeting::is_meeting(&v.channel)
+            && self.connected
+        {
+            self.out.push(Message::new("PART", [v.channel.as_str()]));
         }
     }
 

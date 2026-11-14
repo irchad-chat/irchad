@@ -10,11 +10,14 @@ import {
   type Member,
   type Msg,
   type NetState,
+  meetingChannel,
 } from '../wasm/chad_web'
 
 // Production serves the page from the network's own origin; dev sets it in .env.development.
 const NETWORK: string = import.meta.env.VITE_IRCHAD_NETWORK ?? location.origin
 const ORIGIN = new URL(NETWORK).origin
+// A meeting link's code (`?meet=`, from chadd's /meet page): this tab is that meeting (D86).
+const MEETING: string | null = meetingChannel(new URLSearchParams(location.search).get('meet') ?? '') ?? null
 // Proxied images kept as blob: URLs; past this the oldest are let go.
 const MAX_MEDIA = 300
 
@@ -160,6 +163,21 @@ export const useClient = defineStore('client', () => {
   const joinVoice = (channel: string) => client.joinVoice(channel)
   const voiceConnected = () => client.voiceConnected()
   const leaveVoice = (error: string | null) => client.leaveVoice(error)
+  // Meetings (D86): chad-core joins the call once the channel is joined.
+  function joinMeeting(channel: string) {
+    want = channel
+    client.joinMeeting(channel)
+  }
+  async function createMeeting(): Promise<string | null> {
+    try {
+      const m = await client.createMeeting()
+      want = m.channel
+      return m.url
+    } catch (err) {
+      notify(`Couldn't start a meeting: ${message(err)}`)
+      return null
+    }
+  }
 
   async function upload(file: File) {
     const target = selected.value
@@ -212,6 +230,7 @@ export const useClient = defineStore('client', () => {
 
   return {
     network: ORIGIN,
+    meeting: MEETING,
     state,
     buffers,
     buffer,
@@ -248,6 +267,8 @@ export const useClient = defineStore('client', () => {
     joinVoice,
     voiceConnected,
     leaveVoice,
+    joinMeeting,
+    createMeeting,
     upload,
     gifs,
     mediaUrl,

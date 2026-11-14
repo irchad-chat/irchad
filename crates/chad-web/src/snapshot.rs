@@ -26,6 +26,8 @@ export type NetState = {
   uploads: number | null;
   /** Who GIF search comes from, if the network has it. */
   gifs: string | null;
+  /** We can start meetings guests join from a link (D86). */
+  meetings: boolean;
   /** Our voice call: joining, then in. */
   call: { channel: string; connected: boolean } | null;
 };
@@ -85,6 +87,7 @@ struct State<'a> {
     guest: bool,
     uploads: Option<u64>,
     gifs: Option<&'a str>,
+    meetings: bool,
     call: Option<Call<'a>>,
 }
 
@@ -249,6 +252,7 @@ impl Client {
             guest: info.guest,
             uploads: info.uploads,
             gifs: info.gifs.as_deref(),
+            meetings: info.meetings,
             call: i.net.voice.as_ref().map(|v| Call {
                 channel: &v.channel,
                 connected: v.connected,

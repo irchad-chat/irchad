@@ -207,6 +207,7 @@ fn spawn_with(
         uploads: None,
         gifs: None,
         games: false,
+        meetings: false,
         emoji: false,
         receipts: false,
         lag_ms: None,

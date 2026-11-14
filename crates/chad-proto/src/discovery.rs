@@ -46,6 +46,10 @@ pub struct Chadd {
     /// (`POST <api>/account/delete`) and serves `POST <api>/redacted` (D69).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub delete: bool,
+    /// Set when members can start meetings guests join from a link
+    /// (`POST <api>/meeting`, D86).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub meetings: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -216,6 +216,8 @@ pub struct Net {
     pub voice: Option<Voice>,
     /// A `JoinVoice` was accepted: `conn` takes this and fetches a token.
     pub voice_request: Option<String>,
+    /// Folded meeting channels we asked to join → whether we created them.
+    meeting_joins: HashMap<String, bool>,
     /// Our `chad/voice` is set (by this client).
     voice_published: bool,
     /// Folded nick → (nick, folded channel) from their `chad/voice`.
@@ -284,6 +286,7 @@ impl Net {
             who_wanted: HashSet::new(),
             voice: None,
             voice_request: None,
+            meeting_joins: HashMap::new(),
             voice_published: false,
             voice_of: HashMap::new(),
             profiles: HashMap::new(),

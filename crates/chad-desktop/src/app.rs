@@ -715,12 +715,16 @@ impl App {
                 if let Some(i) = self.net_idx(&inv.origin) {
                     self.current = Some(inv.origin.clone());
                     if let Some(ch) = inv.channel {
-                        self.send(
-                            &inv.origin,
-                            NetCommand::JoinChannel {
-                                channel: ch.clone(),
-                            },
-                        );
+                        let channel = ch.clone();
+                        let cmd = if chad_core::meeting::is_meeting(&ch) {
+                            NetCommand::JoinMeeting {
+                                channel,
+                                new: false,
+                            }
+                        } else {
+                            NetCommand::JoinChannel { channel }
+                        };
+                        self.send(&inv.origin, cmd);
                         select(&mut self.view.nets[i], &key(&ch));
                     }
                     return;

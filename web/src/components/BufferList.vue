@@ -6,6 +6,7 @@ import SignUpDialog from './SignUpDialog.vue'
 import VoiceMembers from './VoiceMembers.vue'
 import VoiceBar from './VoiceBar.vue'
 import { useVoice } from '../stores/voice'
+import { isMeeting } from '../wasm/chad_web'
 
 const client = useClient()
 const voice = useVoice()
@@ -17,6 +18,22 @@ const dms = computed(() => client.buffers.filter((b) => b.kind === 'dm'))
 function open() {
   if (!opening.value.trim()) return
   if (client.open(opening.value)) opening.value = ''
+}
+
+async function newMeeting() {
+  const url = await client.createMeeting()
+  if (!url) return
+  try {
+    await navigator.clipboard.writeText(url)
+    client.notify('Meeting link copied. Anyone with it can join.')
+  } catch {
+    client.notify(`Meeting link: ${url}`)
+  }
+}
+
+async function copyLink(channel: string) {
+  const url = `${client.network}/meet/${channel.slice('#meet-'.length).toLowerCase()}`
+  await navigator.clipboard.writeText(url).catch(() => client.notify(url))
 }
 
 const toggleAway = () => client.setAway(client.away ? null : 'Away')
@@ -42,8 +59,9 @@ const status = computed(() => {
         <div class="buf" :class="{ on: b.target === client.selected, unread: b.unread }">
           <button class="name" :title="b.topic" @click="client.select(b.target)">
             <span v-if="b.kind === 'dm'" class="dot" :class="{ online: b.online, away: b.away }" />
+            <i v-else-if="isMeeting(b.target)" class="ph ph-video-camera dim" />
             <span v-else class="dim">#</span>
-            <span class="ellipsis">{{ b.kind === 'channel' ? b.target.replace(/^#/, '') : b.target }}</span>
+            <span class="ellipsis">{{ isMeeting(b.target) ? 'Meeting' : b.kind === 'channel' ? b.target.replace(/^#/, '') : b.target }}</span>
             <span v-if="b.mentions" class="badge">{{ b.mentions }}</span>
           </button>
           <button
@@ -55,6 +73,15 @@ const status = computed(() => {
             @click="voice.join(b.target)"
           >
             <i class="ph ph-speaker-high" />
+          </button>
+          <button
+            v-if="isMeeting(b.target)"
+            class="join"
+            title="Copy meeting link"
+            :aria-label="`Copy the link to ${b.target}`"
+            @click="copyLink(b.target)"
+          >
+            <i class="ph ph-link" />
           </button>
           <button
             v-if="b.kind === 'dm'"
@@ -70,6 +97,9 @@ const status = computed(() => {
         </template>
       </template>
     </div>
+    <button v-if="client.state?.meetings" class="new-meeting" :disabled="!client.connected" @click="newMeeting">
+      <i class="ph ph-video-camera" /> New meeting
+    </button>
     <form @submit.prevent="open">
       <input v-model="opening" aria-label="Join a channel or message someone" placeholder="#channel or nick" />
     </form>
@@ -148,6 +178,9 @@ h3 {
 .join {
   background: none;
   border: none;
+}
+.new-meeting {
+  margin: 0 8px 8px;
 }
 .x {
   visibility: hidden;

@@ -36,7 +36,22 @@ pub fn parse(input: &str) -> Result<Invite, String> {
             }
             inner
         }
-        "https" => url,
+        "https" => {
+            // A meeting link (D86): `/meet/<code>` names its channel.
+            if let Some(ch) = url
+                .path()
+                .strip_prefix("/meet/")
+                .and_then(chad_proto::meeting::channel_of)
+            {
+                let mut origin = url.clone();
+                origin.set_path("/");
+                return Ok(Invite {
+                    origin: origin.origin().ascii_serialization(),
+                    channel: Some(ch),
+                });
+            }
+            url
+        }
         "ircs" | "irc" => {
             let host = url.host_str().filter(|h| !h.is_empty()).ok_or_else(bad)?;
             let tls = url.scheme() == "ircs";
@@ -90,6 +105,19 @@ mod tests {
             ok("chat.localhost:8443"),
             ("https://chat.localhost:8443".into(), None)
         );
+    }
+
+    #[test]
+    fn meeting_links_name_their_channel() {
+        let code = "0123456789abcdefghijklmnopqrstuv0123";
+        assert_eq!(
+            ok(&format!("https://chat.example.com/meet/{code}")),
+            (
+                "https://chat.example.com".into(),
+                Some(format!("#meet-{code}"))
+            )
+        );
+        assert_eq!(ok("https://chat.example.com/meet/nope").1, None);
     }
 
     #[test]

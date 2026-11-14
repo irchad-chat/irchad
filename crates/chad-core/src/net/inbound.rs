@@ -271,7 +271,14 @@ impl Net {
         if let Some(c) = self.invite_channel.take()
             && !self.joined.contains(&self.fold(&c))
         {
-            self.out.push(Message::new("JOIN", [c]));
+            if chad_proto::meeting::is_meeting(&c) {
+                self.command(NetCommand::JoinMeeting {
+                    channel: c,
+                    new: false,
+                });
+            } else {
+                self.out.push(Message::new("JOIN", [c]));
+            }
         }
 
         let keys: Vec<String> = self.buffers.keys().cloned().collect();

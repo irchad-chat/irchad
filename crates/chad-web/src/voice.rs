@@ -2,7 +2,7 @@
 //! runs the call itself with `livekit-client`. This only fetches the token and
 //! hears back how the call went, as `conn.rs` does for chad-media.
 
-use chad_core::{NetCommand, chadd};
+use chad_core::NetCommand;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
@@ -30,19 +30,15 @@ impl Client {
                 i.net.voice_ended(Some("You're offline right now.".into()));
                 return None;
             };
-            Some((channel, client, d.livekit.url.to_string()))
+            let guest = i.net.guest.then(|| i.net.info.nick.clone());
+            Some((channel, client, d.livekit.url.to_string(), guest))
         });
-        let Some((channel, client, url)) = start else {
+        let Some((channel, client, url, guest)) = start else {
             return js_sys::Promise::resolve(&JsValue::NULL);
         };
         let w = std::rc::Rc::downgrade(&self.inner);
         future_to_promise(async move {
-            let r = client
-                .call(|api, t| {
-                    let channel = channel.clone();
-                    async move { chadd::voice_token(&api, &t, &channel).await }
-                })
-                .await;
+            let r = client.voice_token(&channel, guest.as_deref()).await;
             let Some(rc) = w.upgrade() else {
                 return Ok(JsValue::NULL);
             };

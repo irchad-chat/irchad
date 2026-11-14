@@ -49,6 +49,23 @@ pub struct Config {
     pub discord_games: bool,
     /// Leave out to turn account deletion by chadd off; clients then only unregister.
     pub delete: Option<Delete>,
+    /// Leave out to turn meetings off (D86).
+    pub meetings: Option<Meetings>,
+}
+
+/// Meetings guests join from a link, with no account (D86).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Meetings {
+    /// Signs meeting codes. Changing it ends every link handed out.
+    pub secret: String,
+    /// How long a meeting link works.
+    #[serde(default = "default_meeting_hours")]
+    pub ttl_hours: u32,
+}
+
+fn default_meeting_hours() -> u32 {
+    24
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -230,6 +247,8 @@ pub struct Endpoints {
     pub irc_websocket: Option<Url>,
     pub chadd_api: Option<Url>,
     pub livekit: Option<Url>,
+    /// The web client, where meeting links send guests. Default `<origin>/chat/`.
+    pub web: Option<Url>,
 }
 
 fn default_listen() -> SocketAddr {
@@ -283,6 +302,17 @@ impl Config {
             config.livekit.secret.len() >= 32,
             "livekit.secret must be at least 32 characters"
         );
+        if let Some(m) = &config.meetings {
+            anyhow::ensure!(
+                m.secret.len() >= 32,
+                "meetings.secret must be at least 32 characters"
+            );
+            anyhow::ensure!(
+                (1..=24 * 30).contains(&m.ttl_hours),
+                "meetings.ttl_hours must be 1 to 720"
+            );
+        }
+        config.web()?;
         if let Some(g) = &config.gifs {
             anyhow::ensure!(
                 g.api.scheme() == "https" && !g.api.cannot_be_a_base(),
@@ -294,6 +324,14 @@ impl Config {
             );
         }
         Ok(())
+    }
+
+    /// The web client's URL, ending in `/`.
+    pub fn web(&self) -> anyhow::Result<Url> {
+        Ok(match &self.endpoints.web {
+            Some(u) => u.clone(),
+            None => self.origin.join("/chat/")?,
+        })
     }
 
     pub fn discovery(&self) -> anyhow::Result<Discovery> {
@@ -327,6 +365,7 @@ impl Config {
                 games: self.discord_games,
                 emoji: self.emoji.is_some(),
                 delete: self.delete.is_some(),
+                meetings: self.meetings.is_some(),
             },
             livekit: discovery::Livekit {
                 url: or(&self.endpoints.livekit, &ws_origin, "/livekit")?,

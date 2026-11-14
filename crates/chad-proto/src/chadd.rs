@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 pub const LOGIN: &str = "login";
 /// `POST <api>/voice/token`, with `Authorization: Bearer <session token>`.
 pub const VOICE_TOKEN: &str = "voice/token";
+/// `POST <api>/meeting` with a Bearer session token: a new meeting, as a
+/// [`crate::meeting::CreateMeetingResponse`] (D86).
+pub const MEETING: &str = "meeting";
+/// `POST <api>/meeting/token` with a [`crate::meeting::MeetingTokenRequest`],
+/// no auth: a guest's [`VoiceTokenResponse`] for a meeting's room (D86).
+pub const MEETING_TOKEN: &str = "meeting/token";
 /// `POST <api>/upload`: the file is the body, its name in `Content-Disposition`.
 /// Auth is a Bearer session token or HTTP Basic with the IRC account, so it
 /// doubles as the soju-style `draft/FILEHOST`. `201 Created` with `Location`

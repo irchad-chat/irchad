@@ -320,6 +320,7 @@ fn classic_discovery(origin: &str) -> Result<Discovery, String> {
             games: false,
             emoji: false,
             delete: false,
+            meetings: false,
         },
         livekit: proto_discovery::Livekit { url },
         registration: Registration::Closed,
@@ -477,7 +478,8 @@ async fn live(
         if let Some(channel) = net.voice_request.take() {
             call = None;
             if p.media.is_some() {
-                token = Some(tokio::spawn(voice_token(client.clone(), channel)));
+                let guest = p.guest.then(|| net.info.nick.clone());
+                token = Some(tokio::spawn(voice_token(client.clone(), channel, guest)));
             } else {
                 net.voice_ended(Some("Voice isn't available in this app.".into()));
             }
@@ -690,13 +692,13 @@ async fn init_e2e(net: &mut Net, p: &Params) {
 type TokenResult = (String, Result<VoiceTokenResponse, String>);
 
 /// A LiveKit token for `channel`.
-async fn voice_token(client: Arc<chadd::Client>, channel: String) -> TokenResult {
-    let r = client
-        .call(|api, t| {
-            let channel = channel.clone();
-            async move { chadd::voice_token(&api, &t, &channel).await }
-        })
-        .await;
+/// `guest` is our nick when we have no account: then only a meeting's call (D86).
+async fn voice_token(
+    client: Arc<chadd::Client>,
+    channel: String,
+    guest: Option<String>,
+) -> TokenResult {
+    let r = client.voice_token(&channel, guest.as_deref()).await;
     (channel, r)
 }
 
@@ -738,6 +740,15 @@ fn fetch(
                     target,
                     result,
                 }]);
+            });
+        }
+        NetCommand::CreateMeeting => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| async move { chadd::create_meeting(&api, &t).await })
+                    .await
+                    .map(|r| (r.channel, r.url));
+                sink.send([Event::MeetingCreated { network, result }]);
             });
         }
         NetCommand::Preview { url } => {

@@ -67,10 +67,12 @@ The same client also joins ordinary IRC networks (Libera, Rizon, EFnet, …) fro
 - ergo **always-on** clients plus multiclient give bouncer behavior for free: channels stay joined, and history is kept while offline.
   Always-on is the default (`accounts.multiclient.always-on: opt-out`, D11). The client logs in as `account@<device>`, treats the server's channel list as authoritative, and fills gaps with `CHATHISTORY AFTER` and `TARGETS`.
 - Credentials are stored per network in the OS secret store.
-- **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs.
+- **Guests** (D15) join with just a nickname: no SASL, no always-on, nothing stored. The client rejoins their channels on reconnect, and they miss what's said while away. No chadd session, so no voice, uploads or E2EE DMs, except a meeting's call (D86).
   A guest can sign up later from the network menu without leaving (D35).
 - **chadd session (D18):** the client POSTs the account and password to `chadd /api/login`. chadd checks them with ergo's `/v1/check_auth` and returns a 1 h signed session token.
   `POST /api/voice/token {channel}` with `Authorization: Bearer <session>` returns a 10 min LiveKit JWT. Its identity is the account, its room is the ASCII-lowercased channel, and it allows publishing the microphone, the camera, a screen share with its audio, and the soundboard and whisper tracks (source `unknown`, D37, D71).
+  **Meetings (D86):** `POST /api/meeting` (Bearer) returns a `#meet-<code>` channel and its `<origin>/meet/<code>` link. The code is HMAC-signed with an expiry, so chadd keeps no state.
+  `POST /api/meeting/token {channel, name}` needs no session: anyone holding a valid code gets a token for that room as `guest:<random>`, named as they asked. `GET /meet/<code>` is the link's page (web client or app).
   `POST /api/upload` (raw body, Bearer or HTTP Basic, also advertised as ISUPPORT `draft/FILEHOST`) stores a file (D26).
   `POST /api/preview` and `POST /api/media` fetch a link's preview or an image on the client's behalf, from public addresses only (D25).
   `POST /api/gifs {query, pos}` searches the GIF provider set up in chadd.toml (KLIPY by default), and discovery's `chadd.gifs` says it's on (D30).
@@ -164,6 +166,7 @@ Windows equivalents: WGC capture (libwebrtc's, D21), WASAPI (process loopback fo
 ## Media
 
 - One LiveKit room per voice channel. The participant identity is the ergo account name, and the token comes from chadd.
+  A meeting guest's identity is `guest:<random>`, with the name they picked (D86).
 - Voice is Opus with DTX and RED, with a bitrate setting (default 64 kbps). AEC, NS and AGC come from libwebrtc's APM, fed with our own playback mix as the far-end reference.
   Optional RNNoise (`nnnoiseless`) runs before the APM.
 - Audio path: the backend (PipeWire streams `irchad-mic` / `irchad-voice` with role Communication on Linux, cpal elsewhere) moves 10 ms frames through lock-free rings.

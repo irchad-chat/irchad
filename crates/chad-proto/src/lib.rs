@@ -2,6 +2,7 @@
 
 pub mod chadd;
 pub mod discovery;
+pub mod meeting;
 
 /// Server or peer text made safe to show on one line: control characters
 /// dropped, at most `max` characters, trimmed.

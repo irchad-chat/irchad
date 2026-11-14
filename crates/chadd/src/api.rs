@@ -22,7 +22,7 @@ use crate::routes::AppState;
 const SESSION_ISSUER: &str = "chadd-session";
 const SESSION_TTL: Duration = Duration::from_secs(3600);
 /// Only has to last until the join; LiveKit refreshes it from then on.
-const VOICE_TTL: Duration = Duration::from_secs(600);
+pub const VOICE_TTL: Duration = Duration::from_secs(600);
 /// Login attempts per IP and per account per window.
 pub const MAX_ATTEMPTS: u32 = 10;
 const WINDOW: Duration = Duration::from_secs(60);
@@ -198,34 +198,39 @@ pub async fn voice_token(
         .with_identity(&account)
         .with_name(&account)
         .with_ttl(VOICE_TTL)
-        .with_grants(VideoGrants {
-            room_join: true,
-            room: room.clone(),
-            can_publish: Some(true),
-            can_subscribe: Some(true),
-            can_publish_data: Some(false),
-            can_publish_sources: vec![
-                "microphone".into(),
-                "camera".into(),
-                "screen_share".into(),
-                "screen_share_audio".into(),
-                // The soundboard's own track, so listeners can turn it down.
-                "unknown".into(),
-            ],
-            // The `watching` attribute behind "N watching" (D22).
-            can_update_own_metadata: Some(true),
-            ..Default::default()
-        })
+        .with_grants(grants(room.clone()))
         .to_jwt()
         .map_err(|e| internal(&e))?;
     Ok(Json(VoiceTokenResponse { token, room }))
+}
+
+/// What anyone in a voice room may do.
+pub fn grants(room: String) -> VideoGrants {
+    VideoGrants {
+        room_join: true,
+        room,
+        can_publish: Some(true),
+        can_subscribe: Some(true),
+        can_publish_data: Some(false),
+        can_publish_sources: vec![
+            "microphone".into(),
+            "camera".into(),
+            "screen_share".into(),
+            "screen_share_audio".into(),
+            // The soundboard's own track, so listeners can turn it down.
+            "unknown".into(),
+        ],
+        // The `watching` attribute behind "N watching" (D22).
+        can_update_own_metadata: Some(true),
+        ..Default::default()
+    }
 }
 
 /// A channel's room: the name casefolded the way ergo's default `ascii`
 /// casemapping does.
 // shortcut: other casemappings fold non-ASCII letters too, so two spellings of
 // such a channel get separate rooms; read CASEMAPPING if that ever matters.
-fn voice_room(channel: &str) -> Option<String> {
+pub fn voice_room(channel: &str) -> Option<String> {
     let ok = channel.starts_with('#')
         && channel.len() > 1
         && channel.len() <= 64
@@ -240,7 +245,7 @@ fn unavailable() -> (StatusCode, Json<ApiError>) {
     )
 }
 
-fn internal(e: &dyn std::fmt::Display) -> (StatusCode, Json<ApiError>) {
+pub fn internal(e: &dyn std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     tracing::error!("minting a token: {e}");
     fail(StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong.")
 }

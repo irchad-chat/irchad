@@ -22,6 +22,7 @@ This page is not a hosting guide. For that, see [Host your own network](https://
 | [Home and official channels](/docs/getting-started#4-youre-in) | `home = "#channel"` | New people join every public channel |
 | Network name and icon in the rail | `name`, `icon` | A letter instead of the icon |
 | [Voice, screen share, camera](/docs/voice) | `[livekit]` → `key`, `secret` (required) | chadd won't start |
+| [Meetings](/docs/meetings) guests join from a link | `[meetings]` → `secret` | No **New meeting** |
 | [Uploads](/docs/chat#files-images-and-links) and profile pictures | `[uploads]` → `dir` | "This network doesn't take uploads." |
 | Upload size limit | `[uploads]` → `max_bytes` | 25 MB |
 | [GIF search](/docs/chat#writing-messages) | `[gifs]` → `key` | "This network doesn't have GIFs." |

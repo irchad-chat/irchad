@@ -13,10 +13,15 @@ impl Net {
             if self.who_wanted.remove(&key) {
                 self.who(chan.to_owned());
             }
-            if (!new || self.add_buffer(chan, BufferKind::Channel))
-                && self.joined.insert(key.clone())
-                && self.synced
-            {
+            let joined = !new || self.add_buffer(chan, BufferKind::Channel);
+            if joined && let Some(created) = self.meeting_joins.remove(&key) {
+                if created {
+                    // Out of LIST and WHOIS: the code is the only way in.
+                    self.out.push(Message::new("MODE", [chan, "+s"]));
+                }
+                self.join_voice(chan);
+            }
+            if joined && self.joined.insert(key.clone()) && self.synced {
                 self.fetch_new(&key);
                 // Who's in voice there; the connect burst covers the rest.
                 if self.caps.enabled("draft/metadata-2") {

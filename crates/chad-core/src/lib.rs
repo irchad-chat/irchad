@@ -33,6 +33,7 @@ use tokio::sync::mpsc;
 use url::Url;
 
 pub use chad_proto::chadd::{Game, Gif, GifPage, LinkPreview, Sound};
+pub use chad_proto::meeting;
 pub use chad_proto::one_line;
 
 /// Discord's game list as chadd last sent it; clients keep it to send `etag` back.
@@ -228,6 +229,14 @@ pub enum NetCommand {
     /// Hide a DM and forget its local history; a new message reopens it.
     CloseDm {
         nick: String,
+    },
+    /// Start a meeting guests can join from a link (D86): `Event::MeetingCreated`.
+    CreateMeeting,
+    /// Join a meeting's channel, then its call once we're in. `new` when we
+    /// just created it: we're its op and make it secret (+s).
+    JoinMeeting {
+        channel: String,
+        new: bool,
     },
     /// Join a channel's voice room, leaving any other (on any network).
     JoinVoice {
@@ -445,6 +454,12 @@ pub enum Event {
         target: Option<String>,
         result: Result<Url, String>,
     },
+    /// The answer to `CreateMeeting`: the channel to `JoinMeeting` and the
+    /// link to hand out.
+    MeetingCreated {
+        network: String,
+        result: Result<(String, Url), String>,
+    },
     /// Someone's display name, avatar or activity (metadata), as far as we know it.
     Profile {
         network: String,
@@ -621,6 +636,8 @@ pub struct NetworkInfo {
     pub gifs: Option<String>,
     /// chadd serves Discord's game list (and we have an account).
     pub games: bool,
+    /// chadd starts meetings (D86, and we have an account).
+    pub meetings: bool,
     /// chadd has custom emoji (`Event::Emoji`).
     pub emoji: bool,
     /// Our account sends read receipts in DMs, and shows theirs (D68).

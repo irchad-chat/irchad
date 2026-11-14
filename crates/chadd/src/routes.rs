@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, cache, delete, emoji, fetch, files, games, gifs, sounds};
+use crate::{api, cache, delete, emoji, fetch, files, games, gifs, meeting, sounds};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -44,6 +44,10 @@ pub struct AppState {
     pub redacted_throttle: api::Throttle,
     /// Wakes the deletion worker when a job is queued.
     pub deletions: tokio::sync::Notify,
+    /// Meetings started, per account.
+    pub meetings: api::Throttle,
+    /// Guest meeting tokens, per IP.
+    pub guests: api::Throttle,
 }
 
 impl AppState {
@@ -74,6 +78,8 @@ impl AppState {
             redacted,
             redacted_throttle: api::Throttle::new(60),
             deletions: tokio::sync::Notify::new(),
+            meetings: api::Throttle::new(10),
+            guests: api::Throttle::new(30),
         })
     }
 }
@@ -92,6 +98,12 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .layer(axum::middleware::from_fn(files::headers))
                 .layer(axum::middleware::from_fn(emoji::headers)),
         );
+    }
+    if state.config.meetings.is_some() {
+        files = files
+            .route("/meet/{code}", get(meeting::page))
+            .route("/api/meeting", post(meeting::create))
+            .route("/api/meeting/token", post(meeting::token));
     }
     if state.config.delete.is_some() {
         files = files
@@ -252,6 +264,75 @@ fn invite_page(
     } else {
         ""
     };
+    shell(
+        state,
+        &format!("Join {name}"),
+        &format!(
+            r#"  <span class="logo">{LOGO}</span>
+  <p class="kicker">You're invited to</p>
+  <h1>{name}</h1>
+  <p class="muted">{host}</p>
+  {channel}
+  <div class="actions">
+    {download}
+    <a class="btn secondary" href="{join}">{SIGN_IN}Already installed? Open in IrChad</a>
+  </div>
+  {hint}
+  <div class="others">{others}</div>
+  <footer>{footer}</footer>
+"#
+        ),
+    )
+}
+
+/// `/meet/<code>`: into the call from the browser or the app. `code` is
+/// `None` once the link has expired (or was never real).
+pub fn meeting_page(state: &AppState, code: Option<String>) -> String {
+    let name = escape(&state.discovery.name);
+    let Some(code) = code else {
+        return shell(
+            state,
+            "Meeting ended",
+            &format!(
+                r#"  <span class="logo">{LOGO}</span>
+  <p class="kicker">{name}</p>
+  <h1>This meeting link has expired</h1>
+  <p class="muted">Ask whoever sent it for a new one.</p>
+"#
+            ),
+        );
+    };
+    let web = state
+        .config
+        .web()
+        .ok()
+        .map(|mut u| {
+            u.query_pairs_mut().append_pair("meet", &code);
+            u
+        })
+        .map(|u| escape(u.as_str()))
+        .unwrap_or_default();
+    let channel = chad_proto::meeting::channel_of(&code).unwrap_or_default();
+    let app = escape(join_url(&state.config.origin, None, Some(&channel)).as_str());
+    shell(
+        state,
+        &format!("Meeting on {name}"),
+        &format!(
+            r#"  <span class="logo">{LOGO}</span>
+  <p class="kicker">You're invited to a meeting on</p>
+  <h1>{name}</h1>
+  <p class="muted">No account needed: just pick a name.</p>
+  <div class="actions">
+    <a class="btn primary" href="{web}">Join in browser</a>
+    <a class="btn secondary" href="{app}">{SIGN_IN}Open in IrChad</a>
+  </div>
+"#
+        ),
+    )
+}
+
+/// An HTML page in the invite page's style, `main` its card's contents.
+fn shell(state: &AppState, title: &str, main: &str) -> String {
     // shortcut: the logo inlined as a data URI on every page; serve it from a route if pages multiply.
     let light = state.config.colors.light.css(LIGHT);
     let dark = state.config.colors.dark.css(DARK);
@@ -262,7 +343,7 @@ fn invite_page(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Join {name}</title>
+<title>{title}</title>
 <link rel="icon" href="data:image/svg+xml,{favicon}">
 <style>
   :root {{ color-scheme: light dark; {light} }}
@@ -298,19 +379,7 @@ fn invite_page(
 </head>
 <body>
 <main>
-  <span class="logo">{LOGO}</span>
-  <p class="kicker">You're invited to</p>
-  <h1>{name}</h1>
-  <p class="muted">{host}</p>
-  {channel}
-  <div class="actions">
-    {download}
-    <a class="btn secondary" href="{join}">{SIGN_IN}Already installed? Open in IrChad</a>
-  </div>
-  {hint}
-  <div class="others">{others}</div>
-  <footer>{footer}</footer>
-</main>
+{main}</main>
 </body>
 </html>
 "#

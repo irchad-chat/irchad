@@ -20,6 +20,7 @@ fn net() -> Net {
         uploads: None,
         gifs: None,
         games: false,
+        meetings: false,
         emoji: false,
         receipts: false,
         lag_ms: None,
@@ -188,7 +189,8 @@ fn resuming_catches_up_on_a_live_socket() {
     n.resumed();
     assert!(out(&mut n).is_empty(), "nothing before sync");
     attach(&mut n, &["#general"]);
-    n.store.insert("#general", &msg("g2", 2000, "alice", "seen"));
+    n.store
+        .insert("#general", &msg("g2", 2000, "alice", "seen"));
     n.resumed();
     let sent = out(&mut n);
     assert!(
