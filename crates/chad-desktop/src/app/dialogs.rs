@@ -465,6 +465,28 @@ impl App {
                         }
                         ui.add_space(8.0);
                         ui.weak(format!("IrChad {}", crate::update::version()));
+                        if ui.small_button("Export debug logs").clicked() {
+                            let (dir, tx) = (self.data_dir.clone(), self.toast_rx.0.clone());
+                            let ctx = ctx.clone();
+                            let stamp = chad_core::time::format(chad_core::time::now_ms());
+                            let name = format!("irchad-logs-{}.zip", stamp.replace(':', "-"));
+                            tokio::spawn(async move {
+                                let Some(f) = rfd::AsyncFileDialog::new()
+                                    .set_file_name(name)
+                                    .add_filter("Zip", &["zip"])
+                                    .save_file()
+                                    .await
+                                else {
+                                    return;
+                                };
+                                let text = match crate::export_logs(&dir, f.path()) {
+                                    Ok(()) => format!("Saved {}", f.path().display()),
+                                    Err(e) => format!("Couldn't export logs: {e}"),
+                                };
+                                let _ = tx.send(text);
+                                ctx.request_repaint();
+                            });
+                        }
                     });
                     ui.separator();
                     ui.vertical(|ui| {

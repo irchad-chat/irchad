@@ -24,12 +24,6 @@ use std::sync::{Arc, mpsc};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> eframe::Result {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
-
     // `irchad <url>`: the scheme handler (or a user) opening an invite.
     let open = std::env::args().nth(1).filter(|a| !a.starts_with('-'));
 
@@ -49,13 +43,15 @@ fn main() -> eframe::Result {
     // Held until exit: owning the bus name (or pipe) is what makes us the instance.
     let _instance = if let Some(p) = &profile {
         data_dir = data_dir.join("profiles").join(p);
+        init_logs(&data_dir);
         None
     } else {
+        // Before the logs: a second launch mustn't rotate the running one's file.
         let Some(instance) = rt.block_on(platform::single_instance(open.clone(), os_tx.clone()))
         else {
-            tracing::info!("handed over to the running IrChad");
             return Ok(());
         };
+        init_logs(&data_dir);
         platform::register_scheme();
         Some(instance)
     };
@@ -131,4 +127,42 @@ fn see_through_dx12() -> eframe::WgpuConfiguration {
         wgpu_setup: WgpuSetup::CreateNew(setup),
         ..Default::default()
     }
+}
+
+/// Logs to stderr and to `irchad.log` in the data dir, where a Windows release
+/// (no console) can still be troubleshot. The run before is kept as `irchad.old.log`.
+fn init_logs(dir: &std::path::Path) {
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+    let path = dir.join("irchad.log");
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::rename(&path, dir.join("irchad.old.log"));
+    // shortcut: no size cap within a run (info is a few lines per reconnect); rotate by size if long uptimes grow it.
+    let file = std::fs::File::create(&path).ok().map(std::sync::Mutex::new);
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt = tracing_subscriber::fmt().with_env_filter(filter);
+    match file {
+        Some(f) => fmt
+            .with_writer(std::io::stderr.and(f))
+            .with_ansi(false)
+            .init(),
+        None => fmt.init(),
+    }
+}
+
+/// Zips `irchad.log` and `irchad.old.log` from `dir` into `out`.
+pub fn export_logs(dir: &std::path::Path, out: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    let file = std::fs::File::create(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default();
+    for name in ["irchad.log", "irchad.old.log"] {
+        // Read whole: the live log keeps growing while we copy.
+        let Ok(bytes) = std::fs::read(dir.join(name)) else {
+            continue;
+        };
+        zip.start_file(name, opts).map_err(|e| e.to_string())?;
+        zip.write_all(&bytes).map_err(|e| e.to_string())?;
+    }
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
 }

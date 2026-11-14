@@ -1153,6 +1153,7 @@ dependencies = [
  "windows-sys 0.61.2",
  "x11rb",
  "zbus",
+ "zip",
  "zipsign-api",
 ]
 

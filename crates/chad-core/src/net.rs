@@ -376,6 +376,12 @@ impl Net {
             .keys()
             .filter_map(|k| self.store.newest(k).map(|(_, t)| (k.clone(), t)))
             .collect();
+        tracing::info!(
+            "{}: registered as {nick}, {} buffers, {} with a cache to catch up from",
+            self.info.network,
+            self.buffers.len(),
+            self.gap_from.len()
+        );
         self.set_state(ConnState::Connected);
         self.persistent = !self.guest && self.caps.enabled("draft/persistence");
         if let Some(m) = &self.away {
@@ -599,6 +605,10 @@ impl Net {
     /// and is ignored as a duplicate.
     pub(super) fn fetch_after(&mut self, key: &str, t: i64, pages: u8) {
         let r = format!("timestamp={}", time::format(t.saturating_sub(1)));
+        tracing::info!(
+            "{}: catch-up {key} after {r} (page {pages})",
+            self.info.network
+        );
         self.history(key, Hist::After { pages }, &r);
     }
 

@@ -20,6 +20,7 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 jiff = "0.2.38"
 notify-rust = "4.18.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
 # Updates (D76): signature check, unpacking and the swap. Downloads go
 # through reqwest above; `ureq` is only there because it won't build without

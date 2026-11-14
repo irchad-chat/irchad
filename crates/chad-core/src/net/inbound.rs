@@ -124,6 +124,9 @@ impl Net {
                     .map(|(_, m)| m.time)
                     .max();
                 let n = self.store_history(&target, inner);
+                if matches!(kind, Hist::After { .. } | Hist::Latest) {
+                    tracing::info!("{}: catch-up {target}: {n} messages", self.info.network);
+                }
                 let name = self.buffers.get(&target).map(|b| b.name.clone());
                 match (kind, name) {
                     (Hist::Before, Some(name)) if n < PAGE as usize => {

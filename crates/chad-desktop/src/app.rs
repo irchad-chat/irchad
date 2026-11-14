@@ -86,6 +86,10 @@ pub struct App {
     /// "Browse channels…": the network's LIST.
     browse: Option<ChannelBrowser>,
     toasts: Vec<(String, Instant)>,
+    /// Toasts from background tasks.
+    toast_rx: (mpsc::Sender<String>, mpsc::Receiver<String>),
+    /// Where the logs (and caches) live.
+    data_dir: std::path::PathBuf,
     last_badge: (bool, u32),
     last_title: String,
     voice: Voice,
@@ -478,6 +482,8 @@ impl App {
             adding: None,
             browse: None,
             toasts: Vec::new(),
+            toast_rx: mpsc::channel(),
+            data_dir: data_dir.to_owned(),
             last_badge: (false, 0),
             last_title: "IrChad".into(),
             voice,

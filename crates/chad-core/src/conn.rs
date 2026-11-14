@@ -147,7 +147,10 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 p.verifying = None;
                 continue;
             }
-            End::Paused => continue,
+            End::Paused => {
+                tracing::info!("{}: paused in the background", net.info.network);
+                continue;
+            }
             End::Upgrade {
                 account,
                 password,
@@ -162,6 +165,7 @@ pub async fn run(mut net: Net, mut p: Params, mut rx: mpsc::UnboundedReceiver<To
                 continue;
             }
             End::Lost(error) if p.joining.is_none() || retry_verify => {
+                tracing::info!("{}: connection lost: {error}", net.info.network);
                 // Keep the code prompt up across the reconnect.
                 if !retry_verify {
                     net.set_state(ConnState::Disconnected { error });
@@ -601,6 +605,7 @@ async fn live(
                 Some(ToNet::Background(on)) => {
                     // Every return to the front, even within the pause delay or with "Stay connected".
                     if !on {
+                        tracing::info!("{}: back in front, catching up", net.info.network);
                         net.resumed();
                     }
                     p.background = on;

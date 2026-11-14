@@ -427,6 +427,9 @@ impl App {
                 Err(e) => self.toast(format!("Couldn't play {file}: {e}")),
             }
         }
+        while let Ok(t) = self.toast_rx.1.try_recv() {
+            self.toast(t);
+        }
         while let Ok((network, target, name, bytes)) = self.files.1.try_recv() {
             match bytes {
                 Ok(bytes) => self.upload(ctx, &network, target, name, bytes),
