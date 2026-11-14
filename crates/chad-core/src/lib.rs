@@ -78,6 +78,16 @@ pub struct Config {
 
 /// Whatever plays voice calls (`chad-media` on desktop). The core decides when
 /// to join and leave; this only connects.
+/// A public link for a screen share (D87, D88).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamLink {
+    pub url: Url,
+    /// The stream's LiveKit room: `stream-<code>`.
+    pub room: String,
+    pub livekit: String,
+    pub token: String,
+}
+
 pub trait Media: Send + Sync {
     /// Joins a LiveKit room, leaving any other. Report on the returned channel;
     /// when the core drops its end, hang up.
@@ -237,6 +247,13 @@ pub enum NetCommand {
     },
     /// Start a meeting guests can join from a link (D86): `Event::MeetingCreated`.
     CreateMeeting,
+    /// A public link for our screen share (D87): `Event::StreamCreated`.
+    CreateStream,
+    /// A token to watch the public share in stream room `room` (D87):
+    /// `Event::StreamToken`.
+    StreamToken {
+        room: String,
+    },
     /// Join a meeting's channel, then its call once we're in. `new` when we
     /// just created it: we're its op and make it secret (+s).
     JoinMeeting {
@@ -464,6 +481,18 @@ pub enum Event {
     MeetingCreated {
         network: String,
         result: Result<(String, Url), String>,
+    },
+    /// The answer to `CreateStream`: the link to hand out, and the LiveKit
+    /// URL and publish-only token to send the share there with.
+    StreamCreated {
+        network: String,
+        result: Result<StreamLink, String>,
+    },
+    /// The answer to `StreamToken`: the LiveKit URL and a watch-only token.
+    StreamToken {
+        network: String,
+        room: String,
+        result: Result<(String, String), String>,
     },
     /// Someone's display name, avatar or activity (metadata), as far as we know it.
     Profile {

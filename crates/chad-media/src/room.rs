@@ -27,7 +27,7 @@ use tokio::task::JoinHandle;
 use crate::engine::{
     CUE_LEN, Cue, Kind, Mic, PREVIEW_CAMERA, PREVIEW_SCREEN, Shared, VAD_HANG, dbfs, lock,
 };
-use crate::screen::{MAX_DIM, ScreenFrame};
+use crate::screen::{CALL_AUDIO, MAX_DIM, STREAM, STREAM_AUDIO, ScreenFrame, stream_room};
 use crate::{CallState, Participant, Quality, RATE, Voice};
 
 /// Participant attribute naming whose screen share someone watches.
@@ -81,6 +81,8 @@ impl Drop for Call {
             self.voice.stop_camera();
             *lock(&shared.room) = None;
             *lock(&shared.watching) = None;
+            let viewer = lock(&shared.viewer).take();
+            drop(viewer);
             *lock(&shared.screen) = None;
             *lock(&shared.mic) = None;
             shared.whisper_ready.store(false, Relaxed);
@@ -297,7 +299,13 @@ pub async fn join(voice: &Voice, url: &str, token: &str) -> Result<Call, String>
                     };
                     let cue = whisper.then(|| shared.clone());
                     let delay = if whisper { whisper_cue_len() } else { 0 };
-                    if let Some(tx) = shared.add_delayed_source(&sid, &identity, kind, delay) {
+                    if let Some(tx) = shared.add_delayed_source(
+                        &sid,
+                        &identity,
+                        kind,
+                        delay,
+                        !whisper && kind != Kind::Screen,
+                    ) {
                         let loud = Arc::new(AtomicU64::new(0));
                         if kind == Kind::Mic {
                             talking.insert(sid.clone(), (identity, loud.clone(), whisper));
@@ -478,6 +486,9 @@ pub fn watch(shared: &Shared, target: Option<(String, bool)>) {
         }
         w.clone_from(&target);
     }
+    // A public stream's room is for one share; a new target needs its own.
+    let viewer = lock(&shared.viewer).take();
+    drop(viewer);
     // Off before clearing, so the encoder can't put a frame of ours back.
     shared.preview.store(0, Relaxed);
     *lock(&shared.screen) = None;
@@ -512,6 +523,132 @@ pub fn watch(shared: &Shared, target: Option<(String, bool)>) {
         }
     });
     (shared.notify)();
+}
+
+/// A public share we watch from its stream's room (D87). Dropping it leaves.
+pub(crate) struct Viewer {
+    room: Arc<Room>,
+    task: JoinHandle<()>,
+    shared: Arc<Shared>,
+}
+
+/// Its audio's mixer keys start with this.
+const VIEWER_KEY: &str = "stream:";
+
+impl Drop for Viewer {
+    fn drop(&mut self) {
+        self.task.abort();
+        self.shared.remove_sources(VIEWER_KEY);
+        *lock(&self.shared.screen) = None;
+        let room = self.room.clone();
+        tokio::spawn(async move {
+            let _ = room.close().await;
+        });
+    }
+}
+
+/// The stream room of the (someone else's) share we watch, if we aren't in it yet.
+pub fn stream_wanted(shared: &Shared) -> Option<String> {
+    let (identity, camera) = lock(&shared.watching).clone()?;
+    if camera {
+        return None;
+    }
+    let room = shared
+        .call()?
+        .participants
+        .into_iter()
+        .find(|p| !p.local && p.identity == identity)?
+        .stream?;
+    let have = lock(&shared.viewer)
+        .as_ref()
+        .is_some_and(|v| v.room.name() == room);
+    (!have).then_some(room)
+}
+
+/// Joins stream room `room` to watch the share in it, if it's still the one
+/// we want: its screen and app audio, not the call audio (we're in the call).
+pub async fn watch_stream(
+    shared: &Arc<Shared>,
+    room: String,
+    url: &str,
+    token: &str,
+) -> Result<(), String> {
+    let mut options = RoomOptions::default();
+    options.auto_subscribe = false;
+    let (lk, mut events) = Room::connect(url, token, options).await.map_err(|e| {
+        tracing::warn!("stream connect: {e}");
+        "Couldn't open the stream.".to_owned()
+    })?;
+    let lk = Arc::new(lk);
+    let Some(identity) = lock(&shared.watching).clone().map(|w| w.0) else {
+        let _ = lk.close().await;
+        return Ok(());
+    };
+    if stream_wanted(shared).as_deref() != Some(room.as_str()) || lk.name() != room {
+        let _ = lk.close().await;
+        return Ok(());
+    }
+    let want = |p: &RemoteTrackPublication| {
+        let ok = matches!(
+            p.source(),
+            TrackSource::Screenshare | TrackSource::ScreenshareAudio
+        ) && p.name() != CALL_AUDIO;
+        if ok && !p.is_subscribed() {
+            p.set_subscribed(true);
+        }
+    };
+    for p in lk.remote_participants().values().take(MAX_PARTICIPANTS) {
+        p.track_publications().values().for_each(want);
+    }
+    let (s, r) = (shared.clone(), lk.clone());
+    let task = tokio::spawn(async move {
+        let mut tasks = tokio::task::JoinSet::new();
+        let epoch = Instant::now();
+        while let Some(ev) = events.recv().await {
+            match ev {
+                RoomEvent::TrackPublished { publication, .. } => want(&publication),
+                RoomEvent::TrackSubscribed {
+                    track: RemoteTrack::Video(t),
+                    publication,
+                    ..
+                } if publication.source() == TrackSource::Screenshare => {
+                    tasks.spawn(view(t, (identity.clone(), false), s.clone()));
+                }
+                RoomEvent::TrackSubscribed {
+                    track: RemoteTrack::Audio(t),
+                    publication,
+                    ..
+                } if publication.source() == TrackSource::ScreenshareAudio => {
+                    let key = format!("{VIEWER_KEY}{}", publication.sid());
+                    if let Some(tx) = s.add_source(&key, &identity, Kind::Screen) {
+                        let loud = Arc::new(AtomicU64::new(0));
+                        tasks.spawn(play(t, tx, loud, epoch, None));
+                    }
+                }
+                RoomEvent::Disconnected { .. } => break,
+                _ => {}
+            }
+        }
+        s.remove_sources(VIEWER_KEY);
+        let mut v = lock(&s.viewer);
+        // The room went away by itself. Dropped outside the lock, as Viewer's
+        // drop takes others; aborting this task now is harmless, it's done.
+        let old = v
+            .as_ref()
+            .is_some_and(|v| Arc::ptr_eq(&v.room, &r))
+            .then(|| v.take());
+        drop(v);
+        drop(old);
+        (s.notify)();
+    });
+    let old = lock(&shared.viewer).replace(Viewer {
+        room: lk,
+        task,
+        shared: shared.clone(),
+    });
+    drop(old);
+    (shared.notify)();
+    Ok(())
 }
 
 /// Decodes the watched share or camera, `target` (identity, camera), into
@@ -693,11 +830,17 @@ fn snapshot(
     if let Some(w) = &ours {
         *watchers.entry(w.clone()).or_default() += 1;
     }
+    let own_stream = lock(&shared.share).as_ref().and_then(|s| {
+        let (_, audio) = s.public.as_ref()?;
+        Some((s.room.name(), *audio))
+    });
     let mut participants = vec![Participant {
         speaking: speakers.contains(&local_id),
         muted: shared.muted(),
         local: true,
         sharing: shared.sharing(),
+        stream: own_stream.as_ref().map(|s| s.0.clone()),
+        stream_audio: own_stream.is_some_and(|s| s.1),
         watchers: watchers.get(&local_id).copied().unwrap_or(0),
         camera: shared.camera_on(),
         whispering: whisperers.contains(&local_id),
@@ -709,6 +852,11 @@ fn snapshot(
         .map(|p| {
             let identity = short(&p.identity().to_string());
             let pubs = p.track_publications();
+            let attrs = p.attributes();
+            // D14: only a room chadd would name, and only that.
+            let stream = attrs.get(STREAM).filter(|r| stream_room(r)).cloned();
+            let stream_audio =
+                stream.is_some() && attrs.get(STREAM_AUDIO).is_some_and(|a| a == "1");
             Participant {
                 speaking: speakers.contains(&identity),
                 muted: pubs
@@ -716,9 +864,12 @@ fn snapshot(
                     .filter(|t| t.source() == TrackSource::Microphone)
                     .all(livekit::prelude::RemoteTrackPublication::is_muted),
                 local: false,
-                sharing: pubs
-                    .values()
-                    .any(|t| t.source() == TrackSource::Screenshare),
+                sharing: stream.is_some()
+                    || pubs
+                        .values()
+                        .any(|t| t.source() == TrackSource::Screenshare),
+                stream,
+                stream_audio,
                 camera: pubs
                     .values()
                     .any(|t| t.source() == TrackSource::Camera && !t.is_muted()),

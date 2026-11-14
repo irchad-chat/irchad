@@ -22,10 +22,22 @@ impl App {
             match d.show(ctx, &self.voice, &mut s.screen, &mut s.restore_token) {
                 DialogOutcome::Open => {}
                 DialogOutcome::Closed => self.share_dialog = None,
-                DialogOutcome::Shared(token) => {
-                    if token.is_some() {
-                        s.restore_token = token;
+                DialogOutcome::WantStream => match self.view.call.clone() {
+                    Some((net, _)) => self.send(&net, NetCommand::CreateStream),
+                    None => d.stream_created(
+                        Err("Join voice to share your screen.".into()),
+                        &self.voice,
+                        ctx,
+                    ),
+                },
+                DialogOutcome::Shared { restore, link } => {
+                    if restore.is_some() {
+                        s.restore_token = restore;
                     }
+                    if link.is_some() {
+                        self.toast("Stream link copied. Anyone with it can watch.".into());
+                    }
+                    self.stream_link = link;
                     self.share_dialog = None;
                 }
             }

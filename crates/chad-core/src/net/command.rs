@@ -81,6 +81,21 @@ impl Net {
                     result: Err("You're offline right now.".into()),
                 });
             }
+            NetCommand::StreamToken { room } => {
+                let network = self.id();
+                self.events.push(Event::StreamToken {
+                    network,
+                    room,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
+            NetCommand::CreateStream => {
+                let network = self.id();
+                self.events.push(Event::StreamCreated {
+                    network,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
             NetCommand::SetAway { message } => {
                 let message = message.map(|m| truncate(m.trim(), 200).to_owned());
                 // AWAY with an empty reason would mean "back".

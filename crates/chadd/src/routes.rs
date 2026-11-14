@@ -12,12 +12,12 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, cache, delete, emoji, fetch, files, games, gifs, meeting, sounds};
+use crate::{api, cache, delete, emoji, fetch, files, games, gifs, meeting, sounds, stream};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
     pub config: Config,
-    discovery: Discovery,
+    pub discovery: Discovery,
     pub http: reqwest::Client,
     /// Signs session tokens. Random per process: a restart signs everyone out
     /// of chadd (not IRC), and clients just log in again.
@@ -103,7 +103,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         files = files
             .route("/meet/{code}", get(meeting::page))
             .route("/api/meeting", post(meeting::create))
-            .route("/api/meeting/token", post(meeting::token));
+            .route("/api/meeting/token", post(meeting::token))
+            .route("/watch/{code}", get(stream::page))
+            .route("/api/stream", post(stream::create))
+            .route("/api/stream/token", post(stream::token));
     }
     if state.config.delete.is_some() {
         files = files
@@ -220,6 +223,23 @@ fn invite_page(
     let name = escape(&state.discovery.name);
     let host = escape(state.config.origin.host_str().unwrap_or_default());
     let join = escape(join.as_str());
+    let irc = state
+        .config
+        .ircs()
+        .ok()
+        .map(|mut u| {
+            // `ircs://host:port/%23chan`; the url crate percent-encodes the `#`.
+            if let (Some(c), Ok(mut path)) =
+                (channel.filter(|c| !c.is_empty()), u.path_segments_mut())
+            {
+                path.push(c);
+            }
+            let u = escape(u.as_str());
+            format!(
+                r#"<p class="hint">Or join with your regular IRC client: <a href="{u}">{u}</a></p>"#
+            )
+        })
+        .unwrap_or_default();
     let channel = match channel.filter(|c| !c.is_empty()) {
         Some(c) => format!(
             r#"<p class="muted">You'll land in <b>{}</b>.</p>"#,
@@ -278,6 +298,7 @@ fn invite_page(
     <a class="btn secondary" href="{join}">{SIGN_IN}Already installed? Open in IrChad</a>
   </div>
   {hint}
+  {irc}
   <div class="others">{others}</div>
   <footer>{footer}</footer>
 "#
@@ -326,6 +347,22 @@ pub fn meeting_page(state: &AppState, code: Option<String>) -> String {
     <a class="btn primary" href="{web}">Join in browser</a>
     <a class="btn secondary" href="{app}">{SIGN_IN}Open in IrChad</a>
   </div>
+"#
+        ),
+    )
+}
+
+/// `/watch/<code>` once the link has expired (or was never real).
+pub fn stream_ended_page(state: &AppState) -> String {
+    let name = escape(&state.discovery.name);
+    shell(
+        state,
+        "Stream ended",
+        &format!(
+            r#"  <span class="logo">{LOGO}</span>
+  <p class="kicker">{name}</p>
+  <h1>This stream link has expired</h1>
+  <p class="muted">Ask whoever sent it for a new one.</p>
 "#
         ),
     )
@@ -470,6 +507,7 @@ mod tests {
             "irchad://join?origin=https%3A%2F%2Fchat.example.com&amp;code=abc&amp;channel=%23general"
         ));
         assert!(body.contains("Chad &lt;Network&gt;"));
+        assert!(body.contains(r#"href="ircs://chat.example.com:6697/%23general""#));
 
         let (status, body) = get_body("/invite").await;
         assert_eq!(status, 200);

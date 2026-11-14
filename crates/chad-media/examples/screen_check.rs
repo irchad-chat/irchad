@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
     sharer
-        .share(Target::Pattern, None, settings)
+        .share(Target::Pattern, None, settings, None)
         .await
         .map_err(anyhow::Error::msg)?;
     println!("share-a sharing a test pattern at {}", preset.label());

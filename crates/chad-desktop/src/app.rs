@@ -118,6 +118,12 @@ pub struct App {
     share_dialog: Option<ShareDialog>,
     /// Why turning the camera on failed, once it has.
     camera_error: Option<std::sync::mpsc::Receiver<String>>,
+    /// Why watching a public share (D87) failed.
+    stream_status: Option<std::sync::mpsc::Receiver<String>>,
+    /// Our share's public link, to copy again.
+    stream_link: Option<Url>,
+    /// The stream room we asked a token for, so we ask once per watch.
+    stream_asked: Option<String>,
     stage: Stage,
     picker: Option<Picker>,
     switcher: Option<Switcher>,
@@ -504,6 +510,9 @@ impl App {
             overlay_layer: None,
             share_dialog: None,
             camera_error: None,
+            stream_status: None,
+            stream_link: None,
+            stream_asked: None,
             stage: Stage::default(),
             picker: None,
             switcher: None,
@@ -595,6 +604,23 @@ impl App {
             || origin.to_owned(),
             |i| self.view.nets[i].info.name.clone(),
         )
+    }
+
+    /// Watching a call member's public share means joining its stream's
+    /// room (D87): ask once for a token, which `Event::StreamToken` uses.
+    fn watch_streams(&mut self) {
+        let wanted = self.voice.stream_wanted();
+        if wanted.is_some()
+            && wanted != self.stream_asked
+            && let Some((net, _)) = self.view.call.clone()
+            && let Some(room) = wanted.clone()
+        {
+            self.send(&net, NetCommand::StreamToken { room });
+        }
+        self.stream_asked = wanted;
+        if !self.voice.streaming() {
+            self.stream_link = None;
+        }
     }
 
     fn send(&self, network: &str, cmd: NetCommand) {
@@ -982,6 +1008,14 @@ impl eframe::App for App {
         if let Some(e) = self.camera_error.as_ref().and_then(|rx| rx.try_recv().ok()) {
             self.toast(e);
         }
+        if let Some(m) = self
+            .stream_status
+            .as_ref()
+            .and_then(|rx| rx.try_recv().ok())
+        {
+            self.toast(m);
+        }
+        self.watch_streams();
         let watching = self.voice.watching().is_some();
         let layout = self.settings.stage;
         if !watching && self.stage.fullscreen {

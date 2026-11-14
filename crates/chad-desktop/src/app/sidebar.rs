@@ -104,6 +104,7 @@ impl App {
     fn call_panel(&mut self, ui: &mut egui::Ui) {
         if let Some((net, state)) = self.view.call.clone() {
             let name = self.net_name(&net);
+            let streaming = self.voice.streaming();
             let action = egui::Panel::bottom("voice-panel")
                 .show(ui, |ui| {
                     voice::panel(
@@ -115,15 +116,25 @@ impl App {
                         self.net_idx(&net)
                             .map(|i| self.view.nets[i].sounds.as_slice()),
                         &mut self.settings.audio,
+                        streaming,
                     )
                 })
                 .inner;
             match action {
                 Some(voice::PanelAction::Leave) => self.send(&net, NetCommand::LeaveVoice),
                 Some(voice::PanelAction::Share) => {
-                    self.share_dialog = Some(ShareDialog::new(&self.voice, ui.ctx()));
+                    let streams = self
+                        .net_idx(&net)
+                        .is_some_and(|i| self.view.nets[i].info.meetings);
+                    self.share_dialog = Some(ShareDialog::new(&self.voice, ui.ctx(), streams));
                 }
                 Some(voice::PanelAction::StopShare) => self.voice.stop_share(),
+                Some(voice::PanelAction::CopyLink) => {
+                    if let Some(link) = &self.stream_link {
+                        ui.ctx().copy_text(link.to_string());
+                        self.toast("Stream link copied.".into());
+                    }
+                }
                 Some(voice::PanelAction::Camera) => {
                     let (tx, rx) = std::sync::mpsc::channel();
                     let (v, ctx) = (self.voice.clone(), ui.ctx().clone());

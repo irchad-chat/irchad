@@ -27,6 +27,14 @@ Choose in **Settings → Voice → Input**.
 
 Push to talk works while IrChad is in the background on Windows, on X11, and on Wayland desktops that offer global shortcuts (KDE, GNOME 48 and newer, Hyprland). Elsewhere it works only while IrChad is focused, and the settings say so.
 
+## Streaming to a public link
+
+When you share your screen in the desktop app, tick **Get a public link** in the share dialog. The link is copied when sharing starts, and **Copy link** under the call copies it again. Anyone can open it in a browser and watch, no account needed. People in the call watch your share the same way they always do.
+
+Viewers see your screen and hear its app audio. If you also tick **Include the call's audio**, they hear the call too: everyone's voice, and yours. Everyone in the call sees a warning while that's on. Whispers never go out.
+
+Stop sharing to end the stream. The link stops working when it expires, after a day by default.
+
 ## Per-person volume
 
 Right-click someone in the call for their **volume**. If they're sharing a screen, its sound has its own slider.

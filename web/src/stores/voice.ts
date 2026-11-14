@@ -19,11 +19,15 @@ import {
 } from 'livekit-client'
 import { message, useClient } from './client'
 import { isMeeting } from '../wasm/chad_web'
+import { CALL_AUDIO, codeOfRoom, streamToken } from '../lib/stream'
 
 // D14: the SFU decides who's in the room, so cap what we hold of it.
 const MAX_PARTICIPANTS = 500
 const MAX_IDENTITY = 64
 const WATCHING = 'watching'
+// On a streamer: their share's room, and "1" when the call's audio goes too (D87).
+const STREAM = 'stream'
+const STREAM_AUDIO = 'stream_audio'
 // Track names of the extra `Unknown`-source audio tracks (D71).
 const EXTRA_AUDIO = ['soundboard', 'whisper']
 
@@ -35,6 +39,10 @@ export type Person = {
   speaking: boolean
   muted: boolean
   screen: boolean
+  /** Their share has a public link: it's in this room, not the call's (D87). */
+  stream: string | null
+  /** The call's audio goes out with it: everyone here is public. */
+  streamAudio: boolean
   camera: boolean
   /** Who watches their screen share, us included. */
   watchers: number
@@ -65,12 +73,17 @@ export const useVoice = defineStore('voice', () => {
   const stage = shallowRef<VideoTrack | null>(null)
   // The browser blocked playback until a click.
   const blocked = ref(false)
+  // The public share we watch, from its stream's room (D87).
+  let viewer: { room: Room; name: string } | null = null
+  const viewerTrack = shallowRef<VideoTrack | null>(null)
   const call = computed(() => client.state?.call ?? null)
   const audio = document.createElement('div')
   audio.hidden = true
   document.body.append(audio)
 
   const meeting = computed(() => !!call.value && isMeeting(call.value.channel))
+  // Whoever sends this call's audio out with a public stream (D87).
+  const publicAudio = computed(() => people.value.find((p) => p.streamAudio) ?? null)
 
   function shown(p: Participant, identity: string): string {
     // A guest's name is theirs to pick, so it's marked as such (D86).
@@ -139,13 +152,16 @@ export const useVoice = defineStore('voice', () => {
     const video = (p: Participant, s: Track.Source) => (p.getTrackPublication(s)?.videoTrack as VideoTrack | undefined) ?? null
     const person = (p: Participant, isLocal: boolean): Person => {
       const identity = short(p.identity)
+      const stream = codeOfRoom(p.attributes[STREAM]) ? p.attributes[STREAM] : null
       return {
         identity,
         shown: shown(p, identity),
         local: isLocal,
         speaking: p.isSpeaking,
         muted: isLocal ? muted.value : !p.isMicrophoneEnabled,
-        screen: !!p.getTrackPublication(Track.Source.ScreenShare),
+        screen: !!stream || !!p.getTrackPublication(Track.Source.ScreenShare),
+        stream,
+        streamAudio: !!stream && p.attributes[STREAM_AUDIO] === '1',
         camera: !!p.getTrackPublication(Track.Source.Camera),
         watchers: counts.get(identity) ?? 0,
         cameraTrack: video(p, Track.Source.Camera),
@@ -156,6 +172,13 @@ export const useVoice = defineStore('voice', () => {
 
     // The watched one left or stopped sharing: stop watching.
     const target = w && remotes.find((p) => short(p.identity) === w.identity)
+    const streamed = !w?.camera && target ? people.value.find((p) => p.identity === w!.identity)?.stream : null
+    if (streamed) {
+      void openViewer(streamed)
+      stage.value = viewerTrack.value
+      return
+    }
+    closeViewer()
     const source = w?.camera ? Track.Source.Camera : Track.Source.ScreenShare
     const pub = target?.getTrackPublication(source)
     if (w && !pub) {
@@ -163,6 +186,60 @@ export const useVoice = defineStore('voice', () => {
       return
     }
     stage.value = (pub?.videoTrack as VideoTrack | undefined) ?? null
+  }
+
+  // Watching a public share means joining its stream's room: its screen and
+  // app audio, not the call audio (we're in the call).
+  async function openViewer(name: string) {
+    if (viewer?.name === name) return
+    closeViewer()
+    const r = new Room({ adaptiveStream: true })
+    viewer = { room: r, name }
+    r.on(RoomEvent.TrackSubscribed, (track, pub) => {
+      if (viewer?.room !== r) return
+      if (track.kind === Track.Kind.Video && pub.source === Track.Source.ScreenShare) {
+        viewerTrack.value = track as VideoTrack
+        sync()
+      } else if (track.kind === Track.Kind.Audio && pub.trackName !== CALL_AUDIO) {
+        audio.append(track.attach())
+        if (deafened.value && track instanceof RemoteAudioTrack) track.setVolume(0)
+      }
+    })
+      .on(RoomEvent.TrackUnsubscribed, (track) => {
+        track.detach().forEach((e) => e.remove())
+        if (track === viewerTrack.value) viewerTrack.value = null
+        sync()
+      })
+      .on(RoomEvent.TrackPublished, (pub) => {
+        if (pub.trackName !== CALL_AUDIO) pub.setSubscribed(true)
+      })
+      .on(RoomEvent.Disconnected, () => {
+        if (viewer?.room === r) closeViewer()
+      })
+    try {
+      const { livekit, token } = await streamToken(codeOfRoom(name)!)
+      if (viewer?.room !== r) return
+      await r.connect(livekit, token, { autoSubscribe: false })
+      for (const p of r.remoteParticipants.values())
+        for (const pub of p.trackPublications.values()) if (pub.trackName !== CALL_AUDIO) pub.setSubscribed(true)
+    } catch (err) {
+      if (viewer?.room === r) {
+        client.notify(`Couldn't open the stream: ${message(err)}`)
+        viewer = null
+        r.disconnect()
+        watch_(null)
+      }
+    }
+  }
+
+  function closeViewer() {
+    if (!viewer) return
+    const r = viewer.room
+    viewer = null
+    viewerTrack.value = null
+    for (const p of r.remoteParticipants.values())
+      for (const pub of p.audioTrackPublications.values()) pub.audioTrack?.detach().forEach((e) => e.remove())
+    r.disconnect()
   }
 
   async function join(channel: string) {
@@ -236,6 +313,7 @@ export const useVoice = defineStore('voice', () => {
     const r = room
     room = null
     watching.value = null
+    closeViewer()
     screen.value = false
     blocked.value = false
     audio.replaceChildren()
@@ -306,7 +384,7 @@ export const useVoice = defineStore('voice', () => {
   }
 
   function applyDeafen() {
-    for (const p of room?.remoteParticipants.values() ?? [])
+    for (const p of [...(room?.remoteParticipants.values() ?? []), ...(viewer?.room.remoteParticipants.values() ?? [])])
       for (const pub of p.audioTrackPublications.values())
         if (pub.audioTrack instanceof RemoteAudioTrack) pub.audioTrack.setVolume(deafened.value ? 0 : 1)
   }
@@ -348,6 +426,7 @@ export const useVoice = defineStore('voice', () => {
     camera,
     screen,
     meeting,
+    publicAudio,
     join,
     leave,
     setMuted,

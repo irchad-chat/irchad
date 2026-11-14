@@ -4,7 +4,8 @@
 use std::sync::{Arc, mpsc};
 
 use chad_media::{
-    AudioApp, ContentHint, Preset, ScreenFrame, ScreenSettings, SourceId, Target, Targets, Voice,
+    AudioApp, ContentHint, Preset, Public, ScreenFrame, ScreenSettings, SourceId, Target, Targets,
+    Voice,
 };
 use eframe::egui_wgpu::{self, wgpu};
 use egui::{RichText, vec2};
@@ -424,6 +425,13 @@ pub struct ShareDialog {
     app: Option<String>,
     started: Option<mpsc::Receiver<Result<Option<String>, String>>>,
     error: Option<String>,
+    /// The network can give a share a public link (D87).
+    streams: bool,
+    public: bool,
+    call_audio: bool,
+    /// What to share once chadd has made the link.
+    waiting: Option<(Target, Option<String>, ScreenSettings)>,
+    link: Option<url::Url>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -435,12 +443,17 @@ enum Pick {
 pub enum DialogOutcome {
     Open,
     Closed,
-    /// Sharing; save the portal's new restore token.
-    Shared(Option<String>),
+    /// Ask chadd for a public link: `ShareDialog::stream_created` follows.
+    WantStream,
+    /// Sharing; save the portal's new restore token, and the public link.
+    Shared {
+        restore: Option<String>,
+        link: Option<url::Url>,
+    },
 }
 
 impl ShareDialog {
-    pub fn new(voice: &Voice, ctx: &egui::Context) -> Self {
+    pub fn new(voice: &Voice, ctx: &egui::Context, streams: bool) -> Self {
         let (tx, targets_rx) = mpsc::channel();
         let (v, ctx) = (voice.clone(), ctx.clone());
         tokio::spawn(async move {
@@ -455,7 +468,58 @@ impl ShareDialog {
             app: None,
             started: None,
             error: None,
+            streams,
+            public: false,
+            call_audio: false,
+            waiting: None,
+            link: None,
         }
+    }
+
+    /// chadd answered `WantStream`: share into the stream's room, or say why not.
+    pub fn stream_created(
+        &mut self,
+        result: Result<chad_core::StreamLink, String>,
+        voice: &Voice,
+        ctx: &egui::Context,
+    ) {
+        let Some((target, app, settings)) = self.waiting.take() else {
+            return;
+        };
+        match result {
+            Ok(link) => {
+                let public = Public {
+                    livekit: link.livekit,
+                    token: link.token,
+                    room: link.room,
+                    call_audio: self.call_audio,
+                };
+                self.link = Some(link.url);
+                self.start(voice, ctx, target, app, settings, Some(public));
+            }
+            Err(e) => {
+                self.started = None;
+                self.error = Some(format!("Couldn't make a public link: {e}"));
+            }
+        }
+    }
+
+    fn start(
+        &mut self,
+        voice: &Voice,
+        ctx: &egui::Context,
+        target: Target,
+        app: Option<String>,
+        settings: ScreenSettings,
+        public: Option<Public>,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        let (v, ctx) = (voice.clone(), ctx.clone());
+        tokio::spawn(async move {
+            let _ = tx.send(v.share(target, app, settings, public).await);
+            ctx.request_repaint();
+        });
+        self.started = Some(rx);
     }
 
     pub fn show(
@@ -477,11 +541,19 @@ impl ShareDialog {
         {
             self.started = None;
             match r {
-                Ok(token) => return DialogOutcome::Shared(token),
+                Ok(restore) => {
+                    if let Some(link) = &self.link {
+                        ctx.copy_text(link.to_string());
+                    }
+                    return DialogOutcome::Shared {
+                        restore,
+                        link: self.link.take(),
+                    };
+                }
                 Err(e) => self.error = Some(e),
             }
         }
-        let busy = self.started.is_some();
+        let busy = self.started.is_some() || self.waiting.is_some();
         let mut outcome = DialogOutcome::Open;
         egui::Modal::new(egui::Id::unique("share-screen")).show(ctx, |ui| {
             ui.set_width(420.0);
@@ -579,6 +651,23 @@ impl ShareDialog {
                         );
                         ui.end_row();
                     });
+                if self.streams {
+                    ui.add_space(8.0);
+                    ui.checkbox(&mut self.public, "Get a public link")
+                        .on_hover_text(
+                            "Anyone with the link can watch in a browser, no account needed.",
+                        );
+                    ui.add_enabled_ui(self.public, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add_space(24.0);
+                            ui.checkbox(&mut self.call_audio, "Include the call's audio")
+                                .on_hover_text(
+                                    "Everyone's voice in this call goes out with the stream. \
+                                     They'll see that it does.",
+                                );
+                        });
+                    });
+                }
             });
             if let Some(e) = &self.error {
                 ui.add_space(4.0);
@@ -598,19 +687,15 @@ impl ShareDialog {
                     outcome = DialogOutcome::Closed;
                 }
                 if go && let Some(target) = target {
-                    let (tx, rx) = mpsc::channel();
-                    let (v, s, app, ctx) = (
-                        voice.clone(),
-                        settings.clone(),
-                        self.app.clone(),
-                        ctx.clone(),
-                    );
-                    tokio::spawn(async move {
-                        let _ = tx.send(v.share(target, app, s).await);
-                        ctx.request_repaint();
-                    });
-                    self.started = Some(rx);
                     self.error = None;
+                    let (app, s) = (self.app.clone(), settings.clone());
+                    if self.streams && self.public {
+                        self.waiting = Some((target, app, s));
+                        outcome = DialogOutcome::WantStream;
+                    } else {
+                        self.link = None;
+                        self.start(voice, ctx, target, app, s, None);
+                    }
                 }
             }
         });

@@ -3,6 +3,7 @@
 //! track without simulcast, plus an app's audio if one was picked. Watching
 //! someone else's share decodes into [`ScreenFrame`]s for the UI.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
@@ -194,21 +195,64 @@ pub trait ScreenSource: Send {}
 pub(crate) struct Share {
     pub id: u64,
     pub _capture: Box<dyn ScreenSource>,
+    /// Where the tracks went: the call's room, or a public stream's own (D87).
     pub room: Arc<Room>,
     pub tracks: Vec<TrackSid>,
     /// Capture threads end shares too, outside the runtime.
     pub rt: tokio::runtime::Handle,
+    /// A public stream's: the call's room, and whether the call's audio goes too.
+    pub public: Option<(Arc<Room>, bool)>,
 }
 
 impl Drop for Share {
     fn drop(&mut self) {
         let (room, tracks) = (self.room.clone(), std::mem::take(&mut self.tracks));
+        let public = self.public.take();
         self.rt.spawn(async move {
-            for sid in tracks {
-                let _ = room.local_participant().unpublish_track(&sid).await;
+            let Some((call, _)) = public else {
+                for sid in tracks {
+                    let _ = room.local_participant().unpublish_track(&sid).await;
+                }
+                return;
+            };
+            let _ = room.close().await;
+            let off = HashMap::from([
+                (STREAM.to_owned(), String::new()),
+                (STREAM_AUDIO.to_owned(), String::new()),
+            ]);
+            if let Err(e) = call.local_participant().set_attributes(off).await {
+                tracing::debug!("clearing the stream attributes: {e}");
             }
         });
     }
+}
+
+/// Where to send a share that gets a public link (D87), instead of the call.
+#[derive(Debug, Clone)]
+pub struct Public {
+    pub livekit: String,
+    /// chadd's publish-only token for `room`.
+    pub token: String,
+    pub room: String,
+    /// Mix the call's voices (and ours) into the stream too.
+    pub call_audio: bool,
+}
+
+/// Attributes on the streamer in the call's room: the stream's room, and "1"
+/// when the call's audio goes out with it.
+pub(crate) const STREAM: &str = "stream";
+pub(crate) const STREAM_AUDIO: &str = "stream_audio";
+/// The call-audio track's name in a stream's room; call members skip it.
+pub(crate) const CALL_AUDIO: &str = "call-audio";
+
+/// Whether `room` names a stream's room: what chadd makes, `stream-<code>`.
+// shortcut: mirrors chad_proto::stream::code_of_room; chad-media doesn't depend on chad-proto.
+pub(crate) fn stream_room(room: &str) -> bool {
+    room.strip_prefix("stream-").is_some_and(|c| {
+        c.len() == 36
+            && c.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'v').contains(&b))
+    })
 }
 
 /// A decoded frame of the share being watched, I420 with its strides.
@@ -228,13 +272,17 @@ pub(crate) async fn start(
     target: Target,
     app: Option<String>,
     settings: ScreenSettings,
+    public: Option<Public>,
 ) -> Result<Option<String>, String> {
     let shared = &voice.shared;
-    let room = lock(&shared.room)
+    let call = lock(&shared.room)
         .clone()
         .ok_or("Join voice to share your screen.")?;
+    if public.as_ref().is_some_and(|p| !stream_room(&p.room)) {
+        return Err("The server sent something odd. Try again later.".into());
+    }
     // LiveKit doesn't answer a publish it won't allow; it just times out.
-    let allowed = room.local_participant().permission().is_none_or(|p| {
+    let allowed = call.local_participant().permission().is_none_or(|p| {
         p.can_publish
             && (p.can_publish_sources.is_empty()
                 || p.can_publish_sources.contains(&PROTO_SCREEN_SHARE))
@@ -275,6 +323,33 @@ pub(crate) async fn start(
         Target::Pattern => (pattern(fps, sink), None),
     };
 
+    // A public share goes only to its stream's room, which call members
+    // watch too: one encode, one upload (D87).
+    let room = match &public {
+        None => call.clone(),
+        Some(p) => {
+            let mut options = RoomOptions::default();
+            options.auto_subscribe = false;
+            let (room, events) =
+                Room::connect(&p.livekit, &p.token, options)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!("stream connect: {e}");
+                        "Couldn't start the stream.".to_owned()
+                    })?;
+            let v = voice.clone();
+            tokio::spawn(stream_ended(events, move || v.end_share(id, false)));
+            Arc::new(room)
+        }
+    };
+    let close = |room: Arc<Room>| {
+        if public.is_some() {
+            tokio::spawn(async move {
+                let _ = room.close().await;
+            });
+        }
+    };
+
     let (codec, backend) = codec();
     let track = LocalVideoTrack::create_video_track("screen", RtcVideoSource::Native(source));
     let publication = room
@@ -297,11 +372,15 @@ pub(crate) async fn start(
                 ..Default::default()
             },
         )
-        .await
-        .map_err(|e| {
+        .await;
+    let publication = match publication {
+        Ok(p) => p,
+        Err(e) => {
             tracing::warn!("publishing the screen: {e}");
-            "Couldn't share your screen.".to_owned()
-        })?;
+            close(room);
+            return Err("Couldn't share your screen.".to_owned());
+        }
+    };
     let mut tracks = vec![publication.sid()];
     tracing::info!("screen share: {codec:?}, asked for the {backend:?} encoder");
     log_encoder(room.clone());
@@ -345,6 +424,27 @@ pub(crate) async fn start(
         }
     }
 
+    let mut call_audio = false;
+    if let Some(p) = &public {
+        if p.call_audio {
+            call_audio = publish_call_audio(shared, &room, id).await;
+        }
+        let attrs = HashMap::from([
+            (STREAM.to_owned(), p.room.clone()),
+            (
+                STREAM_AUDIO.to_owned(),
+                if call_audio { "1" } else { "" }.to_owned(),
+            ),
+        ]);
+        if let Err(e) = call.local_participant().set_attributes(attrs).await {
+            // Without it, nobody in the call knows where to watch.
+            tracing::warn!("setting the stream attributes: {e}");
+            close(room);
+            shared.set_call_mix(None, Some(id));
+            return Err("Couldn't start the stream.".into());
+        }
+    }
+
     shared.set_share(
         Share {
             id,
@@ -352,10 +452,65 @@ pub(crate) async fn start(
             room,
             tracks,
             rt: tokio::runtime::Handle::current(),
+            public: public.map(|_| (call, call_audio)),
         },
         false,
     );
     Ok(token)
+}
+
+/// The call's mix as a track in the stream's room, fed by the DSP thread.
+async fn publish_call_audio(shared: &Arc<Shared>, room: &Room, id: u64) -> bool {
+    let source = NativeAudioSource::new(
+        AudioSourceOptions {
+            echo_cancellation: false,
+            noise_suppression: false,
+            auto_gain_control: false,
+        },
+        RATE,
+        1,
+        0,
+    );
+    let track =
+        LocalAudioTrack::create_audio_track(CALL_AUDIO, RtcAudioSource::Native(source.clone()));
+    let published = room
+        .local_participant()
+        .publish_track(
+            LocalTrack::Audio(track),
+            TrackPublishOptions {
+                source: TrackSource::Unknown,
+                dtx: true,
+                audio_encoding: Some(livekit::options::AudioEncoding {
+                    max_bitrate: 96_000,
+                }),
+                ..Default::default()
+            },
+        )
+        .await;
+    match published {
+        Ok(_) => {
+            shared.set_call_mix(Some(source), Some(id));
+            true
+        }
+        Err(e) => {
+            tracing::warn!("publishing the call audio: {e}");
+            false
+        }
+    }
+}
+
+/// Runs `end` once a stream's room is gone (we closed it, or the server did).
+async fn stream_ended(
+    mut events: tokio::sync::mpsc::UnboundedReceiver<RoomEvent>,
+    end: impl FnOnce(),
+) {
+    while let Some(ev) = events.recv().await {
+        if let RoomEvent::Disconnected { reason } = ev {
+            tracing::info!("stream room closed: {reason:?}");
+            break;
+        }
+    }
+    end();
 }
 
 struct Pattern(Arc<std::sync::atomic::AtomicBool>);

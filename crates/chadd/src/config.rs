@@ -49,7 +49,7 @@ pub struct Config {
     pub discord_games: bool,
     /// Leave out to turn account deletion by chadd off; clients then only unregister.
     pub delete: Option<Delete>,
-    /// Leave out to turn meetings off (D86).
+    /// Leave out to turn meetings and public streams off (D86, D87).
     pub meetings: Option<Meetings>,
 }
 
@@ -249,6 +249,8 @@ pub struct Endpoints {
     pub livekit: Option<Url>,
     /// The web client, where meeting links send guests. Default `<origin>/chat/`.
     pub web: Option<Url>,
+    /// Shown on the invite page for regular IRC clients. Default `ircs://<origin host>:6697`.
+    pub ircs: Option<Url>,
 }
 
 fn default_listen() -> SocketAddr {
@@ -331,6 +333,16 @@ impl Config {
         Ok(match &self.endpoints.web {
             Some(u) => u.clone(),
             None => self.origin.join("/chat/")?,
+        })
+    }
+
+    pub fn ircs(&self) -> anyhow::Result<Url> {
+        Ok(match &self.endpoints.ircs {
+            Some(u) => u.clone(),
+            None => Url::parse(&format!(
+                "ircs://{}:6697",
+                self.origin.host_str().unwrap_or_default()
+            ))?,
         })
     }
 

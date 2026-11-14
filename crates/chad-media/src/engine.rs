@@ -65,18 +65,26 @@ pub struct Source {
     gain: f32,
     /// Latency cap; more than [`MAX_QUEUE`] for a source that delays itself.
     max_queue: usize,
+    /// Goes into a public stream's call audio (D87): not whispers, not
+    /// others' screen shares.
+    public: bool,
 }
 
 impl Source {
-    fn mix(&mut self, out: &mut [i16], deaf: bool) {
+    /// Into `out` at our volume, and into `stream` as sent, whatever we hear.
+    fn mix(&mut self, out: &mut [i16], deaf: bool, stream: Option<&mut [i16]>) {
         let excess = self.rx.slots().saturating_sub(self.max_queue + out.len());
         for _ in 0..excess {
             let _ = self.rx.pop();
         }
-        for o in out.iter_mut() {
+        let mut stream = stream.filter(|_| self.public);
+        for (i, o) in out.iter_mut().enumerate() {
             let Ok(x) = self.rx.pop() else { break };
             if !deaf {
                 *o = o.saturating_add((f32::from(x) * self.gain) as i16);
+            }
+            if let Some(s) = stream.as_deref_mut().and_then(|s| s.get_mut(i)) {
+                *s = s.saturating_add(x);
             }
         }
     }
@@ -94,6 +102,8 @@ pub struct Rt {
     far: Option<Producer<i16>>,
     /// The chime playing now, and how far into it we are.
     cue: Option<(Vec<i16>, usize)>,
+    /// The call's mix for a public stream (D87), and a buffer to build it in.
+    stream: Option<(Producer<i16>, Vec<i16>)>,
 }
 
 /// A short sound in the call we're in.
@@ -197,7 +207,7 @@ pub struct Shared {
     dsp: Mutex<Option<(Arc<AtomicBool>, JoinHandle<()>)>>,
     /// The call's room, for screen share and watching.
     pub room: Mutex<Option<Arc<livekit::Room>>>,
-    share: Mutex<Option<Share>>,
+    pub(crate) share: Mutex<Option<Share>>,
     camera: Mutex<Option<Share>>,
     shares: AtomicU64,
     /// A share (`[0]`) or camera (`[1]`) whose capture ended before it was stored.
@@ -210,6 +220,10 @@ pub struct Shared {
     /// We watch our own share or camera ([`PREVIEW_SCREEN`],
     /// [`PREVIEW_CAMERA`]; 0 for neither): its encoder puts what it sends in `screen`.
     pub preview: AtomicU8,
+    /// Share id, the call-audio track's source, and the mix `render` makes for it (D87).
+    call_mix: Mutex<Option<(u64, NativeAudioSource, Consumer<i16>)>>,
+    /// The public stream we watch from its own room (D87).
+    pub(crate) viewer: Mutex<Option<crate::room::Viewer>>,
 }
 
 pub const PREVIEW_SCREEN: u8 = 1;
@@ -247,6 +261,8 @@ impl Shared {
             watching: Mutex::default(),
             screen: Mutex::default(),
             preview: AtomicU8::new(0),
+            call_mix: Mutex::default(),
+            viewer: Mutex::default(),
         }
     }
 
@@ -402,7 +418,7 @@ impl Shared {
 
     /// A ring for one remote track; the caller pushes its audio.
     pub fn add_source(&self, key: &str, identity: &str, kind: Kind) -> Option<Producer<i16>> {
-        self.add_delayed_source(key, identity, kind, 0)
+        self.add_delayed_source(key, identity, kind, 0, kind != Kind::Screen)
     }
 
     /// Like [`Shared::add_source`], with room for `delay` more samples queued.
@@ -412,6 +428,7 @@ impl Shared {
         identity: &str,
         kind: Kind,
         delay: usize,
+        public: bool,
     ) -> Option<Producer<i16>> {
         let (tx, rx) = RingBuffer::new(RING + delay);
         let gain = match kind {
@@ -429,6 +446,7 @@ impl Shared {
             rx,
             gain,
             max_queue: MAX_QUEUE + delay,
+            public,
         });
         Some(tx)
     }
@@ -440,6 +458,32 @@ impl Shared {
 
     pub fn remove_source(&self, key: &str) {
         lock(&self.rt).sources.retain(|s| s.key != key);
+    }
+
+    pub fn remove_sources(&self, prefix: &str) {
+        lock(&self.rt)
+            .sources
+            .retain(|s| !s.key.starts_with(prefix));
+    }
+
+    /// Starts feeding share `id`'s call-audio track, or stops (only `id`'s, if given).
+    pub fn set_call_mix(&self, source: Option<NativeAudioSource>, id: Option<u64>) {
+        let mut mix = lock(&self.call_mix);
+        if source.is_none() && id.is_some_and(|id| mix.as_ref().is_none_or(|m| m.0 != id)) {
+            return;
+        }
+        let (tx, rx) = RingBuffer::new(RING);
+        let mut rt = lock(&self.rt);
+        match (source, id) {
+            (Some(source), Some(id)) => {
+                rt.stream = Some((tx, Vec::new()));
+                *mix = Some((id, source, rx));
+            }
+            _ => {
+                rt.stream = None;
+                *mix = None;
+            }
+        }
     }
 
     pub fn call(&self) -> Option<CallState> {
@@ -472,8 +516,23 @@ impl Shared {
             return;
         };
         let deaf = self.deafened();
-        for s in rt.sources.iter_mut().filter(|s| s.key != LOOPBACK) {
-            s.mix(out, deaf);
+        let Rt {
+            sources, stream, ..
+        } = &mut *rt;
+        let mut stream = stream.as_mut();
+        if let Some((_, buf)) = stream.as_mut() {
+            buf.clear();
+            buf.resize(out.len(), 0);
+        }
+        for s in sources.iter_mut().filter(|s| s.key != LOOPBACK) {
+            s.mix(out, deaf, stream.as_mut().map(|(_, b)| b.as_mut_slice()));
+        }
+        if let Some((tx, buf)) = stream {
+            for &x in buf.iter() {
+                if tx.push(x).is_err() {
+                    break;
+                }
+            }
         }
         if let Some((cue, pos)) = &mut rt.cue {
             for (o, &x) in out.iter_mut().zip(&cue[*pos..]) {
@@ -494,7 +553,7 @@ impl Shared {
         // After the AEC reference: our own voice in it makes the AEC suppress
         // the mic test as echo.
         for s in rt.sources.iter_mut().filter(|s| s.key == LOOPBACK) {
-            s.mix(out, deaf);
+            s.mix(out, deaf, None);
         }
     }
 
@@ -662,6 +721,18 @@ fn dsp(shared: &Shared, mut near: Consumer<i16>, mut far: Consumer<i16>, stop: &
         if let Some(w) = whisper_source {
             send(&w, &whisper, "whisper");
         }
+        // The call as everyone hears it, plus what we sent (never a whisper),
+        // for a public stream (D87). Paced by the mic too.
+        if let Some((_, source, rx)) = &mut *lock(&shared.call_mix) {
+            for _ in 0..rx.slots().saturating_sub(MAX_QUEUE) {
+                let _ = rx.pop();
+            }
+            let mut mix = frame;
+            for m in &mut mix {
+                *m = m.saturating_add(rx.pop().unwrap_or(0));
+            }
+            send(source, &mix, "call audio");
+        }
         // Paced by the mic, like the mic: a clip only plays in a call, unmuted.
         if next_clip(shared, board_source.is_some(), &mut board) {
             if let Some(b) = &board_source {
@@ -771,6 +842,31 @@ mod tests {
         assert!(shared.muted());
         shared.remove_source("a");
         assert_eq!(lock(&shared.rt).sources.len(), 1);
+    }
+
+    #[test]
+    fn stream_mix_is_the_call_as_sent_without_whispers_or_shares() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let (tx, mut rx) = RingBuffer::new(RING);
+        lock(&shared.rt).stream = Some((tx, Vec::new()));
+        let mut a = shared.add_source("a", "alice", Kind::Mic).unwrap();
+        let mut w = shared
+            .add_delayed_source("w", "bob", Kind::Mic, 0, false)
+            .unwrap();
+        let mut c = shared.add_source("c", "bob", Kind::Screen).unwrap();
+        // Our volume and deafen are ours alone.
+        shared.set_volume("alice", false, 0.5);
+        shared.set_deafened(true);
+        for _ in 0..4 {
+            a.push(1000).unwrap();
+            w.push(3000).unwrap();
+            c.push(5000).unwrap();
+        }
+        let mut out = [0i16; 4];
+        shared.render(&mut out);
+        assert_eq!(out, [0; 4]);
+        let mixed: Vec<i16> = std::iter::from_fn(|| rx.pop().ok()).collect();
+        assert_eq!(mixed, [1000; 4]);
     }
 
     #[test]
@@ -889,7 +985,7 @@ mod tests {
         let shared = Shared::new(Arc::new(|| {}));
         let delay = Cue::Whisper.samples().len();
         let mut tx = shared
-            .add_delayed_source("w", "alice", Kind::Mic, delay)
+            .add_delayed_source("w", "alice", Kind::Mic, delay, false)
             .unwrap();
         for _ in 0..delay {
             tx.push(0).unwrap();

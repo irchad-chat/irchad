@@ -66,6 +66,7 @@ pub(crate) async fn start(voice: &Voice) -> Result<(), String> {
             room,
             tracks: vec![publication.sid()],
             rt: tokio::runtime::Handle::current(),
+            public: None,
         },
         true,
     );

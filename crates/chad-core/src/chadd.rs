@@ -251,6 +251,53 @@ pub async fn create_meeting(
     Ok(r)
 }
 
+/// A public link for our screen share (D87), and the token to publish it.
+pub async fn create_stream(
+    api: &Url,
+    session: &str,
+) -> Result<chad_proto::stream::CreateStreamResponse, Error> {
+    let r: chad_proto::stream::CreateStreamResponse =
+        post(api, chadd::STREAM, Some(session), &()).await?;
+    // Server input (D14): a link and a LiveKit URL we'd open, a sane token.
+    let ok = matches!(r.url.scheme(), "https" | "http")
+        && livekit_url(&r.livekit)
+        && chad_proto::stream::code_of_room(&r.room).is_some()
+        && token_ok(&r.token);
+    if !ok {
+        return Err(Error::Other(
+            "The server sent something odd. Try again later.".into(),
+        ));
+    }
+    Ok(r)
+}
+
+/// A token to watch a call member's public share from its room (D87).
+pub async fn stream_token(
+    api: &Url,
+    session: &str,
+    code: &str,
+) -> Result<chad_proto::stream::StreamTokenResponse, Error> {
+    let req = chad_proto::stream::StreamTokenRequest {
+        code: code.to_owned(),
+    };
+    let r: chad_proto::stream::StreamTokenResponse =
+        post(api, chadd::STREAM_TOKEN, Some(session), &req).await?;
+    if !livekit_url(&r.livekit) || !token_ok(&r.token) {
+        return Err(Error::Other(
+            "The server sent something odd. Try again later.".into(),
+        ));
+    }
+    Ok(r)
+}
+
+fn livekit_url(u: &Url) -> bool {
+    matches!(u.scheme(), "wss" | "ws" | "https" | "http")
+}
+
+fn token_ok(t: &str) -> bool {
+    !t.is_empty() && t.len() <= 4096
+}
+
 /// Uploads a file; the URL it's served at.
 pub async fn upload(api: &Url, session: &str, name: &str, bytes: Vec<u8>) -> Result<Url, Error> {
     // RFC 6266's `filename*` carries any name; chadd sanitizes it anyway.

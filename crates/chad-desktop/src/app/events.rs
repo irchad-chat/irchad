@@ -126,6 +126,25 @@ impl App {
                 }
                 Err(e) => self.toast(format!("Couldn't start a meeting: {e}")),
             },
+            Event::StreamCreated { result, .. } => {
+                if let Some(d) = &mut self.share_dialog {
+                    d.stream_created(result, &self.voice, ctx);
+                }
+            }
+            Event::StreamToken { room, result, .. } => match result {
+                Ok((url, token)) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let (v, ctx) = (self.voice.clone(), ctx.clone());
+                    tokio::spawn(async move {
+                        if let Err(e) = v.watch_stream(room, &url, &token).await {
+                            let _ = tx.send(e);
+                            ctx.request_repaint();
+                        }
+                    });
+                    self.stream_status = Some(rx);
+                }
+                Err(e) => self.toast(format!("Couldn't open the stream: {e}")),
+            },
             Event::Uploaded {
                 network,
                 target,

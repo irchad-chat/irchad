@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 pub use room::Call;
 pub use screen::{
-    AudioApp, ContentHint, Preset, ScreenFrame, ScreenSettings, ShareSource, SourceId, Target,
-    Targets,
+    AudioApp, ContentHint, Preset, Public, ScreenFrame, ScreenSettings, ShareSource, SourceId,
+    Target, Targets,
 };
 pub use sound::{MAX_SECS as MAX_SOUND_SECS, load as load_sound};
 
@@ -119,6 +119,10 @@ pub struct Participant {
     pub local: bool,
     /// Has a screen share up.
     pub sharing: bool,
+    /// The share has a public link: its stream's room (D87).
+    pub stream: Option<String>,
+    /// The call's audio goes out with that stream: everyone here is public.
+    pub stream_audio: bool,
     /// How many others watch that share.
     pub watchers: u32,
     /// Has their camera on.
@@ -302,14 +306,17 @@ impl Voice {
     }
 
     /// Shares a screen or window (and an [`AudioApp::id`]'s audio) into the
-    /// call, replacing any share. Returns the portal's new restore token.
+    /// call, replacing any share. With `public`, it goes to that stream's
+    /// room instead, which the call watches too (D87). Returns the portal's
+    /// new restore token.
     pub async fn share(
         &self,
         target: Target,
         app: Option<String>,
         settings: ScreenSettings,
+        public: Option<Public>,
     ) -> Result<Option<String>, String> {
-        screen::start(self, target, app, settings).await
+        screen::start(self, target, app, settings, public).await
     }
 
     pub fn stop_share(&self) {
@@ -318,6 +325,24 @@ impl Voice {
 
     pub fn sharing(&self) -> bool {
         self.shared.sharing()
+    }
+
+    /// Our share has a public link (D87).
+    pub fn streaming(&self) -> bool {
+        engine::lock(&self.shared.share)
+            .as_ref()
+            .is_some_and(|s| s.public.is_some())
+    }
+
+    /// The stream room of the share we watch, while we still need a token
+    /// for it (D87): hand one to [`Voice::watch_stream`].
+    pub fn stream_wanted(&self) -> Option<String> {
+        room::stream_wanted(&self.shared)
+    }
+
+    /// Watches the share in stream room `room` with a token for it.
+    pub async fn watch_stream(&self, room: String, url: &str, token: &str) -> Result<(), String> {
+        room::watch_stream(&self.shared, room, url, token).await
     }
 
     /// The capture behind share `id` ended by itself.
@@ -358,6 +383,7 @@ impl Voice {
         if let Some(share) = self.shared.take_share(id, camera) {
             if !camera {
                 self.backend.capture_app(None);
+                self.shared.set_call_mix(None, Some(share.id));
             }
             drop(share);
             self.shared.play_cue(engine::Cue::ShareEnd);

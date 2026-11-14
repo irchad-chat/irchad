@@ -62,6 +62,8 @@ pub enum PanelAction {
     StopCamera,
     /// Watch our own share.
     Preview,
+    /// Copy our share's public link again (D87).
+    CopyLink,
     /// The soundboard opened: list the network's sounds again.
     Soundboard,
     /// Play this soundboard file.
@@ -69,6 +71,7 @@ pub enum PanelAction {
 }
 
 /// Bottom of the channel list while in a call (on any network).
+#[allow(clippy::too_many_arguments)]
 pub fn panel(
     ui: &mut egui::Ui,
     voice: &Voice,
@@ -77,6 +80,7 @@ pub fn panel(
     ptt: Option<&Ptt>,
     sounds: Option<&[Sound]>,
     audio: &mut AudioSettings,
+    streaming: bool,
 ) -> Option<PanelAction> {
     let call = voice.call();
     let (text, color, channel) = match state {
@@ -131,6 +135,29 @@ pub fn panel(
             );
         }
     }
+    // Everyone in the call should know when what they say goes public (D87).
+    if let Some(p) = call
+        .as_ref()
+        .and_then(|c| c.participants.iter().find(|p| p.stream_audio))
+    {
+        let who = if p.local {
+            "You're"
+        } else {
+            p.identity.as_str()
+        };
+        let text = if p.local {
+            format!(
+                "{} {who} streaming this call's audio publicly",
+                icons::BROADCAST
+            )
+        } else {
+            format!(
+                "{} {who} is streaming this call's audio publicly",
+                icons::BROADCAST
+            )
+        };
+        ui.label(RichText::new(text).small().color(DANGER));
+    }
     if voice.sharing() {
         let watchers = call
             .as_ref()
@@ -152,6 +179,14 @@ pub fn panel(
                 .clicked()
             {
                 action = Some(PanelAction::Preview);
+            }
+            if streaming
+                && ui
+                    .small_button(RichText::new("Copy link").color(DANGER))
+                    .on_hover_text("Anyone with the link can watch. Stop sharing to end it.")
+                    .clicked()
+            {
+                action = Some(PanelAction::CopyLink);
             }
         });
     }

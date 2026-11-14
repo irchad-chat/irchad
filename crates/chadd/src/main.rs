@@ -15,6 +15,7 @@ mod gifs;
 mod meeting;
 mod routes;
 mod sounds;
+mod stream;
 
 use config::Config;
 

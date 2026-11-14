@@ -16,6 +16,10 @@ const client = useClient()
       <button class="link ellipsis dim small" @click="client.select(voice.call.channel)">{{ voice.call.channel }}</button>
     </div>
     <button v-if="voice.blocked" class="primary small" @click="voice.startAudio()">Turn on sound</button>
+    <p v-if="voice.publicAudio" class="err small public">
+      <i class="ph ph-broadcast" />
+      {{ voice.publicAudio.local ? "You're" : `${voice.publicAudio.shown} is` }} streaming this call's audio publicly
+    </p>
     <button
       :class="{ off: voice.muted }"
       :aria-pressed="voice.muted"
@@ -41,8 +45,14 @@ const client = useClient()
 </template>
 
 <style scoped>
+.public {
+  order: 10;
+  flex-basis: 100%;
+  margin: 0;
+}
 .voice-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 8px 12px;

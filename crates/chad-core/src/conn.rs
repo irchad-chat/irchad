@@ -20,7 +20,7 @@ use crate::login::{self, Account, Login, Step};
 use crate::manager::Sink;
 use crate::net::Net;
 use crate::secrets::SecretStore;
-use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, discovery};
+use crate::{Blob, ConnState, Event, Media, MediaEvent, NetCommand, StreamLink, discovery};
 
 pub enum ToNet {
     Cmd(NetCommand),
@@ -754,6 +754,39 @@ fn fetch(
                     .await
                     .map(|r| (r.channel, r.url));
                 sink.send([Event::MeetingCreated { network, result }]);
+            });
+        }
+        NetCommand::CreateStream => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| async move { chadd::create_stream(&api, &t).await })
+                    .await
+                    .map(|r| StreamLink {
+                        url: r.url,
+                        room: r.room,
+                        livekit: r.livekit.to_string(),
+                        token: r.token,
+                    });
+                sink.send([Event::StreamCreated { network, result }]);
+            });
+        }
+        NetCommand::StreamToken { room } => {
+            tokio::spawn(async move {
+                let result = match chad_proto::stream::code_of_room(&room) {
+                    Some(code) => client
+                        .call(|api, t| {
+                            let code = code.clone();
+                            async move { chadd::stream_token(&api, &t, &code).await }
+                        })
+                        .await
+                        .map(|r| (r.livekit.to_string(), r.token)),
+                    None => Err("That isn't a stream.".into()),
+                };
+                sink.send([Event::StreamToken {
+                    network,
+                    room,
+                    result,
+                }]);
             });
         }
         NetCommand::Preview { url } => {
