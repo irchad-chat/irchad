@@ -4,7 +4,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-use chad_proto::discovery::{Discovery, VERSION, WELL_KNOWN_PATH};
+use chad_proto::discovery::{Discovery, Registration, VERSION, WELL_KNOWN_PATH};
 #[cfg(not(target_arch = "wasm32"))]
 use url::Url;
 
@@ -24,6 +24,18 @@ pub async fn fetch(origin: &str) -> Result<Discovery, String> {
         Ok(Some(body)) => parse(&body).ok_or_else(|| not_irchad(host)),
         Ok(None) => Err(not_irchad(host)),
         Err(e) => Err(unreachable(e)),
+    }
+}
+
+/// The sign-in screen's choices on the IrChad server at `origin`.
+pub fn server_info(origin: String, d: &Discovery) -> crate::ServerInfo {
+    crate::ServerInfo {
+        origin,
+        name: chad_proto::one_line(&d.name, 64),
+        sign_up: d.registration == Registration::Open,
+        guests: d.guests,
+        discord: d.chadd.discord,
+        classic: false,
     }
 }
 

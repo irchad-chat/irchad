@@ -40,6 +40,16 @@ impl App {
                 }
                 _ => self.toast(error),
             },
+            Event::Discovered { invite, server } => {
+                if let Some(j) = &mut self.join
+                    && j.busy.as_deref() == Some(&invite)
+                    && j.discord.is_none()
+                {
+                    j.busy = None;
+                    j.url = invite;
+                    j.server = Some(server);
+                }
+            }
             Event::OpenUrl { url } => {
                 if let Some(j) = &mut self.join
                     && let Some(DiscordStep::Browser(link)) = &mut j.discord

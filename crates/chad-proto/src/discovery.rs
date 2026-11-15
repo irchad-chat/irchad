@@ -20,6 +20,10 @@ pub struct Discovery {
     pub chadd: Chadd,
     pub livekit: Livekit,
     pub registration: Registration,
+    /// Set when people can join with just a nickname, no account. ergo decides
+    /// (`accounts.require-sasl`); this only tells apps whether to offer it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub guests: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +101,7 @@ mod tests {
         let d: Discovery = serde_json::from_str(json).unwrap();
         assert_eq!(d.version, VERSION);
         assert_eq!(d.registration, Registration::Open);
+        assert!(!d.guests);
         assert_eq!(d.irc.websocket.as_str(), "wss://chat.example.com/irc");
     }
 }

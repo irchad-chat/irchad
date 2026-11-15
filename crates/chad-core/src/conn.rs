@@ -332,6 +332,7 @@ fn classic_discovery(origin: &str) -> Result<Discovery, String> {
         },
         livekit: proto_discovery::Livekit { url },
         registration: Registration::Closed,
+        guests: true,
     })
 }
 

@@ -220,6 +220,9 @@ fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: 
     LaunchedEffect(settled, nets.isEmpty()) { if (settled && nets.isEmpty()) adding = true }
     val close = { adding = false; inviteTaken() }
     when {
+        // First launch: what a network is, before the join screen asks for one.
+        !app.settings.welcomed && nets.isEmpty() ->
+            if (settled) WelcomeScreen { app.settings.welcomed = true } else Surface(Modifier.fillMaxSize()) {}
         invite != null || adding -> JoinScreen(
             app, invite, nets,
             onDone = { origin, channel -> focus = Focus(origin, channel); close() },

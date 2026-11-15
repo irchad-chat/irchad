@@ -24,6 +24,10 @@ pub struct Config {
     pub colors: Colors,
     #[serde(default = "default_registration")]
     pub registration: Registration,
+    /// Apps offer "Continue as guest". Set it when ergo lets people in
+    /// without an account (`accounts.require-sasl.enabled: false`).
+    #[serde(default)]
+    pub guests: bool,
     /// Where the landing page links client builds: `<downloads>/{latest,nightly}/<asset>`,
     /// asset names as in `.gitea/workflows/release.yml`.
     #[serde(default = "default_downloads")]
@@ -421,6 +425,7 @@ impl Config {
                 url: or(&self.endpoints.livekit, &ws_origin, "/livekit")?,
             },
             registration: self.registration,
+            guests: self.guests,
         })
     }
 }
@@ -453,6 +458,7 @@ pub mod tests {
         assert_eq!(d.chadd.api.as_str(), "https://chat.example.com/api");
         assert_eq!(d.livekit.url.as_str(), "wss://chat.example.com/livekit");
         assert_eq!(d.registration, Registration::Open);
+        assert!(!d.guests);
     }
 
     #[test]
@@ -462,6 +468,7 @@ pub mod tests {
             origin = "https://chat.example.com"
             name = "x"
             registration = "closed"
+            guests = true
             [endpoints]
             livekit = "wss://lk.example.com"
             {KEYS}
@@ -471,6 +478,7 @@ pub mod tests {
         let d = c.discovery().unwrap();
         assert_eq!(d.livekit.url.as_str(), "wss://lk.example.com/");
         assert_eq!(d.registration, Registration::Closed);
+        assert!(d.guests);
     }
 
     #[test]

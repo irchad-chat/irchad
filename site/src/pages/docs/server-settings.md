@@ -18,7 +18,8 @@ This page is not a hosting guide. For that, see [Host your own network](https://
 
 | Feature | Setting | Without it |
 |---|---|---|
-| [Signing up](/docs/getting-started#3-choose-how-to-join) in the app | `registration = "open"` | "… isn't taking sign-ups." |
+| [Signing up](/docs/getting-started#3-choose-how-to-join) in the app | `registration = "open"` | No **Sign up** on the sign-in form |
+| [Guests](/docs/getting-started#guest-or-account) | `guests = true`, plus `accounts.require-sasl.enabled: false` in ircd.yaml | No **Continue as guest** on the sign-in form |
 | [Home and official channels](/docs/getting-started#4-youre-in) | `home = "#channel"` | New people join every public channel |
 | Network name and icon in the rail | `name`, `icon` | A letter instead of the icon |
 | [Voice, screen share, camera](/docs/voice) | `[livekit]` → `key`, `secret` (required) | chadd won't start |

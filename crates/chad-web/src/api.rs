@@ -188,3 +188,21 @@ pub fn meeting_channel(code: &str) -> Option<String> {
 pub fn is_meeting(channel: &str) -> bool {
     chad_proto::meeting::is_meeting(channel)
 }
+
+/// The first-visit cards, in order: show them once, before the sign-in form.
+#[wasm_bindgen(js_name = welcomeCards, unchecked_return_type = "{ title: string; body: string }[]")]
+pub fn welcome_cards() -> JsValue {
+    #[derive(serde::Serialize)]
+    struct Card {
+        title: &'static str,
+        body: &'static str,
+    }
+    let cards: Vec<Card> = chad_core::welcome::CARDS
+        .iter()
+        .map(|c| Card {
+            title: c.title,
+            body: c.body,
+        })
+        .collect();
+    crate::snapshot::to_js(&cards)
+}

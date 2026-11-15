@@ -5,7 +5,7 @@ description: "What's different about IrChad on Android and iOS: installing, noti
 order: 6
 ---
 
-The phone apps do chat, encrypted DMs, voice, and watching screen shares. Your phone and your PC are the same account, so you log in with **I have an account**.
+The phone apps do chat, encrypted DMs, voice, and watching screen shares. Your phone and your PC are the same account, so you **Log in** with the account you already have.
 
 ## Android
 
@@ -13,7 +13,7 @@ The phone apps do chat, encrypted DMs, voice, and watching screen shares. Your p
 
 **Google Play beta:** see [Join the Android beta](/beta).
 
-**Join:** tap **Click to Join** on an invite page, or paste the link in the app.
+**Join:** tap **Open in IrChad** on an invite page, or paste the link in the app.
 
 ### Notifications
 

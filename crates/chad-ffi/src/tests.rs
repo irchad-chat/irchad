@@ -100,6 +100,7 @@ impl Listener for Nop {
     fn notice(&self, _: String) {}
     fn uploaded(&self, _: String, _: String, _: String) {}
     fn join_failed(&self, _: String, _: String) {}
+    fn discovered(&self, _: String, _: Server) {}
     fn preview(&self, _: String, _: String, _: Option<LinkPreview>) {}
     fn media(&self, _: String, _: String, _: Option<Vec<u8>>) {}
     fn gifs(&self, _: String, _: String, _: Option<String>, _: GifPage) {}

@@ -26,6 +26,7 @@ pub mod secrets;
 mod store;
 pub mod time;
 pub mod view;
+pub mod welcome;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,6 +48,7 @@ pub use discovery::fetch as fetch_discovery;
 #[cfg(not(target_arch = "wasm32"))]
 pub use discovery::fetch_icon;
 pub use discovery::parse as parse_discovery;
+pub use discovery::server_info;
 pub use emoji::CustomEmoji;
 #[cfg(not(target_arch = "wasm32"))]
 pub use manager::start;
@@ -115,8 +117,31 @@ impl Core {
     }
 }
 
+/// What a server lets people do before they've signed in: the sign-in
+/// screen's choices (`Command::Discover`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerInfo {
+    /// The network's id, as in `NetworkInfo::network`.
+    pub origin: String,
+    /// One line, at most 64 characters.
+    pub name: String,
+    /// Takes sign-ups.
+    pub sign_up: bool,
+    /// Lets people in with just a nickname.
+    pub guests: bool,
+    /// Signs in with Discord (D96).
+    pub discord: bool,
+    /// A classic IRC network, not an IrChad server (D72).
+    pub classic: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum Command {
+    /// The sign-in screen's first step: check the address and say what the
+    /// server offers. `Event::Discovered`, or `Event::JoinFailed`.
+    Discover {
+        invite: String,
+    },
     /// Whatever was pasted or opened: invite URL, `irchad://` link or bare host.
     Join {
         invite: String,
@@ -426,6 +451,11 @@ pub enum Event {
     JoinFailed {
         invite: String,
         error: String,
+    },
+    /// `Command::Discover` found the server.
+    Discovered {
+        invite: String,
+        server: ServerInfo,
     },
     /// Open this in the browser (`Command::DiscordStart`).
     OpenUrl {

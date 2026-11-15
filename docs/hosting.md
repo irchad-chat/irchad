@@ -77,6 +77,7 @@ From a checkout of this repo, copy the files over and fill them in:
   origin = "https://chat.example.com"
   name = "My Network"
   registration = "open"            # or "closed": accounts only by an admin
+  guests = true                    # apps offer "Continue as guest"; leave out to hide it
 
   [ergo]
   api = "http://127.0.0.1:8089"
@@ -135,7 +136,7 @@ curl https://chat.example.com/.well-known/irchad.json    # discovery document
 ```
 
 Open `https://chat.example.com/invite` in a browser. That page is your invite link: send it to friends.
-It has a "Click to Join" button and a download button for their OS.
+It walks them through three steps: download the app for their OS, install it, and come back to press "Open in IrChad".
 Add `?channel=%23general` to drop them in a channel.
 
 ## Running it

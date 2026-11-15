@@ -295,10 +295,19 @@ fn invite_page(
     } else {
         String::new()
     };
-    let hint = if os == "Linux" {
-        r#"<p class="hint">Unpack it and run <code>irchad/install.sh</code>, or just <code>irchad/irchad</code>.</p>"#
-    } else {
-        ""
+    // What to do with the file, in words for someone who's never done it.
+    let install = match os {
+        "Windows" => {
+            "Open the file you downloaded and follow the installer. If Windows says it \
+             protected your PC, click <b>More info</b>, then <b>Run anyway</b>."
+        }
+        "Android" => {
+            "Open the file you downloaded and tap <b>Install</b>. If Android asks, allow \
+             your browser to install apps, then tap <b>Install</b> again."
+        }
+        _ => {
+            "Unpack it and run <code>irchad/install.sh</code>, or just <code>irchad/irchad</code>."
+        }
     };
     shell(
         state,
@@ -310,13 +319,17 @@ fn invite_page(
   <h1>{name}</h1>
   <p class="muted">{host}</p>
   {channel}
-  <div class="actions">
-    {download}
-    <a class="btn secondary" href="{join}">{SIGN_IN}Already installed? Open in IrChad</a>
-  </div>
-  {hint}
+  <ol class="steps">
+    <li><h2>Get the IrChad app</h2>
+      {download}
+      <div class="others">{others}</div></li>
+    <li><h2>Install it</h2>
+      <p class="hint">{install}</p></li>
+    <li><h2>Come back here and join</h2>
+      <a class="btn secondary" href="{join}">{SIGN_IN}Open in IrChad</a>
+      <p class="hint">IrChad opens on {name}. Log in there, or sign up if you're new.</p></li>
+  </ol>
   {irc}
-  <div class="others">{others}</div>
   <footer>{footer}</footer>
 "#
         ),
@@ -471,6 +484,13 @@ fn shell(state: &AppState, title: &str, head: &str, main: &str) -> String {
   .chip {{ display: inline-flex; align-items: center; gap: .375rem; padding: .375rem .75rem; border-radius: 999px;
     border: 1px solid var(--line); color: var(--muted); font-size: .875rem; text-decoration: none; }}
   a.chip:hover {{ color: var(--fg); }}
+  .steps {{ list-style: none; counter-reset: step; margin: 1.5rem 0 0; padding: 0; text-align: left; display: grid; gap: 1.25rem; }}
+  .steps li {{ counter-increment: step; position: relative; padding-left: 2.5rem; }}
+  .steps li::before {{ content: counter(step); position: absolute; left: 0; top: 0; width: 1.75rem; height: 1.75rem;
+    display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); font-weight: 600; font-size: .875rem; }}
+  .steps h2 {{ margin: 0 0 .5rem; font-size: 1rem; line-height: 1.75rem; }}
+  .steps .others {{ justify-content: flex-start; margin-top: .625rem; }}
+  .steps .hint {{ margin: 0; font-size: .875rem; }} .steps .btn + .hint {{ margin-top: .5rem; }}
   footer {{ margin-top: 1.5rem; color: var(--muted); font-size: .75rem; }}
   a:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
 </style>
@@ -603,6 +623,7 @@ mod tests {
         let (status, body) = get_as("/invite", "Mozilla/5.0 (X11; Linux x86_64)").await;
         assert_eq!(status, 200);
         assert!(body.contains("Open in IrChad"));
+        assert!(body.contains("irchad/install.sh"));
         assert!(body.contains(&format!(
             r#"class="btn primary" href="{latest}/irchad-linux-x86_64.tar.gz""#
         )));
@@ -613,7 +634,10 @@ mod tests {
             r#"class="btn primary" href="{latest}/irchad-windows-x86_64-setup.exe""#
         )));
 
+        assert!(body.contains("Run anyway"));
+
         let (_, body) = get_as("/invite", "Mozilla/5.0 (Linux; Android 14)").await;
+        assert!(body.contains("tap <b>Install</b>"));
         assert!(body.contains(&format!(
             r#"class="btn primary" href="{latest}/irchad-android-arm64.apk""#
         )));

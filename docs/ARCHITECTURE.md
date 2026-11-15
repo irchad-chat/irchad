@@ -26,7 +26,7 @@ A network is one origin. Everything about it comes from the discovery document, 
 The whole point of chadd is that a single URL gets a user onto someone else's network.
 
 - **The invite URL** is `https://chat.example.com/invite[/<code>]`.
-  Opening it in a browser gives a chadd-served landing page with a "Click to Join" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download button for the visitor's OS, picked from the User-Agent (chadd's `downloads`: the latest release, with a nightly link on desktop).
+  Opening it in a browser gives a chadd-served landing page of numbered steps (D99) with an "Open in IrChad" button (`irchad://join?origin=https://chat.example.com[&code=..]`) and a download button for the visitor's OS, picked from the User-Agent (chadd's `downloads`: the latest release, with a nightly link on desktop).
 - **Pasting** either form into the client's "Join a network" box works the same.
   A bare `chat.example.com` also works, defaulting to https.
 - **Scheme handler:** on Linux it's `x-scheme-handler/irchad` in the `.desktop` file, and on Windows it's a registry key.
@@ -41,7 +41,8 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
   "irc":     { "websocket": "wss://chat.example.com/irc" },
   "chadd":   { "api": "https://chat.example.com/api", "uploads": { "max_bytes": 26214400 } },
   "livekit": { "url": "wss://chat.example.com/livekit" },
-  "registration": "open"
+  "registration": "open",
+  "guests": true
 }
 ```
 
@@ -51,7 +52,7 @@ The whole point of chadd is that a single URL gets a user onto someone else's ne
 
 ### Classic IRC networks (D72)
 
-The same client also joins ordinary IRC networks (Libera, Rizon, EFnet, …) from the dialog's "Classic IRC" tab.
+The same client also joins ordinary IRC networks (Libera, Rizon, EFnet, …) from the join dialog's small "I know what IRC is and I want to connect to a non-IrChad server" checkbox.
 - The network id is `ircs://host:port` or `irc://host:port`. The scheme alone makes it classic. There's no discovery, chadd or LiveKit, so uploads, GIFs, games, link previews and voice are off.
 - Transport is CRLF lines over TCP, TLS by default (`chad_irc::ws::Connection`, behind the same `send`/`recv` as WebSocket).
 - Login is SASL as the bare account (no `@device`), NickServ `IDENTIFY` when there's no SASL, or no login at all. Taken nicks retry as `nick1`..`nick9`.

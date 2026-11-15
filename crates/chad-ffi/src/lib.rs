@@ -37,8 +37,11 @@ pub trait Listener: Send + Sync {
     fn notice(&self, text: String);
     /// `Client::upload` finished: put `url` in `target`'s draft to send.
     fn uploaded(&self, network: String, target: String, url: String);
-    /// A join never became a network (wrong password, bad invite).
+    /// A join never became a network (wrong password, bad invite), or
+    /// `Client::discover` didn't find a server.
     fn join_failed(&self, invite: String, error: String);
+    /// The answer to `Client::discover`: show the sign-in step for `server`.
+    fn discovered(&self, invite: String, server: Server);
     /// The answer to `Client::preview`: `None` if the page has none.
     fn preview(&self, network: String, url: String, preview: Option<LinkPreview>);
     /// The answer to `Client::media`: the image's bytes (≤ 8 MB, not yet
@@ -176,6 +179,25 @@ pub fn parse_invite(invite: String) -> Option<InviteInfo> {
         origin: i.origin,
         channel: i.channel,
     })
+}
+
+/// One of the first-launch cards.
+#[derive(uniffi::Record)]
+pub struct WelcomeCard {
+    pub title: String,
+    pub body: String,
+}
+
+/// The first-launch cards, in order: show them once, before the join screen.
+#[uniffi::export]
+pub fn welcome_cards() -> Vec<WelcomeCard> {
+    chad_core::welcome::CARDS
+        .iter()
+        .map(|c| WelcomeCard {
+            title: c.title.into(),
+            body: c.body.into(),
+        })
+        .collect()
 }
 
 #[derive(uniffi::Object)]

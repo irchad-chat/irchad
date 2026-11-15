@@ -1,10 +1,6 @@
 import SwiftUI
 
-private enum Mode: String, CaseIterable {
-    case login = "Log in"
-    case register = "Sign up"
-    case guest = "Guest"
-}
+private enum Mode { case login, register, guest }
 
 extension Color {
     /// Discord's blurple, for "Sign in with Discord".
@@ -25,9 +21,10 @@ struct DiscordLabel: View {
     }
 }
 
-/// Paste an invite, log in (or sign up, or be a guest), done. Closes itself
-/// once the network shows up; `onCancel` is nil when there's nothing to go
-/// back to.
+/// The server's address first (an invite link answers that by itself), then
+/// logging in, with signing up and being a guest as the quieter choices the
+/// server offers. Closes itself once the network shows up; `onCancel` is nil
+/// when there's nothing to go back to.
 struct JoinView: View {
     @Environment(AppModel.self) private var model
     let invite: String?
@@ -35,121 +32,220 @@ struct JoinView: View {
     let onCancel: (() -> Void)?
 
     @State private var link = "irchad.chat"
+    /// What the server offers, once it answered: the sign-in step.
+    @State private var server: Server?
     @State private var mode = Mode.login
     @State private var account = ""
     @State private var password = ""
     @State private var email = ""
-    /// The invite being joined.
+    /// The invite sent to the core, while waiting for the outcome.
     @State private var busy: String?
     @State private var error: String?
-
-    private var discordOff: Bool {
-        link.trimmingCharacters(in: .whitespaces).isEmpty || busy != nil
-    }
 
     var body: some View {
         let _ = model.tick
         NavigationStack {
             Form {
-                Section {
-                    TextField("Server URL", text: $link)
-                        .keyboardType(.URL)
-                        .textContentType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } footer: {
-                    Text("Paste the server URL someone sent you.")
-                }
-                Section {
-                    Picker("How", selection: $mode) {
-                        ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    TextField(mode == .guest ? "Nickname" : "Username", text: $account)
-                        .textContentType(.username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    if mode != .guest {
-                        SecureField("Password", text: $password)
-                            .textContentType(mode == .register ? .newPassword : .password)
-                    }
-                    if mode == .register {
-                        TextField("Email (if the network asks for one)", text: $email)
-                            .keyboardType(.emailAddress)
-                            .textContentType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                    }
-                }
-                if let error {
-                    Section { Text(error).foregroundStyle(.red) }
-                }
-                if mode != .guest {
-                    Section {
-                        Button {
-                            let inv = link.trimmingCharacters(in: .whitespacesAndNewlines)
-                            error = nil
-                            busy = inv
-                            model.discordStart(inv)
-                            model.notifier.askPermission()
-                        } label: {
-                            HStack {
-                                Spacer()
-                                DiscordLabel()
-                                Spacer()
-                            }
-                        }
-                        .foregroundStyle(.white)
-                        .listRowBackground(Color.blurple.opacity(discordOff ? 0.5 : 1))
-                        .disabled(discordOff)
-                    } footer: {
-                        Text("No password needed: sign in with your Discord account.")
-                    }
-                }
-                Section {
-                    Button(action: submit) {
-                        HStack {
-                            Spacer()
-                            if busy != nil { ProgressView() } else { Text(mode == .register ? "Sign up" : "Join").bold() }
-                            Spacer()
-                        }
-                    }
-                    .disabled(!ready || busy != nil)
+                if let server {
+                    signIn(server)
+                } else {
+                    address
                 }
             }
-            .navigationTitle("Join a network")
+            .navigationTitle(server?.name ?? "Join a network")
             .toolbar {
                 if let onCancel {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: onCancel) }
                 }
             }
         }
-        .onAppear { if let invite { link = invite } }
-        .onChange(of: invite) { _, new in if let new { link = new } }
+        .onAppear { if let invite { discover(invite) } }
+        .onChange(of: invite) { _, new in if let new { discover(new) } }
         .onChange(of: model.joinFailure?.invite) { _, _ in
             guard let f = model.joinFailure, f.invite == busy else { return }
             busy = nil
             error = f.error
             model.joinFailure = nil
         }
+        .onChange(of: model.discovered?.invite) { _, _ in
+            guard let d = model.discovered else { return }
+            model.discovered = nil
+            guard d.invite == busy else { return }
+            busy = nil
+            link = d.invite
+            server = d.server
+        }
         .onChange(of: model.tick) { _, _ in checkDone() }
     }
 
-    private var ready: Bool {
-        !link.trimmingCharacters(in: .whitespaces).isEmpty && !account.trimmingCharacters(in: .whitespaces).isEmpty
-            && (mode == .guest || !password.isEmpty)
+    /// Step one: which server.
+    @ViewBuilder private var address: some View {
+        Section {
+            TextField("Server address", text: $link)
+                .keyboardType(.URL)
+                .textContentType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .disabled(busy != nil)
+        } footer: {
+            Text("Paste the invite link or server address someone sent you. You'll log in or sign up on the next step.")
+        }
+        if let error {
+            Section { Text(error).foregroundStyle(.red) }
+        }
+        Section {
+            primary("Continue", off: link.trimmingCharacters(in: .whitespaces).isEmpty) { discover(link) }
+        }
     }
 
-    private func submit() {
-        let inv = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        let acct = account.trimmingCharacters(in: .whitespaces)
+    /// Step two: log in, or one of the quieter choices `server` offers.
+    @ViewBuilder private func signIn(_ server: Server) -> some View {
+        let mode = offered(server)
+        let guest = mode == .guest
+        Section {
+            TextField(guest ? "Nickname" : "Username", text: $account)
+                .textContentType(.username)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !guest {
+                SecureField("Password", text: $password)
+                    .textContentType(mode == .register ? .newPassword : .password)
+            }
+            if mode == .register {
+                TextField("Email (if the network asks for one)", text: $email)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+            }
+        } header: {
+            HStack {
+                Text(server.origin.components(separatedBy: "://").last ?? server.origin)
+                Spacer()
+                Button("Change") {
+                    // The password doesn't follow to another server.
+                    self.server = nil
+                    password = ""
+                    error = nil
+                }
+                .font(.footnote)
+                .disabled(busy != nil)
+            }
+            .textCase(nil)
+        } footer: {
+            if guest && !server.classic {
+                Text("Guests miss what's said while they're away, and anyone can take the nickname.")
+            }
+        }
+        if let error {
+            Section { Text(error).foregroundStyle(.red) }
+        }
+        Section {
+            primary(mode == .login ? "Log in" : mode == .register ? "Sign up" : "Continue as guest", off: !ready(guest)) {
+                submit(mode)
+            }
+        }
+        if server.discord && !guest {
+            Section {
+                Button {
+                    error = nil
+                    busy = link
+                    model.discordStart(link)
+                    model.notifier.askPermission()
+                } label: {
+                    HStack {
+                        Spacer()
+                        DiscordLabel()
+                        Spacer()
+                    }
+                }
+                .foregroundStyle(.white)
+                .listRowBackground(Color.blurple.opacity(busy != nil ? 0.5 : 1))
+                .disabled(busy != nil)
+            }
+        }
+        // The other ways in, quieter than the button; guest quietest.
+        Section {
+            VStack(spacing: 12) {
+                if mode != .login {
+                    ask("Have an account?", "Log in") { self.mode = .login }
+                }
+                if mode != .register && server.signUp {
+                    ask("No account yet?", "Sign up") { self.mode = .register }
+                }
+                if !guest && server.guests {
+                    Button("Continue as guest") {
+                        self.mode = .guest
+                        error = nil
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .buttonStyle(.borderless)
+            .disabled(busy != nil)
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    /// The form's one filled button, or its spinner while busy.
+    private func primary(_ title: String, off: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Spacer()
+                if busy != nil { ProgressView() } else { Text(title).bold() }
+                Spacer()
+            }
+        }
+        .foregroundStyle(.white)
+        .listRowBackground(Color.accentColor.opacity(off || busy != nil ? 0.5 : 1))
+        .disabled(off || busy != nil)
+    }
+
+    /// A muted question and the link that answers it.
+    private func ask(_ question: String, _ link: String, action: @escaping () -> Void) -> some View {
+        HStack(spacing: 4) {
+            Text(question).foregroundStyle(.secondary)
+            Button(link) {
+                action()
+                error = nil
+            }
+        }
+        .font(.subheadline)
+    }
+
+    /// `mode`, or logging in when the server doesn't offer it.
+    private func offered(_ server: Server) -> Mode {
+        switch mode {
+        case .register where !server.signUp, .guest where !server.guests: .login
+        default: mode
+        }
+    }
+
+    private func ready(_ guest: Bool) -> Bool {
+        !account.trimmingCharacters(in: .whitespaces).isEmpty && (guest || !password.isEmpty)
+    }
+
+    /// Ask the server at `invite` what it offers; a link does this by itself.
+    private func discover(_ invite: String) {
+        let inv = invite.trimmingCharacters(in: .whitespacesAndNewlines)
+        link = inv
+        server = nil
         error = nil
         busy = inv
+        model.client.discover(invite: inv)
+    }
+
+    private func submit(_ mode: Mode) {
+        let acct = account.trimmingCharacters(in: .whitespaces)
+        error = nil
+        busy = link
         switch mode {
-        case .login: model.client.join(invite: inv, account: acct, password: password)
+        case .login: model.client.join(invite: link, account: acct, password: password)
         case .register:
             let e = email.trimmingCharacters(in: .whitespaces)
-            model.client.register(invite: inv, account: acct, password: password, email: e.isEmpty ? nil : e)
-        case .guest: model.client.joinGuest(invite: inv, nick: acct)
+            model.client.register(invite: link, account: acct, password: password, email: e.isEmpty ? nil : e)
+        case .guest: model.client.joinGuest(invite: link, nick: acct)
         }
         model.notifier.askPermission()
     }
@@ -163,5 +259,45 @@ struct JoinView: View {
         else { return }
         busy = nil
         onDone(inv.channel.map { Sel(network: inv.origin, target: $0) } ?? Sel(network: inv.origin, target: ""))
+    }
+}
+
+/// First launch: the core's cards, one at a time, then `onDone` (the join
+/// screen). Skipping is `onDone` too.
+struct WelcomeView: View {
+    let onDone: () -> Void
+    @State private var at = 0
+    private let cards = welcomeCards()
+
+    var body: some View {
+        let last = at >= cards.count - 1
+        VStack(spacing: 16) {
+            Spacer()
+            if cards.indices.contains(at) {
+                Text(cards[at].title).font(.title.bold()).multilineTextAlignment(.center)
+                Text(cards[at].body).font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            HStack(spacing: 8) {
+                ForEach(cards.indices, id: \.self) { i in
+                    Circle().fill(i == at ? Color.accentColor : Color.secondary.opacity(0.4)).frame(width: 8, height: 8)
+                }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Step \(at + 1) of \(cards.count)")
+            Spacer()
+            Button {
+                if last { onDone() } else { withAnimation { at += 1 } }
+            } label: {
+                Text(last ? "Get started" : "Next").bold().frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            HStack(spacing: 24) {
+                if at > 0 { Button("Back") { withAnimation { at -= 1 } } }
+                if !last { Button("Skip", action: onDone).font(.footnote).foregroundStyle(.secondary) }
+            }
+            .frame(minHeight: 32)
+        }
+        .padding(32)
     }
 }

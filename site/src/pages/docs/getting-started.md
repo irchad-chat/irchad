@@ -59,26 +59,33 @@ A network's invite link looks like `https://chat.example.com/invite`. Whoever ru
 
 Either:
 
-- open the link in a browser and press **Click to Join**, which opens the app, or
-- in the app, open **Join a network** and paste the link into **Server URL**. Just `chat.example.com` works too.
+- open the link in a browser and follow its three steps: download the app, install it, then come back to the page and press **Open in IrChad**, or
+- in the app, open **Join a network**, paste the link into **Server address** and press **Continue**. Just `chat.example.com` works too.
+
+The app asks the server what it offers, then shows the network's name and its sign-in form. **Change** next to the address takes you back.
+
+The first time you open IrChad, a few short cards explain what a network is and what happens next. Press **Next** to read them or **Skip** to go straight on. They don't come back.
 
 ## 3. Choose how to join
 
+The form starts on **Log in**. The other choices sit under it, and a network only shows the ones it allows.
+
 | Choice | You fill in | Use it when |
 |---|---|---|
-| **Create an account** | Username, password, and an email if the network asks for one | You're new here |
-| **I have an account** | Username, password | You signed up before, here or on another device |
-| **Guest** | A nickname | You just want to look around |
+| **Log in** | Username, password | You signed up before, here or on another device |
+| **Sign in with Discord** | Nothing: your browser opens Discord | The network offers it and you'd rather not have another password |
+| **No account yet? Sign up** | Username, password, and an email if the network asks for one | You're new here |
+| **Continue as guest** | A nickname | You just want to look around |
 
 If the network checks email addresses, it sends you a code. Enter it under **Check your email**.
 
 Your username is also the name people see. You can add a different display name later, in your [profile](/docs/chat#your-profile-and-status).
 
-> **Server setting:** signing up needs `chadd.toml` → `registration = "open"`, and `ircd.yaml` → `accounts.registration.enabled: true` with `accounts.registration.allow-before-connect: true`. On a closed network the admin makes your account and you choose **I have an account**.
+> **Server setting:** signing up needs `chadd.toml` → `registration = "open"`, and `ircd.yaml` → `accounts.registration.enabled: true` with `accounts.registration.allow-before-connect: true`. On a closed network there is no **Sign up**: the admin makes your account and you log in.
 >
 > The email code is `ircd.yaml` → `accounts.registration.email-verification.enabled: true`. With it on, `server.idle-timeouts.registration: 5m` gives you time to find the email.
 >
-> Guests need `ircd.yaml` → `accounts.require-sasl.enabled: false`.
+> Guests need `chadd.toml` → `guests = true`, and `ircd.yaml` → `accounts.require-sasl.enabled: false`.
 
 ### Guest or account?
 

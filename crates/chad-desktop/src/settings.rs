@@ -68,6 +68,8 @@ pub struct Settings {
     pub music_player_name: bool,
     /// The game overlay (D74).
     pub overlay: OverlaySettings,
+    /// The first-launch cards have been read or skipped.
+    pub welcomed: bool,
 }
 
 impl Default for Settings {
@@ -99,6 +101,7 @@ impl Default for Settings {
             music_players: Vec::new(),
             music_player_name: false,
             overlay: OverlaySettings::default(),
+            welcomed: false,
         }
     }
 }

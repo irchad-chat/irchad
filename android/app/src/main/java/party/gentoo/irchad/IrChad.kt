@@ -26,6 +26,7 @@ import party.gentoo.irchad.core.Listener
 import party.gentoo.irchad.core.Sas
 import party.gentoo.irchad.core.SasStep
 import party.gentoo.irchad.core.Secrets
+import party.gentoo.irchad.core.Server
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -39,6 +40,8 @@ class IrChad : Application() {
     val notices = MutableSharedFlow<String>(extraBufferCapacity = 16)
     /** (invite, error) for a join that failed. */
     val joinFailures = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 4)
+    /** (invite, server) for a `discover` that found its server. */
+    val discovered = MutableSharedFlow<Pair<String, Server>>(extraBufferCapacity = 4)
     /** The verification on screen, one person at a time. */
     val verify = MutableStateFlow<Verify?>(null)
     /** The server took a report: say so until dismissed. */
@@ -78,6 +81,10 @@ class IrChad : Application() {
 
                 override fun joinFailed(invite: String, error: String) {
                     joinFailures.tryEmit(invite to error)
+                }
+
+                override fun discovered(invite: String, server: Server) {
+                    discovered.tryEmit(invite to server)
                 }
 
                 override fun preview(network: String, url: String, preview: LinkPreview?) =

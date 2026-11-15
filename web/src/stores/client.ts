@@ -10,6 +10,7 @@ import {
   type Member,
   type Msg,
   type NetState,
+  type Server,
   isMeeting,
   meetingChannel,
 } from '../wasm/chad_web'
@@ -126,8 +127,13 @@ export const useClient = defineStore('client', () => {
 
   // Sign in with Discord (D96): this tab goes to Discord and comes back with
   // `#oauth=<code>`; a first sign-in then asks for a name.
-  const discord = ref(false)
-  client.discordAvailable().then((on) => (discord.value = on))
+  // What the sign-in screen offers besides logging in. Nothing, if the
+  // server can't be asked: connecting says why.
+  const server = ref<Server | null>(null)
+  client
+    .server()
+    .then((s) => (server.value = s))
+    .catch(() => {})
   // The name to confirm for a first sign-in, while asking.
   const discordSuggestion = ref<string | null>(null)
   const discordBusy = ref(false)
@@ -312,7 +318,7 @@ export const useClient = defineStore('client', () => {
     connect,
     signUp,
     verify,
-    discord,
+    server,
     discordSuggestion,
     discordBusy,
     discordStart,

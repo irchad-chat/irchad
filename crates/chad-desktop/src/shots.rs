@@ -85,20 +85,80 @@ fn empty() {
     s.shot("empty");
 }
 
+/// The sign-in step for a server offering everything.
+fn sign_in(s: &mut Shots) {
+    s.harness.state_mut().shot_server(chad_core::ServerInfo {
+        origin: "https://chat.localhost:8443".into(),
+        name: "Chad Dev Network".into(),
+        sign_up: true,
+        guests: true,
+        discord: true,
+        classic: false,
+    });
+    s.harness.run();
+}
+
+/// First launch: the cards, then the join dialog.
+#[test]
+fn welcome() {
+    let mut s = Shots::new(None);
+    s.shot("welcome_1");
+    s.harness.get_by_label("Next").click();
+    s.shot("welcome_2");
+    s.harness.get_by_label("Skip").click();
+    s.harness.run();
+    s.harness.get_by_label("Server address");
+    assert!(s.harness.query_by_label("Next").is_none());
+}
+
+/// A link opening the app waits behind the cards.
+#[test]
+fn welcome_before_invite() {
+    let mut s = Shots::new(Some("https://chat.localhost:8443/"));
+    s.harness.run();
+    assert!(s.harness.query_by_label("Server address").is_none());
+    s.harness.get_by_label("Next");
+}
+
 #[test]
 fn join_dialog() {
-    let mut s = Shots::new(Some("https://chat.localhost:8443/?channel=%23general"));
-    s.harness.run();
-    s.harness.get_by_label("Guest").click();
+    let mut s = Shots::new(None);
+    s.harness.state_mut().shot_join();
+    s.shot("join_dialog_server");
+    sign_in(&mut s);
+    s.harness.get_by_label("Sign in with Discord");
+    s.shot("join_dialog_login");
+    s.harness.get_by_label("Sign up").click();
+    s.shot("join_dialog_sign_up");
+    s.harness.get_by_label("Continue as guest").click();
     s.shot("join_dialog_guest");
+    s.harness.get_by_label("Change server").click();
+    s.harness.run();
+    s.harness.get_by_label("Server address");
+}
+
+/// A server that only takes logins shows nothing else.
+#[test]
+fn join_dialog_login_only() {
+    let mut s = Shots::new(None);
+    s.harness.state_mut().shot_server(chad_core::ServerInfo {
+        origin: "https://chat.example.com".into(),
+        name: "Closed Network".into(),
+        sign_up: false,
+        guests: false,
+        discord: false,
+        classic: false,
+    });
+    s.harness.run();
+    for gone in ["Sign up", "Continue as guest", "Sign in with Discord"] {
+        assert!(s.harness.query_by_label(gone).is_none(), "{gone}");
+    }
+    s.shot("join_dialog_login_only");
 }
 
 #[test]
 fn join_dialog_discord() {
-    let mut s = Shots::new(Some("https://chat.localhost:8443/"));
-    s.harness.run();
-    s.harness.get_by_label("Sign in with Discord");
-    s.shot("join_dialog_discord");
+    let mut s = Shots::new(None);
     s.harness
         .state_mut()
         .shot_discord_name("https://chat.localhost:8443/", "sam_h", None);
@@ -113,9 +173,10 @@ fn join_dialog_discord() {
 
 #[test]
 fn join_dialog_classic() {
-    let mut s = Shots::new(Some("https://chat.localhost:8443/"));
+    let mut s = Shots::new(None);
+    s.harness.state_mut().shot_join();
     s.harness.run();
-    s.harness.get_by_label("Classic IRC").click();
+    s.harness.get_by_label(crate::app::CLASSIC_LABEL).click();
     s.harness.run();
     s.harness.get_by_label("Encrypted (TLS)").click();
     s.shot("join_dialog_classic");

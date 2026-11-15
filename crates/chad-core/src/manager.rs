@@ -12,7 +12,8 @@ use crate::net::Net;
 use crate::oauth::{self, Flow};
 use crate::store::Store;
 use crate::{
-    Auth, Command, Config, ConnState, Core, Event, NetCommand, NetworkInfo, chadd, invite,
+    Auth, Command, Config, ConnState, Core, Event, NetCommand, NetworkInfo, ServerInfo, chadd,
+    invite,
 };
 
 #[derive(Clone)]
@@ -121,6 +122,24 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         // shortcut: chadd is called inline, so other networks' commands wait
         // the second or so it takes; spawn it if that's ever noticeable.
         let cmd = match cmd {
+            Command::Discover { invite } => {
+                let joined = invite::parse(&invite)
+                    .ok()
+                    .and_then(|i| nets.get(&i.origin))
+                    .is_some_and(|t| !t.is_closed());
+                let sink = sink.clone();
+                tokio::spawn(async move {
+                    let found = match joined {
+                        true => Err("You've already joined this network.".into()),
+                        false => discover(&invite).await,
+                    };
+                    sink.send([match found {
+                        Ok(server) => Event::Discovered { invite, server },
+                        Err(error) => Event::JoinFailed { invite, error },
+                    }]);
+                });
+                continue;
+            }
             Command::DiscordStart { invite } => {
                 flow = None;
                 match discord_start(&invite).await {
@@ -250,7 +269,8 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                 nets.insert(inv.origin, tx);
             }
             // Taken care of before this match.
-            Command::DiscordStart { .. }
+            Command::Discover { .. }
+            | Command::DiscordStart { .. }
             | Command::DiscordCallback { .. }
             | Command::DiscordName { .. }
             | Command::DiscordCancel => {}
@@ -328,6 +348,25 @@ fn spawn_with(
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(conn::run(net, p, rx, sink.clone()));
     tx
+}
+
+/// What the server at `invite` offers. A classic network has no document to
+/// fetch (D72): it takes a login or just a nickname.
+async fn discover(invite: &str) -> Result<ServerInfo, String> {
+    let inv = invite::parse(invite)?;
+    if invite::classic(&inv.origin) {
+        let name = inv.origin.split_once("://").map_or("", |(_, host)| host);
+        return Ok(ServerInfo {
+            name: name.to_owned(),
+            origin: inv.origin,
+            sign_up: false,
+            guests: true,
+            discord: false,
+            classic: true,
+        });
+    }
+    let d = crate::discovery::fetch(&inv.origin).await?;
+    Ok(crate::discovery::server_info(inv.origin, &d))
 }
 
 /// A new sign-in for `invite`, if its server does Discord.
@@ -426,6 +465,15 @@ mod tests {
         let id = device_id(dir.path());
         assert_eq!(id.len(), 16);
         assert_eq!(device_id(dir.path()), id);
+    }
+
+    #[tokio::test]
+    async fn discover_classic_needs_no_fetch() {
+        let s = discover("ircs://IRC.Libera.Chat").await.unwrap();
+        assert_eq!(s.origin, "ircs://irc.libera.chat:6697");
+        assert_eq!(s.name, "irc.libera.chat:6697");
+        assert!(s.classic && s.guests && !s.sign_up && !s.discord);
+        assert!(discover("ftp://x").await.is_err());
     }
 
     #[test]

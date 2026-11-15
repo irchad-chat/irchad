@@ -15,17 +15,31 @@ use crate::client::{Client, W, device_id, run};
 /// sessionStorage key for the verifier of the sign-in in progress.
 const VERIFIER_KEY: &str = "irchad.oauth";
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Server {
+    name: String,
+    sign_up: bool,
+    guests: bool,
+    discord: bool,
+}
+
 #[wasm_bindgen]
 impl Client {
-    /// Whether this network signs in with Discord.
-    #[wasm_bindgen(js_name = discordAvailable, unchecked_return_type = "Promise<boolean>")]
-    pub fn discord_available(&self) -> js_sys::Promise {
+    /// What this network offers on the sign-in screen, from its discovery
+    /// document: signing up, guests, Discord.
+    #[wasm_bindgen(unchecked_return_type = "Promise<Server>")]
+    pub fn server(&self) -> js_sys::Promise {
         let origin = self.inner.borrow().net.info.network.clone();
         future_to_promise(async move {
-            let on = chad_core::fetch_discovery(&origin)
-                .await
-                .is_ok_and(|d| d.chadd.discord);
-            Ok(on.into())
+            let d = chad_core::fetch_discovery(&origin).await.map_err(err)?;
+            let s = chad_core::server_info(origin, &d);
+            Ok(crate::snapshot::to_js(&Server {
+                name: s.name,
+                sign_up: s.sign_up,
+                guests: s.guests,
+                discord: s.discord,
+            }))
         })
     }
 

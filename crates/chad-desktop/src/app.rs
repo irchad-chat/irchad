@@ -74,6 +74,8 @@ pub struct App {
     show_settings: bool,
     settings_section: settings::Section,
     join: Option<JoinDialog>,
+    /// The first-launch card on screen.
+    welcome_card: usize,
     verify_code: String,
     signin_password: String,
     verify_dismissed: Option<String>,
@@ -294,10 +296,18 @@ struct Attachment {
 /// Filled in for "Join a network", so newcomers can just sign up.
 const DEFAULT_SERVER: &str = "irchad.chat";
 
+/// The join dialog's checkbox for a classic IRC network (D72).
+pub(crate) const CLASSIC_LABEL: &str =
+    "I know what IRC is and I want to connect to a non-IrChad server";
+
 struct JoinDialog {
     /// The server URL, or a classic network's host.
     invite: String,
-    /// "Classic IRC": any IRC network, by host and port (D72).
+    /// What the server offers, once it answered: the sign-in step.
+    server: Option<chad_core::ServerInfo>,
+    /// The invite `server` answered for, which the join sends.
+    url: String,
+    /// Any IRC network, by host and port (D72).
     classic: bool,
     /// Classic only; empty means the default for TLS or not.
     port: String,
@@ -333,6 +343,8 @@ impl Default for JoinDialog {
     fn default() -> Self {
         Self {
             invite: DEFAULT_SERVER.into(),
+            server: None,
+            url: String::new(),
             classic: false,
             port: String::new(),
             plaintext: false,
@@ -500,6 +512,7 @@ impl App {
             show_settings: false,
             settings_section: settings::Section::default(),
             join: None,
+            welcome_card: 0,
             verify_code: String::new(),
             signin_password: String::new(),
             verify_dismissed: None,
@@ -763,7 +776,7 @@ impl App {
     }
 
     /// A pasted or forwarded invite: show the network if we're in it already,
-    /// otherwise open "Join a network" with it filled in.
+    /// otherwise open "Join a network" on its sign-in step.
     fn open_invite(&mut self, url: &str) {
         match invite::parse(url) {
             Ok(inv) => {
@@ -784,8 +797,14 @@ impl App {
                     }
                     return;
                 }
+                // The link names the server, so go straight to asking it.
+                let invite = url.trim().to_owned();
+                self.core.send(Command::Discover {
+                    invite: invite.clone(),
+                });
                 self.join = Some(JoinDialog {
-                    invite: url.trim().to_owned(),
+                    busy: Some(invite.clone()),
+                    invite,
                     ..Default::default()
                 });
             }
@@ -793,11 +812,20 @@ impl App {
         }
     }
 
+    /// Nothing joined yet, and the first-launch cards not yet read: they
+    /// come before anything else, the join dialog included.
+    pub(crate) fn welcoming(&self) -> bool {
+        !self.settings.welcomed && self.view.nets.is_empty()
+    }
+
     fn welcome(&mut self, ui: &mut egui::Ui) {
+        if self.welcoming() {
+            return self.welcome_cards(ui);
+        }
         ui.vertical_centered(|ui| {
             ui.add_space(ui.available_height() / 3.0);
             ui.heading("Welcome to IrChad");
-            ui.label("Paste a server URL to get started.");
+            ui.label("Join a network with the link or address someone sent you.");
             ui.add_space(12.0);
             if ui
                 .button(RichText::new("Join a network").size(18.0))
@@ -806,6 +834,59 @@ impl App {
                 self.join = Some(JoinDialog::default());
             }
         });
+    }
+
+    /// First launch: what a network is, one card at a time, then the join
+    /// dialog (already on its sign-in step, if a link opened the app).
+    fn welcome_cards(&mut self, ui: &mut egui::Ui) {
+        let cards = &chad_core::welcome::CARDS;
+        let last = cards.len() - 1;
+        let at = self.welcome_card.min(last);
+        let card = &cards[at];
+        let mut done = false;
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() / 3.0);
+            ui.set_max_width(420.0);
+            ui.label(RichText::new(card.title).heading().size(26.0));
+            ui.add_space(8.0);
+            ui.label(RichText::new(card.body).size(16.0));
+            ui.add_space(16.0);
+            let dots: String = (0..=last)
+                .map(|i| if i == at { "●" } else { "○" })
+                .collect::<Vec<_>>()
+                .join(" ");
+            let r = ui.label(RichText::new(dots).weak());
+            r.ctx.accesskit_node_builder(r.id, |n| {
+                n.set_label(format!("Step {} of {}", at + 1, last + 1));
+            });
+            ui.add_space(16.0);
+            let sel = ui.visuals().selection;
+            let next = if at == last { "Get started" } else { "Next" };
+            let next = egui::Button::new(RichText::new(next).size(16.0).color(sel.stroke.color))
+                .fill(sel.bg_fill)
+                .min_size(egui::vec2(160.0, 32.0));
+            if ui.add(next).clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                if at == last {
+                    done = true;
+                } else {
+                    self.welcome_card = at + 1;
+                }
+            }
+            ui.add_space(4.0);
+            if at > 0 && ui.link("Back").clicked() {
+                self.welcome_card = at - 1;
+            }
+            if at < last {
+                let skip = RichText::new("Skip").weak().small();
+                done |= ui.add(egui::Button::new(skip).frame(false)).clicked();
+            }
+        });
+        if done {
+            self.settings.welcomed = true;
+            if self.join.is_none() {
+                self.join = Some(JoinDialog::default());
+            }
+        }
     }
 
     /// The watched screen share; `ctx` is the window it's in. `tile`: its

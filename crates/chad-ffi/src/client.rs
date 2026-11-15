@@ -74,6 +74,17 @@ impl Client {
                         listener.notice(error)
                     }
                     Event::JoinFailed { invite, error } => listener.join_failed(invite, error),
+                    Event::Discovered { invite, server } => listener.discovered(
+                        invite,
+                        Server {
+                            origin: server.origin,
+                            name: server.name,
+                            sign_up: server.sign_up,
+                            guests: server.guests,
+                            discord: server.discord,
+                            classic: server.classic,
+                        },
+                    ),
                     Event::Verification {
                         network,
                         nick,
@@ -191,7 +202,14 @@ impl Client {
         })
     }
 
-    /// An invite URL, `irchad://` link or bare host, with an account.
+    /// The sign-in screen's first step, for an invite URL, `irchad://` link or
+    /// bare host: `Listener::discovered` says what the server offers, or
+    /// `Listener::join_failed` why it can't be joined.
+    pub fn discover(&self, invite: String) {
+        self.core.send(Command::Discover { invite });
+    }
+
+    /// An invite `discover` found a server for, with an account.
     pub fn join(&self, invite: String, account: String, password: String) {
         let auth = Auth::Login { account, password };
         self.core.send(Command::Join { invite, auth });

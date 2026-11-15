@@ -22,6 +22,23 @@ pub(super) fn discord_button(ui: &mut egui::Ui, enabled: bool, width: f32) -> eg
     r
 }
 
+/// A muted question and the link that answers it, as one centred row.
+/// Returns whether the link was clicked.
+fn ask_link(ui: &mut egui::Ui, question: RichText, link: &str) -> bool {
+    let both = egui::WidgetText::from(format!("{} {link}", question.text()));
+    let w = both
+        .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Body)
+        .size()
+        .x;
+    ui.horizontal(|ui| {
+        ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.label(question);
+        ui.link(link).clicked()
+    })
+    .inner
+}
+
 impl App {
     pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
         self.share_dialog(ctx);
@@ -64,209 +81,280 @@ impl App {
         }
     }
 
-    /// Joining a network from an invite.
+    /// Joining a network: the server's address first, then how to sign in.
     fn join_dialog(&mut self, ctx: &egui::Context) {
-        if self.join.as_ref().is_some_and(|j| j.discord.is_some()) {
-            return self.discord_dialog(ctx);
+        // First launch: the cards come first, and this waits behind them.
+        if self.welcoming() {
+            return;
         }
-        if let Some(j) = &mut self.join {
-            let mut submit = false;
-            let mut cancel = false;
-            let mut discord = false;
-            let busy = j.busy.is_some();
-            let modal = egui::Modal::new(egui::Id::unique("join")).show(ctx, |ui| {
-                ui.set_width(360.0);
-                ui.heading("Join a network");
-                ui.add_space(8.0);
-                let was_classic = j.classic;
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!busy, |ui| {
-                        ui.selectable_value(&mut j.classic, false, "IrChad server");
-                        ui.selectable_value(&mut j.classic, true, "Classic IRC");
-                    });
-                });
-                // An invite URL isn't a host, nor the other way round.
-                if j.classic != was_classic {
-                    j.invite = if j.classic { "" } else { DEFAULT_SERVER }.into();
-                }
-                ui.add_space(4.0);
-                if j.classic {
-                    if j.mode == JoinMode::Register {
-                        j.mode = JoinMode::Login;
-                    }
-                    ui.horizontal(|ui| {
-                        let l = ui.label("Server");
-                        ui.add_enabled(
-                            !busy,
-                            egui::TextEdit::singleline(&mut j.invite)
-                                .hint_text("irc.libera.chat")
-                                .desired_width(200.0),
-                        )
-                        .labelled_by(l.id);
-                        let l = ui.label("Port");
-                        let default = if j.plaintext { "6667" } else { "6697" };
-                        ui.add_enabled(
-                            !busy,
-                            egui::TextEdit::singleline(&mut j.port)
-                                .hint_text(default)
-                                .desired_width(f32::INFINITY),
-                        )
-                        .labelled_by(l.id);
-                    });
-                    let mut tls = !j.plaintext;
-                    ui.add_enabled(!busy, egui::Checkbox::new(&mut tls, "Encrypted (TLS)"));
-                    j.plaintext = !tls;
-                    if j.plaintext {
-                        ui.label(
-                            RichText::new(
-                                "Without TLS, your messages and password \
-                                 cross the network unencrypted.",
-                            )
-                            .color(ui.visuals().warn_fg_color),
-                        );
-                    }
+        match &self.join {
+            None => {}
+            Some(j) if j.discord.is_some() => self.discord_dialog(ctx),
+            Some(j) if j.server.is_some() => self.sign_in_dialog(ctx),
+            Some(_) => self.server_dialog(ctx),
+        }
+    }
+
+    /// Step one: which server. An `irchad://` link answers it by itself.
+    fn server_dialog(&mut self, ctx: &egui::Context) {
+        let Some(j) = &mut self.join else { return };
+        let mut submit = false;
+        let mut cancel = false;
+        let busy = j.busy.is_some();
+        let modal = egui::Modal::new(egui::Id::unique("join")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading("Join a network");
+            ui.label(
+                RichText::new(if j.classic {
+                    "Enter the address of any IRC network. You'll log in on the next step."
                 } else {
-                    let l = ui.label("Server URL");
+                    "Paste the invite link or server address someone sent you. \
+                     You'll log in or sign up on the next step."
+                })
+                .weak(),
+            );
+            ui.add_space(8.0);
+            if j.classic {
+                ui.horizontal(|ui| {
+                    let l = ui.label("Server");
                     ui.add_enabled(
                         !busy,
                         egui::TextEdit::singleline(&mut j.invite)
-                            .hint_text("chat.example.com")
+                            .hint_text("irc.libera.chat")
+                            .desired_width(200.0),
+                    )
+                    .labelled_by(l.id);
+                    let l = ui.label("Port");
+                    let default = if j.plaintext { "6667" } else { "6697" };
+                    ui.add_enabled(
+                        !busy,
+                        egui::TextEdit::singleline(&mut j.port)
+                            .hint_text(default)
                             .desired_width(f32::INFINITY),
                     )
                     .labelled_by(l.id);
-                    ui.add_space(8.0);
-                    let ready = !busy && !j.invite.trim().is_empty();
-                    if discord_button(ui, ready, ui.available_width()).clicked() {
-                        discord = true;
-                    }
-                    ui.add_space(4.0);
-                    ui.vertical_centered(|ui| ui.label(RichText::new("or").weak()));
-                }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!busy, |ui| {
-                        ui.selectable_value(&mut j.mode, JoinMode::Login, "I have an account");
-                        if !j.classic {
-                            ui.selectable_value(
-                                &mut j.mode,
-                                JoinMode::Register,
-                                "Create an account",
-                            );
-                        }
-                        let guest = if j.classic {
-                            "Just a nickname"
-                        } else {
-                            "Guest"
-                        };
-                        ui.selectable_value(&mut j.mode, JoinMode::Guest, guest);
-                    });
                 });
-                ui.add_space(4.0);
-                egui::Grid::new("join-fields")
-                    .num_columns(2)
-                    .show(ui, |ui| {
-                        let guest = j.mode == JoinMode::Guest;
-                        let l = ui.label(if guest { "Nickname" } else { "Username" });
-                        let field =
-                            |text| egui::TextEdit::singleline(text).desired_width(f32::INFINITY);
-                        ui.add_enabled(!busy, field(&mut j.account))
-                            .labelled_by(l.id);
-                        ui.end_row();
-                        if !guest {
-                            let l = ui.label("Password");
-                            ui.add_enabled(!busy, field(&mut j.password).password(true))
-                                .labelled_by(l.id);
-                            ui.end_row();
-                        }
-                        if j.mode == JoinMode::Register {
-                            let l = ui.label("Email");
-                            ui.add_enabled(
-                                !busy,
-                                field(&mut j.email).hint_text("if the network asks for one"),
-                            )
-                            .labelled_by(l.id);
-                            ui.end_row();
-                        }
-                    });
-                if j.mode == JoinMode::Guest && !j.classic {
-                    ui.add_space(4.0);
+                let mut tls = !j.plaintext;
+                ui.add_enabled(!busy, egui::Checkbox::new(&mut tls, "Encrypted (TLS)"));
+                j.plaintext = !tls;
+                if j.plaintext {
                     ui.label(
                         RichText::new(
-                            "Guests miss what's said while they're away, \
-                             and anyone can take the nickname.",
+                            "Without TLS, your messages and password \
+                             cross the network unencrypted.",
                         )
-                        .weak(),
+                        .color(ui.visuals().warn_fg_color),
                     );
                 }
-                if let Some(e) = &j.error {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
-                }
-                ui.add_space(8.0);
-                let ready = !j.invite.trim().is_empty()
-                    && !j.account.trim().is_empty()
-                    && (j.mode == JoinMode::Guest || !j.password.is_empty());
-                let label = match j.mode {
-                    JoinMode::Login => "Log in",
-                    JoinMode::Register => "Sign up",
-                    JoinMode::Guest => "Join",
-                };
-                let (go, no) = footer(ui, label, ready && !busy, busy);
-                submit = go || (ready && !busy && ui.input(|i| i.key_pressed(Key::Enter)));
-                cancel = no;
-            });
-            if discord {
-                let url = j.invite.trim().to_owned();
-                match invite::parse(&url) {
-                    Err(e) => j.error = Some(e),
-                    Ok(_) => {
-                        j.error = None;
-                        j.busy = Some(url.clone());
-                        j.discord = Some(DiscordStep::Browser(None));
-                        self.core.send(Command::DiscordStart { invite: url });
-                    }
-                }
+            } else {
+                let l = ui.label("Server address");
+                ui.add_enabled(
+                    !busy,
+                    egui::TextEdit::singleline(&mut j.invite)
+                        .hint_text("chat.example.com")
+                        .desired_width(f32::INFINITY),
+                )
+                .labelled_by(l.id);
             }
-            if submit {
-                let url = if j.classic {
-                    let scheme = if j.plaintext { "irc" } else { "ircs" };
-                    let port = j.port.trim();
-                    let port = if port.is_empty() {
-                        String::new()
-                    } else {
-                        format!(":{port}")
-                    };
-                    format!("{scheme}://{}{port}", j.invite.trim())
+            if let Some(e) = &j.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            let ready = !busy && !j.invite.trim().is_empty();
+            // One row high: the footer's layout would otherwise take the
+            // rest of the dialog, now that something sits below it.
+            let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+            let (go, no) = ui
+                .allocate_ui(row, |ui| footer(ui, "Continue", ready, busy))
+                .inner;
+            submit = go || (ready && ui.input(|i| i.key_pressed(Key::Enter)));
+            cancel = no;
+            // Out of the way: chads never need it (D72).
+            ui.add_space(8.0);
+            let was_classic = j.classic;
+            let text = RichText::new(CLASSIC_LABEL).weak().small();
+            ui.add_enabled(!busy, egui::Checkbox::new(&mut j.classic, text));
+            // An invite URL isn't a host, nor the other way round.
+            if j.classic != was_classic {
+                j.invite = if j.classic { "" } else { DEFAULT_SERVER }.into();
+                j.error = None;
+            }
+        });
+        if submit {
+            let url = if j.classic {
+                let scheme = if j.plaintext { "irc" } else { "ircs" };
+                let port = j.port.trim();
+                let port = if port.is_empty() {
+                    String::new()
                 } else {
-                    j.invite.trim().to_owned()
+                    format!(":{port}")
                 };
-                match invite::parse(&url) {
-                    Err(e) => j.error = Some(e),
-                    Ok(_) => {
-                        let (account, password) = (j.account.trim().to_owned(), j.password.clone());
-                        let auth = match j.mode {
-                            JoinMode::Register => {
-                                let email =
-                                    Some(j.email.trim().to_owned()).filter(|e| !e.is_empty());
-                                Auth::Register {
-                                    account,
-                                    password,
-                                    email,
-                                }
-                            }
-                            JoinMode::Login => Auth::Login { account, password },
-                            JoinMode::Guest => Auth::Guest { nick: account },
-                        };
-                        j.error = None;
-                        j.busy = Some(url.clone());
-                        self.core.send(Command::Join { invite: url, auth });
-                    }
+                format!("{scheme}://{}{port}", j.invite.trim())
+            } else {
+                j.invite.trim().to_owned()
+            };
+            j.error = None;
+            j.busy = Some(url.clone());
+            self.core.send(Command::Discover { invite: url });
+        }
+        // A request in flight can't be cancelled; it ends on its own.
+        if (cancel || modal.should_close()) && !busy {
+            self.join = None;
+        }
+    }
+
+    /// Step two, once the server answered: log in, or one of the quieter
+    /// choices it offers.
+    fn sign_in_dialog(&mut self, ctx: &egui::Context) {
+        let Some(j) = &mut self.join else { return };
+        let Some(server) = j.server.clone() else {
+            return;
+        };
+        // A choice the server doesn't offer.
+        if (j.mode == JoinMode::Register && !server.sign_up)
+            || (j.mode == JoinMode::Guest && !server.guests)
+        {
+            j.mode = JoinMode::Login;
+        }
+        let mut submit = false;
+        let mut back = false;
+        let mut discord = false;
+        let busy = j.busy.is_some();
+        let modal = egui::Modal::new(egui::Id::unique("sign-in")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.vertical_centered(|ui| {
+                ui.heading(&server.name);
+                let host = server.origin.split_once("://").map_or("", |(_, h)| h);
+                ui.horizontal(|ui| {
+                    // Centred as one row: the host and its way back.
+                    let text = egui::WidgetText::from(format!("{host}  Change"));
+                    let w = text
+                        .into_galley(ui, None, f32::INFINITY, egui::TextStyle::Body)
+                        .size()
+                        .x;
+                    ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(RichText::new(host).weak());
+                    let r = ui.add_enabled(!busy, egui::Link::new("Change"));
+                    r.ctx
+                        .accesskit_node_builder(r.id, |n| n.set_label("Change server"));
+                    back = r.clicked();
+                });
+            });
+            ui.add_space(12.0);
+            let guest = j.mode == JoinMode::Guest;
+            let field = |text| egui::TextEdit::singleline(text).desired_width(f32::INFINITY);
+            let l = ui.label(if guest { "Nickname" } else { "Username" });
+            ui.add_enabled(!busy, field(&mut j.account))
+                .labelled_by(l.id);
+            if !guest {
+                ui.add_space(4.0);
+                let l = ui.label("Password");
+                ui.add_enabled(!busy, field(&mut j.password).password(true))
+                    .labelled_by(l.id);
+            }
+            if j.mode == JoinMode::Register {
+                ui.add_space(4.0);
+                let l = ui.label("Email");
+                ui.add_enabled(
+                    !busy,
+                    field(&mut j.email).hint_text("if the network asks for one"),
+                )
+                .labelled_by(l.id);
+            }
+            if guest && !server.classic {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "Guests miss what's said while they're away, \
+                         and anyone can take the nickname.",
+                    )
+                    .weak(),
+                );
+            }
+            if let Some(e) = &j.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(12.0);
+            let ready = !busy && !j.account.trim().is_empty() && (guest || !j.password.is_empty());
+            let label = match j.mode {
+                _ if busy => "Connecting…",
+                JoinMode::Login => "Log in",
+                JoinMode::Register => "Sign up",
+                JoinMode::Guest => "Continue as guest",
+            };
+            let sel = ui.visuals().selection;
+            let go = egui::Button::new(RichText::new(label).color(sel.stroke.color))
+                .fill(sel.bg_fill)
+                .min_size(egui::vec2(ui.available_width(), 28.0));
+            let go = ui.add_enabled(ready, go).clicked();
+            submit = go || (ready && ui.input(|i| i.key_pressed(Key::Enter)));
+            if server.discord && !guest {
+                ui.add_space(4.0);
+                if discord_button(ui, !busy, ui.available_width()).clicked() {
+                    discord = true;
                 }
             }
-            // A join in flight can't be cancelled; it ends on its own.
-            if (cancel || modal.should_close()) && !busy {
-                self.join = None;
-            }
+            ui.add_space(12.0);
+            // The other ways in, quieter than the button; guest quietest.
+            ui.add_enabled_ui(!busy, |ui| {
+                ui.vertical_centered(|ui| {
+                    if j.mode != JoinMode::Login {
+                        let have = RichText::new("Have an account?").weak();
+                        if ask_link(ui, have, "Log in") {
+                            j.mode = JoinMode::Login;
+                            j.error = None;
+                        }
+                    }
+                    if j.mode != JoinMode::Register && server.sign_up {
+                        let none = RichText::new("No account yet?").weak();
+                        if ask_link(ui, none, "Sign up") {
+                            j.mode = JoinMode::Register;
+                            j.error = None;
+                        }
+                    }
+                    if !guest && server.guests {
+                        let text = RichText::new("Continue as guest").weak().small();
+                        if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                            j.mode = JoinMode::Guest;
+                            j.error = None;
+                        }
+                    }
+                });
+            });
+        });
+        if back || (modal.should_close() && !busy) {
+            // Back to the address; the password doesn't follow to another server.
+            j.server = None;
+            j.password.clear();
+            j.error = None;
+            return;
+        }
+        let url = j.url.clone();
+        if discord {
+            j.error = None;
+            j.busy = Some(url.clone());
+            j.discord = Some(DiscordStep::Browser(None));
+            self.core.send(Command::DiscordStart { invite: url });
+        } else if submit {
+            let (account, password) = (j.account.trim().to_owned(), j.password.clone());
+            let auth = match j.mode {
+                JoinMode::Register => {
+                    let email = Some(j.email.trim().to_owned()).filter(|e| !e.is_empty());
+                    Auth::Register {
+                        account,
+                        password,
+                        email,
+                    }
+                }
+                JoinMode::Login => Auth::Login { account, password },
+                JoinMode::Guest => Auth::Guest { nick: account },
+            };
+            j.error = None;
+            j.busy = Some(url.clone());
+            self.core.send(Command::Join { invite: url, auth });
         }
     }
 
@@ -1262,9 +1350,27 @@ fn emoji_picker(
 
 #[cfg(test)]
 impl App {
+    /// "Join a network", which two buttons open.
+    pub(crate) fn shot_join(&mut self) {
+        self.settings.welcomed = true;
+        self.join = Some(JoinDialog::default());
+    }
+
+    /// What `Event::Discovered` does, for screenshots: there's no server
+    /// behind them to answer.
+    pub(crate) fn shot_server(&mut self, server: chad_core::ServerInfo) {
+        self.settings.welcomed = true;
+        self.join = Some(JoinDialog {
+            url: server.origin.clone(),
+            server: Some(server),
+            ..Default::default()
+        });
+    }
+
     /// What `Event::DiscordNeedsName` does, for screenshots: there's no
     /// chadd behind them to send it.
     pub(crate) fn shot_discord_name(&mut self, invite: &str, name: &str, error: Option<&str>) {
+        self.settings.welcomed = true;
         self.join = Some(JoinDialog {
             invite: invite.into(),
             busy: Some(invite.into()),

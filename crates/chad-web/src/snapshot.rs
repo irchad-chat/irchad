@@ -19,6 +19,8 @@ export type Span = {
   /** A custom emoji's image (`text` is its `:name:`). */
   emoji: string | null;
 };
+/** What the network offers on the sign-in screen. */
+export type Server = { name: string; signUp: boolean; guests: boolean; discord: boolean };
 export type NetState = {
   state: "connecting" | "verifying" | "connected" | "disconnected" | "failed";
   error: string | null; nick: string; name: string; guest: boolean;

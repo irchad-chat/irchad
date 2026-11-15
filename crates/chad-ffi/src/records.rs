@@ -1,5 +1,21 @@
 //! Snapshot records the UI reads from a `Client`.
 
+/// What a server offers on the sign-in screen (`Client::discover`).
+#[derive(uniffi::Record)]
+pub struct Server {
+    /// The network's id, as in `Network::network`.
+    pub origin: String,
+    pub name: String,
+    /// Takes sign-ups: offer "Sign up".
+    pub sign_up: bool,
+    /// Lets people in with just a nickname: offer "Continue as guest".
+    pub guests: bool,
+    /// Offer "Sign in with Discord" (D96).
+    pub discord: bool,
+    /// A classic IRC network, not an IrChad server (D72).
+    pub classic: bool,
+}
+
 #[derive(uniffi::Record)]
 pub struct Network {
     pub network: String,

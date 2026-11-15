@@ -5,6 +5,8 @@ name = "Chad Dev Network"
 # Sidebar icon (HTTPS, ≤1 MiB, PNG/JPEG/WebP); Caddy serves this one.
 icon = "https://chat.localhost:8443/icon.png"
 registration = "open"
+# Apps offer "Continue as guest". ergo must allow it too (`accounts.require-sasl`).
+guests = true
 # Every chad is put here; its chanops list the official channels in its
 # `chad/channels` metadata (deploy/seed.py sets it).
 home = "#general"

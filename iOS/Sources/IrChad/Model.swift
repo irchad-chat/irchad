@@ -42,6 +42,8 @@ final class AppModel {
     var notice: String?
     /// (invite, error) for a join that failed.
     var joinFailure: (invite: String, error: String)?
+    /// (invite, server) for a `discover` that found its server.
+    var discovered: (invite: String, server: Server)?
     /// The verification on screen, one person at a time.
     var verify: Verify?
     /// A report being written: who, and the message if it's about one.
@@ -195,6 +197,10 @@ final class Bridge: Listener, @unchecked Sendable {
 
     func joinFailed(invite: String, error: String) {
         main { $0.joinFailure = (invite, error) }
+    }
+
+    func discovered(invite: String, server: Server) {
+        main { $0.discovered = (invite, server) }
     }
 
     func preview(network: String, url: String, preview: LinkPreview?) {
