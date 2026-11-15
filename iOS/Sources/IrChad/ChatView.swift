@@ -359,8 +359,33 @@ struct MessageRow: View {
     /// a `GestureState` springs back on its own even when the scroll view takes the touch.
     @GestureState(resetTransaction: Transaction(animation: .snappy)) private var swipe: (horizontal: Bool?, x: CGFloat) = (nil, 0)
     private let reach: CGFloat = 64
+    /// A message's actions: a drawer on phones, a popover by the message on iPads. Not a
+    /// context menu: its lift preview swells the row, and its long press is slower.
+    @Environment(\.horizontalSizeClass) private var size
+    @State private var drawer = false
+    /// What the drawer's pick does once it has closed: a reply's keyboard or the next sheet needs it gone.
+    @State private var pending: (() -> Void)?
 
     var body: some View {
+        let actions = MessageDrawer(network: network, target: target, m: m, run: { act in
+            pending = act
+            drawer = false
+        }, onReply: onReply, onEdit: onEdit, onReact: onReact)
+        let row = row
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.3).onEnded { _ in drawer = true })
+            .sensoryFeedback(.impact, trigger: drawer) { _, open in open }
+        if size == .compact {
+            row.sheet(isPresented: $drawer, onDismiss: { pending?(); pending = nil }) { actions }
+        } else {
+            row
+                .popover(isPresented: $drawer) { actions.frame(width: 360) }
+                .onChange(of: drawer) { _, open in
+                    if !open { pending?(); pending = nil }
+                }
+        }
+    }
+
+    @ViewBuilder private var row: some View {
         let highlight = m.mention && !dm
         HStack(alignment: .top, spacing: 10) {
             Rectangle().fill(highlight ? Color.accentColor : .clear).frame(width: 3)
@@ -434,7 +459,6 @@ struct MessageRow: View {
         .contentShape(Rectangle())
         .simultaneousGesture(swipeToReply, including: m.msgid != nil && !m.redacted ? .all : .subviews)
         .sensoryFeedback(.impact, trigger: swipe.x <= -reach) { _, past in past }
-        .contextMenu { menu }
     }
 
     private var swipeToReply: some Gesture {
@@ -513,39 +537,97 @@ struct MessageRow: View {
         }
         .padding(.top, 2)
     }
+}
 
-    @ViewBuilder private var menu: some View {
-        if m.msgid != nil && !m.redacted {
-            Button("Reply", systemImage: "arrowshape.turn.up.left", action: onReply)
-            ForEach(["👍", "❤️", "😂", "😮"], id: \.self) { e in
-                Button("React \(e)") {
-                    if let id = m.msgid { model.client.react(network: network, target: target, msgid: id, emoji: e) }
+/// A message's actions (phone drawer, iPad popover): quick reactions (as many as fit, then the full
+/// picker), reply and copy, then the destructive ones.
+struct MessageDrawer: View {
+    @Environment(AppModel.self) private var model
+    let network: String
+    let target: String
+    let m: Message
+    /// Closes the drawer, then runs the action.
+    let run: (@escaping () -> Void) -> Void
+    let onReply: () -> Void
+    let onEdit: () -> Void
+    let onReact: () -> Void
+    @State private var width: CGFloat = 0
+    @State private var height: CGFloat = 300
+
+    private static let quick = ["👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👀", "🙏", "💯", "😡", "👎"]
+
+    var body: some View {
+        let sent = m.msgid != nil && !m.redacted
+        let canReport = !m.own && model.client.reportTo(network: network) != nil
+        VStack(spacing: 0) {
+            if sent {
+                // 48pt each, 8pt apart, and the picker's.
+                let fit = max(1, Int((width + 8) / 56) - 1)
+                HStack {
+                    ForEach(Self.quick.prefix(fit), id: \.self) { e in
+                        Button {
+                            run { if let id = m.msgid { model.client.react(network: network, target: target, msgid: id, emoji: e) } }
+                        } label: {
+                            Text(e).font(.system(size: 24)).frame(width: 48, height: 48)
+                                .background(Color(.secondarySystemBackground), in: Circle())
+                        }
+                        .accessibilityLabel("React \(e)")
+                        Spacer(minLength: 0)
+                    }
+                    Button { run(onReact) } label: {
+                        Image(systemName: "face.smiling").font(.system(size: 22)).frame(width: 48, height: 48)
+                            .background(Color(.secondarySystemBackground), in: Circle())
+                    }
+                    .accessibilityLabel("More reactions")
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                item("Reply", "arrowshape.turn.up.left", action: onReply)
+            }
+            if !m.redacted && !m.text.isEmpty {
+                item("Copy text", "doc.on.doc") { UIPasteboard.general.string = m.text }
+            }
+            if m.own && sent && !m.notice { item("Edit", "pencil", action: onEdit) }
+            if (m.own && sent) || !m.own { Divider().padding(.vertical, 8) }
+            if m.own && sent {
+                item("Delete", "trash", danger: true) {
+                    if let id = m.msgid { model.client.redact(network: network, target: target, msgid: id) }
                 }
             }
-            Button("React…", systemImage: "face.smiling", action: onReact)
-        }
-        if !m.redacted && !m.text.isEmpty {
-            Button("Copy text", systemImage: "doc.on.doc") { UIPasteboard.general.string = m.text }
-        }
-        if m.own && m.msgid != nil && !m.redacted && !m.notice {
-            Button("Edit", systemImage: "pencil", action: onEdit)
-            Button("Delete", systemImage: "trash", role: .destructive) {
-                if let id = m.msgid { model.client.redact(network: network, target: target, msgid: id) }
+            if !m.own {
+                item("Block \(m.shown)", "hand.raised", danger: true) {
+                    model.client.block(network: network, nick: m.nick, account: m.account)
+                }
+                if canReport {
+                    item("Report", "flag", danger: true) {
+                        model.reporting = ReportDraft(
+                            network: network, nick: m.nick, target: target,
+                            msgid: m.msgid, text: m.text.isEmpty ? nil : m.text
+                        )
+                    }
+                }
             }
         }
-        if !m.own && model.client.reportTo(network: network) != nil {
-            Button("Report", systemImage: "flag") {
-                model.reporting = ReportDraft(
-                    network: network, nick: m.nick, target: target,
-                    msgid: m.msgid, text: m.text.isEmpty ? nil : m.text
-                )
-            }
+        .padding(.top, 20)
+        .padding(.bottom, 8)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        .presentationDetents([.height(height)])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func item(_ label: String, _ icon: String, danger: Bool = false, action: @escaping () -> Void) -> some View {
+        Button { run(action) } label: {
+            Label(label, systemImage: icon)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+                .contentShape(Rectangle())
         }
-        if !m.own {
-            Button("Block \(m.shown)", systemImage: "hand.raised", role: .destructive) {
-                model.client.block(network: network, nick: m.nick, account: m.account)
-            }
-        }
+        .buttonStyle(.plain)
+        .foregroundStyle(danger ? Color.red : Color.primary)
     }
 }
 

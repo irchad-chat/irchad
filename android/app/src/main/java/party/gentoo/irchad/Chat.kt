@@ -155,6 +155,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.animation.core.Animatable
@@ -889,6 +892,8 @@ private fun Log(
     // Newest at the bottom: the list is reversed so it starts there.
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf<Message?>(null) }
+    // Phones get a drawer for a message's actions; tablets keep the dropdown by the message.
+    val phone = LocalConfiguration.current.screenWidthDp < 600
     var reactTo by remember { mutableStateOf<String?>(null) }
     var reporting by remember { mutableStateOf<Message?>(null) }
     val reportTo = remember(tick, net.network) { c.reportTo(net.network) }
@@ -960,54 +965,70 @@ private fun Log(
                         },
                         onReply = if (m.msgid != null && !m.redacted) ({ onReply(m) }) else null,
                     )
-                    DropdownMenu(expanded = menu?.key == m.key, onDismissRequest = { menu = null }) {
-                        if (m.msgid != null && !m.redacted) {
-                            DropdownMenuItem(text = { Text("Reply") }, onClick = {
-                                onReply(m)
-                                menu = null
-                            })
+                    if (phone) {
+                        if (menu?.key == m.key) {
+                            MessageSheet(
+                                m, canReport = reportTo != null, onDismiss = { menu = null },
+                                onReact = { e -> m.msgid?.let { c.react(net.network, buf.target, it, e) } },
+                                onPicker = { reactTo = m.msgid },
+                                onReply = { onReply(m) },
+                                onCopy = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(m.text)) },
+                                onEdit = { onEdit(m) },
+                                onDelete = { c.redact(net.network, buf.target, m.msgid!!) },
+                                onReport = { reporting = m },
+                                onBlock = { c.block(net.network, m.nick, m.account) },
+                            )
                         }
-                        for (e in listOf("👍", "❤", "😂", "😮")) {
-                            DropdownMenuItem(text = { Text("React $e") }, onClick = {
-                                m.msgid?.let { c.react(net.network, buf.target, it, e) }
-                                menu = null
-                            })
-                        }
-                        if (m.msgid != null) {
-                            DropdownMenuItem(text = { Text("React…") }, onClick = {
-                                reactTo = m.msgid
-                                menu = null
-                            })
-                        }
-                        if (!m.redacted && m.text.isNotEmpty()) {
-                            DropdownMenuItem(text = { Text("Copy text") }, onClick = {
-                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(m.text))
-                                menu = null
-                            })
-                        }
-                        if (m.own && m.msgid != null && !m.redacted && !m.undecryptable && !m.notice) {
-                            DropdownMenuItem(text = { Text("Edit") }, onClick = {
-                                onEdit(m)
-                                menu = null
-                            })
-                        }
-                        if (m.own && m.msgid != null && !m.redacted) {
-                            DropdownMenuItem(text = { Text("Delete") }, onClick = {
-                                c.redact(net.network, buf.target, m.msgid!!)
-                                menu = null
-                            })
-                        }
-                        if (!m.own && reportTo != null) {
-                            DropdownMenuItem(text = { Text("Report") }, onClick = {
-                                reporting = m
-                                menu = null
-                            })
-                        }
-                        if (!m.own) {
-                            DropdownMenuItem(text = { Text("Block ${m.shown}") }, onClick = {
-                                c.block(net.network, m.nick, m.account)
-                                menu = null
-                            })
+                    } else {
+                        DropdownMenu(expanded = menu?.key == m.key, onDismissRequest = { menu = null }) {
+                            if (m.msgid != null && !m.redacted) {
+                                DropdownMenuItem(text = { Text("Reply") }, onClick = {
+                                    onReply(m)
+                                    menu = null
+                                })
+                            }
+                            for (e in listOf("👍", "❤", "😂", "😮")) {
+                                DropdownMenuItem(text = { Text("React $e") }, onClick = {
+                                    m.msgid?.let { c.react(net.network, buf.target, it, e) }
+                                    menu = null
+                                })
+                            }
+                            if (m.msgid != null) {
+                                DropdownMenuItem(text = { Text("React…") }, onClick = {
+                                    reactTo = m.msgid
+                                    menu = null
+                                })
+                            }
+                            if (!m.redacted && m.text.isNotEmpty()) {
+                                DropdownMenuItem(text = { Text("Copy text") }, onClick = {
+                                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(m.text))
+                                    menu = null
+                                })
+                            }
+                            if (m.own && m.msgid != null && !m.redacted && !m.undecryptable && !m.notice) {
+                                DropdownMenuItem(text = { Text("Edit") }, onClick = {
+                                    onEdit(m)
+                                    menu = null
+                                })
+                            }
+                            if (m.own && m.msgid != null && !m.redacted) {
+                                DropdownMenuItem(text = { Text("Delete") }, onClick = {
+                                    c.redact(net.network, buf.target, m.msgid!!)
+                                    menu = null
+                                })
+                            }
+                            if (!m.own && reportTo != null) {
+                                DropdownMenuItem(text = { Text("Report") }, onClick = {
+                                    reporting = m
+                                    menu = null
+                                })
+                            }
+                            if (!m.own) {
+                                DropdownMenuItem(text = { Text("Block ${m.shown}") }, onClick = {
+                                    c.block(net.network, m.nick, m.account)
+                                    menu = null
+                                })
+                            }
                         }
                     }
                 }
@@ -1034,6 +1055,70 @@ private fun Log(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             )
+        }
+    }
+}
+
+private val QUICK_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "🔥", "🎉", "👀", "🙏", "💯", "😡", "👎")
+
+/** A message's actions on a phone: quick reactions (as many as fit, then the full picker), then the rest. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessageSheet(
+    m: Message, canReport: Boolean, onDismiss: () -> Unit,
+    onReact: (String) -> Unit, onPicker: () -> Unit, onReply: () -> Unit, onCopy: () -> Unit,
+    onEdit: () -> Unit, onDelete: () -> Unit, onReport: () -> Unit, onBlock: () -> Unit,
+) {
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    // Close first, then act: a reply's keyboard or the next sheet needs this one gone.
+    fun then(action: () -> Unit) {
+        scope.launch { state.hide() }.invokeOnCompletion { onDismiss(); action() }
+    }
+    val sent = m.msgid != null && !m.redacted
+    val danger = MaterialTheme.colorScheme.error
+    @Composable
+    fun Item(label: String, color: Color = Color.Unspecified, action: () -> Unit) {
+        Text(
+            label,
+            color = color,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.fillMaxWidth().clickable { then(action) }.padding(horizontal = 24.dp, vertical = 14.dp),
+        )
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
+        Column(Modifier.padding(bottom = 16.dp)) {
+            if (sent) {
+                BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    val fit = ((maxWidth + 8.dp) / 56.dp).toInt() - 1 // 48dp each, 8dp apart, and the picker's
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        for (e in QUICK_REACTIONS.take(fit.coerceAtLeast(1))) {
+                            Box(
+                                Modifier.size(48.dp).clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable(onClickLabel = "React $e") { then { onReact(e) } },
+                                contentAlignment = Alignment.Center,
+                            ) { Text(e, fontSize = 24.sp) }
+                        }
+                        Box(
+                            Modifier.size(48.dp).clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .clickable { then(onPicker) },
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Default.Face, "More reactions") }
+                    }
+                }
+                Item("Reply", action = onReply)
+            }
+            if (!m.redacted && m.text.isNotEmpty()) Item("Copy text", action = onCopy)
+            if (m.own && sent && !m.undecryptable && !m.notice) Item("Edit", action = onEdit)
+            val below = (m.own && sent) || !m.own
+            if (below) HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            if (m.own && sent) Item("Delete", danger, onDelete)
+            if (!m.own) {
+                Item("Block ${m.shown}", danger, onBlock)
+                if (canReport) Item("Report", danger, onReport)
+            }
         }
     }
 }
