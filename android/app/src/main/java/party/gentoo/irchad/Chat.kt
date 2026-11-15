@@ -1749,7 +1749,7 @@ private fun ScreenViewer(app: IrChad, call: CallState, pip: Boolean) {
     }
 }
 
-/** Someone's activity, a tap away from its song's link, with the song's progress. */
+/** Someone's activity, a tap away from its song's link. */
 @Composable
 private fun ActivityLine(text: String, music: Music?) {
     val uri = androidx.compose.ui.platform.LocalUriHandler.current
@@ -1767,18 +1767,4 @@ private fun ActivityLine(text: String, music: Music?) {
         overflow = TextOverflow.Ellipsis,
         modifier = if (url != null) Modifier.clickable { uri.openUri(url) } else Modifier,
     )
-    val length = music?.length?.toLong() ?: 0L
-    if (length > 0) {
-        val now by androidx.compose.runtime.produceState(System.currentTimeMillis() / 1000) {
-            while (true) {
-                kotlinx.coroutines.delay(1000)
-                value = System.currentTimeMillis() / 1000
-            }
-        }
-        val at = (now - music!!.start.toLong()).coerceIn(0, length)
-        androidx.compose.material3.LinearProgressIndicator(
-            progress = { at.toFloat() / length },
-            modifier = Modifier.width(120.dp).padding(top = 4.dp),
-        )
-    }
 }

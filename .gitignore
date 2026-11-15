@@ -1,4 +1,6 @@
 /target
+# sourcekit-lsp's index when the editor opens the repo root (iOS/ has its own).
+/.build
 *.db
 .env
 /deploy/data/

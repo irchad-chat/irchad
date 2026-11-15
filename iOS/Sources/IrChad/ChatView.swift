@@ -673,10 +673,10 @@ private struct MemberRow: View {
                         if m.account == nil {
                             Text("👻").accessibilityLabel("Guest (not logged in)")
                         }
-                        Text(m.prefix + m.shown).foregroundStyle(m.away ? .secondary : .primary)
+                        Text(m.shown).foregroundStyle(m.away ? .secondary : .primary)
                     }
                     if let a = p.activity {
-                        ActivityLine(text: a, music: p.music)
+                        ActivityLine(text: a, music: nil) // progress is for the profile card
                     }
                 }
             }
