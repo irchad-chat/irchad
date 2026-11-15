@@ -75,7 +75,7 @@ class Settings(app: Context) {
     ) { prefs.edit().putString("notify", it.name).apply() }
     /** Away by choice, on every network. */
     var away by bool("away", false)
-    /** The first-launch cards have been read or skipped. */
+    /** A network has been signed in to: the first-launch cards are over. */
     var welcomed by bool("welcomed", false)
     /** Away by itself after this many minutes without a touch; 0 never. */
     var awayAfter by int("away_after", 10, 0..240)

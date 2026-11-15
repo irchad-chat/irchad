@@ -64,7 +64,7 @@ Either:
 
 The app asks the server what it offers, then shows the network's name and its sign-in form. **Change** next to the address takes you back.
 
-The first time you open IrChad, a few short cards explain what a network is and what happens next. Press **Next** to read them or **Skip** to go straight on. They don't come back.
+The first time you open IrChad, a few short cards explain what a network is and what happens next. Press **Next** to read them or **Skip** to go straight on. They show each time you open the app until you've signed in to your first network.
 
 ## 3. Choose how to join
 

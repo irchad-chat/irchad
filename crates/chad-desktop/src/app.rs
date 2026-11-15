@@ -76,6 +76,9 @@ pub struct App {
     join: Option<JoinDialog>,
     /// The first-launch card on screen.
     welcome_card: usize,
+    /// The cards were read or skipped this run. They're back next launch,
+    /// until a first network is signed in to (`Settings::welcomed`).
+    welcome_done: bool,
     /// The app icon, for the first-launch cards.
     logo: Option<egui::TextureHandle>,
     verify_code: String,
@@ -515,6 +518,7 @@ impl App {
             settings_section: settings::Section::default(),
             join: None,
             welcome_card: 0,
+            welcome_done: false,
             logo: None,
             verify_code: String::new(),
             signin_password: String::new(),
@@ -815,10 +819,10 @@ impl App {
         }
     }
 
-    /// Nothing joined yet, and the first-launch cards not yet read: they
-    /// come before anything else, the join dialog included.
+    /// No network signed in to yet, ever, and the first-launch cards not
+    /// read this run: they come before anything else, the join dialog included.
     pub(crate) fn welcoming(&self) -> bool {
-        !self.settings.welcomed && self.view.nets.is_empty()
+        !self.settings.welcomed && !self.welcome_done && self.view.nets.is_empty()
     }
 
     fn welcome(&mut self, ui: &mut egui::Ui) {
@@ -895,7 +899,7 @@ impl App {
             }
         });
         if done {
-            self.settings.welcomed = true;
+            self.welcome_done = true;
             if self.join.is_none() {
                 self.join = Some(JoinDialog::default());
             }

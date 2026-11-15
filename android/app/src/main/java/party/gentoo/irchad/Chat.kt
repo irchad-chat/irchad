@@ -219,10 +219,14 @@ fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: 
     }
     LaunchedEffect(settled, nets.isEmpty()) { if (settled && nets.isEmpty()) adding = true }
     val close = { adding = false; inviteTaken() }
+    // The cards were read or skipped this run. They're back next launch,
+    // until a first network is signed in to.
+    var welcomeDone by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(nets) { if (nets.any { it.status == null }) app.settings.welcomed = true }
     when {
         // First launch: what a network is, before the join screen asks for one.
-        !app.settings.welcomed && nets.isEmpty() ->
-            if (settled) WelcomeScreen { app.settings.welcomed = true } else Surface(Modifier.fillMaxSize()) {}
+        !app.settings.welcomed && !welcomeDone && nets.isEmpty() ->
+            if (settled) WelcomeScreen { welcomeDone = true } else Surface(Modifier.fillMaxSize()) {}
         invite != null || adding -> JoinScreen(
             app, invite, nets,
             onDone = { origin, channel -> focus = Focus(origin, channel); close() },

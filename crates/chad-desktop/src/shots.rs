@@ -109,6 +109,8 @@ fn welcome() {
     s.harness.run();
     s.harness.get_by_label("Server address");
     assert!(s.harness.query_by_label("Next").is_none());
+    // Skipped, not signed in: they're back next launch.
+    assert!(!s.harness.state().settings_welcomed());
 }
 
 /// A link opening the app waits behind the cards.

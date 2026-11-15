@@ -612,3 +612,6 @@ A beta tester who had never used anything like IRC was lost before she got in: t
 
 ## D100: Classic IRC is a small checkbox on the join dialog, not a tab (2026-11-15)
 Supersedes D98's "Desktop keeps the IrChad server / Classic IRC switch". Two equal tabs made a chad choose between words they don't know. The first step now shows only the server address, and under the buttons a small, muted checkbox reads "I know what IRC is and I want to connect to a non-IrChad server". Ticking it swaps in the host, port and TLS fields as before (D72).
+
+## D101: The welcome cards come back every launch until a first network is signed in to (2026-11-15)
+Supersedes D99's "either way out marks them seen for good" and its seen flag. Reading or skipping the cards only puts them away for that run of the app. The per-device flag (`Settings::welcomed`, Android's `welcomed` preference, iOS `UserDefaults`, web `localStorage`) is now set the first time a network connects, so someone who gave up before signing in gets the explanation again next time.

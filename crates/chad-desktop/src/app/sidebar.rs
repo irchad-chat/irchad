@@ -90,7 +90,7 @@ impl App {
             .tip("Join a network");
         if add.clicked() {
             // Asking for it is as good as skipping the first-launch cards.
-            self.settings.welcomed = true;
+            self.welcome_done = true;
             self.join = Some(JoinDialog::default());
         }
     }

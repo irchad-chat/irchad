@@ -21,8 +21,8 @@ const host = new URL(client.network).host
 const busy = computed(() => client.state?.state === 'connecting')
 const verifying = computed(() => client.state?.state === 'verifying')
 
-// First visit: what a network is, before asking to sign in to one. A browser
-// that won't keep the flag just sees the cards again.
+// Until the first sign-in: what a network is, before asking to sign in to
+// one. Reading or skipping the cards only puts them away for this visit.
 const stored = (run: (s: Storage) => string | null | void) => {
   try {
     return run(localStorage)
@@ -31,10 +31,11 @@ const stored = (run: (s: Storage) => string | null | void) => {
   }
 }
 const welcome = ref(stored((s) => s.getItem('welcomed')) === null)
-function welcomed() {
-  welcome.value = false
-  stored((s) => s.setItem('welcomed', '1'))
-}
+watch(
+  () => client.ready,
+  (ready) => ready && stored((s) => s.setItem('welcomed', '1')),
+  { flush: 'sync' },
+)
 
 function submit() {
   if (mode.value === 'signup') client.signUp(name.value, password.value, email.value)
@@ -46,7 +47,7 @@ function submit() {
   <main class="login">
     <WelcomeCards
       v-if="welcome && !verifying && client.discordSuggestion === null && !client.discordBusy"
-      @done="welcomed"
+      @done="welcome = false"
     />
     <template v-else>
     <h1>{{ client.state?.name || host }}</h1>

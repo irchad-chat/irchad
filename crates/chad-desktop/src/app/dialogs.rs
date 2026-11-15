@@ -1350,6 +1350,10 @@ fn emoji_picker(
 
 #[cfg(test)]
 impl App {
+    pub(crate) fn settings_welcomed(&self) -> bool {
+        self.settings.welcomed
+    }
+
     /// "Join a network", which two buttons open.
     pub(crate) fn shot_join(&mut self) {
         self.settings.welcomed = true;

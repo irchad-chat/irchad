@@ -8,8 +8,10 @@ struct RootView: View {
     /// before deciding there are none. A join in progress is listed too, so
     /// the join screen stays up by `adding`, not by the list being empty.
     @State private var settled = false
-    /// The first-launch cards have been read or skipped.
+    /// A network has been signed in to: the first-launch cards are over.
     @AppStorage("welcomed") private var welcomed = false
+    /// The cards were read or skipped this run; they're back next launch.
+    @State private var welcomeDone = false
     @State private var reason = ""
     @State private var discordName = ""
     @Environment(\.webAuthenticationSession) private var webAuth
@@ -18,9 +20,9 @@ struct RootView: View {
         let _ = model.tick
         let nets = model.client.networks()
         Group {
-            if !welcomed && nets.isEmpty {
+            if !welcomed && !welcomeDone && nets.isEmpty {
                 // First launch: what a network is, before the join screen asks for one.
-                if settled { WelcomeView { welcomed = true } } else { Color(.systemBackground).ignoresSafeArea() }
+                if settled { WelcomeView { welcomeDone = true } } else { Color(.systemBackground).ignoresSafeArea() }
             } else if model.invite != nil || adding {
                 JoinView(
                     invite: model.invite,
@@ -87,6 +89,7 @@ struct RootView: View {
             try? await Task.sleep(for: .milliseconds(400))
             settled = true
         }
+        .onChange(of: nets.contains { $0.status == nil }, initial: true) { _, signedIn in if signedIn { welcomed = true } }
         .onChange(of: settled && nets.isEmpty, initial: true) { _, none in if none { adding = true } }
     }
 

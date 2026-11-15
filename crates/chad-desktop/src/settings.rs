@@ -68,7 +68,7 @@ pub struct Settings {
     pub music_player_name: bool,
     /// The game overlay (D74).
     pub overlay: OverlaySettings,
-    /// The first-launch cards have been read or skipped.
+    /// A network has been signed in to: the first-launch cards are over.
     pub welcomed: bool,
 }
 

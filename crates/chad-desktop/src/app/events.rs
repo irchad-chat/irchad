@@ -405,6 +405,10 @@ impl App {
         {
             self.signup = None;
         }
+        // Signed in somewhere: the first-launch cards don't come back.
+        if info.state == ConnState::Connected {
+            self.settings.welcomed = true;
+        }
         let waiting = matches!(
             info.state,
             ConnState::Connected | ConnState::NeedsVerification { .. }
