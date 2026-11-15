@@ -12,6 +12,10 @@ struct ChatView: View {
 
     @State private var replyTo: Message?
     @State private var editing: Message?
+    @Environment(\.horizontalSizeClass) private var size
+    /// The member list as a column on wide screens, like desktop; remembered.
+    @AppStorage("membersPane") private var pane = true
+    /// The member list as a sheet on narrow ones.
     @State private var members = false
 
     var body: some View {
@@ -24,17 +28,19 @@ struct ChatView: View {
                 if buf.encryption == .changed { KeysChanged(net: net, buf: buf) }
                 MessageList(net: net, buf: buf, replyTo: $replyTo, editing: $editing)
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            .bottomBar {
                 Composer(net: net, buf: buf, replyTo: $replyTo, editing: $editing)
             }
             .toolbar { toolbar(net: net, buf: buf) }
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $members) {
+            // A column when there's room, a sheet when not (Split View, Slide Over, phones).
+            .inspector(isPresented: membersShown(buf)) {
                 MembersSheet(net: net, channel: buf.target) { nick in
                     members = false
                     model.client.openDm(network: net.network, nick: nick)
                     select(Sel(network: net.network, target: nick))
                 }
+                .inspectorColumnWidth(min: 200, ideal: 260, max: 360)
             }
             .task(id: "\(buf.unread) \(phase == .active)") {
                 guard phase == .active else { return }
@@ -79,10 +85,18 @@ struct ChatView: View {
                 Button("Verify") { model.client.verification(network: net.network, nick: buf.target, step: .start) }
             }
             if !buf.dm {
-                Button { members = true } label: { Image(systemName: "person.2") }
+                Button { membersShown(buf).wrappedValue.toggle() } label: { Image(systemName: "person.2") }
                     .accessibilityLabel("Members")
             }
         }
+    }
+
+    /// The column's choice only counts while wide: narrowing the window doesn't pop up the sheet.
+    private func membersShown(_ buf: Buffer) -> Binding<Bool> {
+        Binding(
+            get: { !buf.dm && (size == .regular ? pane : members) },
+            set: { if size == .regular { pane = $0 } else { members = $0 } }
+        )
     }
 
     /// Joins voice once the mic is allowed: without it there's no voice, not
@@ -132,7 +146,7 @@ struct StatusBanner: View {
                             }
                             input = ""
                         }
-                        .buttonStyle(.borderedProminent)
+                        .glassButton(prominent: true)
                         .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
@@ -225,18 +239,21 @@ private struct MessageList: View {
             }
         }
         // An inset, not an overlay: the list makes room instead of hiding its last message.
+        // The room is kept while nobody's typing, so the list doesn't jump when someone starts.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !buf.typing.isEmpty {
-                let who = buf.typing
-                Text(who.count == 1 ? "\(who[0]) is typing…"
-                    : who.count == 2 ? "\(who[0]) and \(who[1]) are typing…" : "Several people are typing…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.background)
+            let who = buf.typing
+            let text = who.count == 1 ? "\(who[0]) is typing"
+                : who.count == 2 ? "\(who[0]) and \(who[1]) are typing" : "Several people are typing"
+            ZStack(alignment: .leading) {
+                typing("Typing").hidden()
+                if !who.isEmpty {
+                    typing(text)
+                        .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .leading)))
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(.smooth(duration: 0.3), value: who.isEmpty)
+            .animation(.smooth(duration: 0.2), value: text)
         }
         .sheet(item: Binding(get: { reactTo.map(IdBox.init) }, set: { reactTo = $0?.id })) { r in
             EmojiGifPicker(network: net.network, gifs: nil, onEmoji: { e in
@@ -244,6 +261,21 @@ private struct MessageList: View {
                 reactTo = nil
             }, onGif: { _ in })
         }
+    }
+
+    private func typing(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "ellipsis")
+                .symbolEffect(.variableColor.iterative.dimInactiveLayers)
+            Text(text).contentTransition(.opacity)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .glass(in: Capsule(), fallback: AnyShapeStyle(.background))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 2)
     }
 }
 

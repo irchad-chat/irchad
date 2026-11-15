@@ -16,9 +16,7 @@ struct Composer: View {
     @State private var files = false
     @State private var photos: [PhotosPickerItem] = []
     @State private var photoPicker = false
-    @FocusState private var focused: Bool
-    /// When the last message went: focus lost just after is the field's doing, not the user's.
-    @State private var sentAt = Date.distantPast
+    @State private var focused = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,7 +35,7 @@ struct Composer: View {
                     HStack(spacing: 6) {
                         ForEach(nicks, id: \.nick) { n in
                             Button(n.shown) { complete(n.nick) }
-                                .buttonStyle(.bordered)
+                                .glassButton()
                                 .controlSize(.small)
                                 .accessibilityLabel("Mention \(n.shown)")
                         }
@@ -52,34 +50,37 @@ struct Composer: View {
                         Button("Photos and videos", systemImage: "photo.on.rectangle") { photoPicker = true }
                         Button("Files", systemImage: "folder") { files = true }
                     } label: {
-                        Image(systemName: "plus.circle.fill").font(.title2)
+                        round("plus")
                     }
                     .accessibilityLabel("Attach")
                 }
-                Button { picker = true } label: { Image(systemName: "face.smiling").font(.title2) }
+                Button { picker = true } label: { round("face.smiling") }
                     .accessibilityLabel("Emoji and GIFs")
-                TextField("Message \(buf.target)", text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused($focused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-                    // A hardware keyboard's Return sends; Shift-Return is a new line.
-                    .onKeyPress(.return, phases: .down) { press in
-                        if press.modifiers.contains(.shift) { return .ignored }
-                        send()
-                        return .handled
-                    }
-                Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title) }
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityLabel(editing == nil ? "Send" : "Save edit")
+                HStack(alignment: .bottom, spacing: 4) {
+                    MessageField(placeholder: "Message \(buf.target)", text: $draft, focused: $focused, onReturn: send)
+                        .overlay(alignment: .topLeading) {
+                            if draft.isEmpty {
+                                Text("Message \(buf.target)").foregroundStyle(.tertiary).allowsHitTesting(false)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title2) }
+                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel(editing == nil ? "Send" : "Save edit")
+                        .padding(.bottom, 5)
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 5)
+                .glass(in: RoundedRectangle(cornerRadius: 19))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
-        // Down through the keyboard's area too: with a hardware keyboard that's just the
-        // shortcut bar, and messages would scroll by in the gap.
-        .background { Rectangle().fill(.bar).ignoresSafeArea(edges: .bottom) }
+        .background {
+            // Glass floats over the messages; before it, an opaque bar down through the
+            // keyboard's area too (with a hardware keyboard that's just the shortcut bar).
+            if #available(iOS 26, *) { Color.clear } else { Rectangle().fill(.bar).ignoresSafeArea(edges: .bottom) }
+        }
         .onChange(of: draft) { _, d in
             let blank = d.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             model.client.typing(network: net.network, target: buf.target, active: !blank)
@@ -103,10 +104,6 @@ struct Composer: View {
             }
         }
         .onChange(of: replyTo?.key) { _, k in if k != nil { focused = true } }
-        // A hardware Return ends editing some time after `send()`; take focus back.
-        .onChange(of: focused) { _, f in
-            if !f, Date().timeIntervalSince(sentAt) < 0.5 { focused = true }
-        }
         .sheet(isPresented: $picker) {
             EmojiGifPicker(network: net.network, gifs: net.gifs, onEmoji: { draft += $0 }, onGif: { url in
                 // Posted as a plain link: every client can open it, and IrChad shows it inline.
@@ -158,9 +155,18 @@ struct Composer: View {
             Button(action: action) { Image(systemName: "xmark.circle.fill") }
                 .accessibilityLabel(close)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(Color(.tertiarySystemBackground))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .glass(in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+    }
+
+    private func round(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.title3)
+            .frame(width: 38, height: 38)
+            .glass(in: Circle())
     }
 
     private func send() {
@@ -176,9 +182,6 @@ struct Composer: View {
         picked = []
         replyTo = nil
         editing = nil
-        // Keep the field focused for the next message (the button takes focus).
-        sentAt = Date()
-        focused = true
     }
 
     private func uploadPhotos(_ items: [PhotosPickerItem]) async {
@@ -239,5 +242,80 @@ struct PickedFile: Transferable {
             try FileManager.default.copyItem(at: received.file, to: dst)
             return PickedFile(url: dst)
         }
+    }
+}
+
+/// The draft's text view: UIKit's, since SwiftUI's multi-line `TextField` ends
+/// editing on a hardware keyboard's Return, dropping the keyboard on every send.
+/// A hardware Return sends (`onReturn`); Shift-Return and the on-screen
+/// keyboard's Return are new lines.
+private struct MessageField: UIViewRepresentable {
+    let placeholder: String
+    @Binding var text: String
+    @Binding var focused: Bool
+    let onReturn: () -> Void
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: MessageField
+        init(_ parent: MessageField) { self.parent = parent }
+
+        func textViewDidChange(_ v: UITextView) { parent.text = v.text }
+        func textViewDidBeginEditing(_ v: UITextView) { if !parent.focused { parent.focused = true } }
+        func textViewDidEndEditing(_ v: UITextView) { if parent.focused { parent.focused = false } }
+    }
+
+    final class View: UITextView {
+        var onReturn: () -> Void = {}
+
+        override var keyCommands: [UIKeyCommand]? {
+            let send = UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(returnPressed))
+            send.wantsPriorityOverSystemBehavior = true
+            return (super.keyCommands ?? []) + [send]
+        }
+
+        @objc private func returnPressed() { onReturn() }
+
+        // Mid-composition (an input method's marked text), Return commits it instead.
+        override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+            action == #selector(returnPressed) ? markedTextRange == nil : super.canPerformAction(action, withSender: sender)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeUIView(context: Context) -> View {
+        let v = View()
+        v.delegate = context.coordinator
+        v.font = .preferredFont(forTextStyle: .body)
+        v.adjustsFontForContentSizeCategory = true
+        v.backgroundColor = .clear
+        v.textContainerInset = .zero
+        v.textContainer.lineFragmentPadding = 0
+        v.isScrollEnabled = false
+        v.accessibilityLabel = placeholder
+        v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return v
+    }
+
+    func updateUIView(_ v: View, context: Context) {
+        context.coordinator.parent = self
+        v.onReturn = onReturn
+        v.accessibilityLabel = placeholder
+        if v.text != text { v.text = text }
+        if focused != v.isFirstResponder {
+            // Not during the update: the delegate writes `focused` back.
+            DispatchQueue.main.async {
+                if context.coordinator.parent.focused { v.becomeFirstResponder() } else { v.resignFirstResponder() }
+            }
+        }
+    }
+
+    /// Grows with the text up to six lines, then scrolls.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView v: View, context: Context) -> CGSize? {
+        guard let w = proposal.width else { return nil }
+        let fit = v.sizeThatFits(CGSize(width: w, height: .greatestFiniteMagnitude)).height
+        let most = ceil((v.font?.lineHeight ?? 20) * 6)
+        v.isScrollEnabled = fit > most
+        return CGSize(width: w, height: min(fit, most))
     }
 }

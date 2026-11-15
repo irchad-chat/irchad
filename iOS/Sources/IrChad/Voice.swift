@@ -333,8 +333,8 @@ struct VoicePanel: View {
                     Button { model.client.leaveVoice(network: net.network) } label: {
                         Image(systemName: "phone.down.fill")
                             .foregroundStyle(.white)
-                            .padding(8)
-                            .background(.red, in: Circle())
+                            .frame(width: 32, height: 32)
+                            .glass(in: Circle(), tint: .red)
                     }
                     .accessibilityLabel("Leave voice")
                 }
@@ -363,7 +363,9 @@ struct VoicePanel: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(.bar)
+            .glass(in: RoundedRectangle(cornerRadius: 22), fallback: AnyShapeStyle(.bar))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
         }
     }
 
@@ -371,7 +373,7 @@ struct VoicePanel: View {
         Button(action: action) {
             Image(systemName: on ? onIcon : off)
                 .frame(width: 32, height: 32)
-                .background(on ? Color.red.opacity(0.2) : Color(.secondarySystemBackground), in: Circle())
+                .glass(in: Circle(), tint: on ? .red.opacity(0.3) : nil)
         }
         .accessibilityLabel(label)
     }
@@ -427,14 +429,31 @@ private struct ScreenVideo: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ v: VideoView, coordinator: PiP) {
-        coordinator.controller?.stopPictureInPicture()
+        coordinator.stop()
         v.track = nil
     }
 }
 
 /// Live content for the system's picture-in-picture: no timeline, never paused.
-private final class PiP: NSObject, VideoViewDelegate, AVPictureInPictureSampleBufferPlaybackDelegate, @unchecked Sendable {
+private final class PiP: NSObject, VideoViewDelegate, AVPictureInPictureSampleBufferPlaybackDelegate,
+    AVPictureInPictureControllerDelegate, @unchecked Sendable {
     var controller: AVPictureInPictureController?
+    /// Stopping is asynchronous: released mid-stop, the window is orphaned on screen.
+    @MainActor private static var stopping = Set<PiP>()
+
+    @MainActor func stop() {
+        guard let c = controller else { return }
+        if c.isPictureInPictureActive {
+            Self.stopping.insert(self)
+            c.stopPictureInPicture()
+        } else {
+            controller = nil
+        }
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(_ c: AVPictureInPictureController) {
+        DispatchQueue.main.async { MainActor.assumeIsolated { _ = Self.stopping.remove(self) } }
+    }
 
     @MainActor func attach(_ v: VideoView) {
         guard controller == nil, AVPictureInPictureController.isPictureInPictureSupported(),
@@ -443,6 +462,7 @@ private final class PiP: NSObject, VideoViewDelegate, AVPictureInPictureSampleBu
         let c = AVPictureInPictureController(contentSource: .init(sampleBufferDisplayLayer: layer, playbackDelegate: self))
         c.canStartPictureInPictureAutomaticallyFromInline = true
         c.requiresLinearPlayback = true
+        c.delegate = self
         controller = c
     }
 

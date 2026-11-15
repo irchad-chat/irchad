@@ -129,7 +129,8 @@ impl Net {
                 }
                 let name = self.buffers.get(&target).map(|b| b.name.clone());
                 match (kind, name) {
-                    (Hist::Before, Some(name)) if n < PAGE as usize => {
+                    // Short of a page from the newest down: that's all there is (a fresh DM).
+                    (Hist::Before | Hist::Latest, Some(name)) if n < PAGE as usize => {
                         let network = self.id();
                         self.events.push(Event::HistoryStart {
                             network,

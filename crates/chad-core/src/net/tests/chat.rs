@@ -181,6 +181,20 @@ fn history_pages_dedupe_and_stop() {
 }
 
 #[test]
+fn empty_history_is_its_start() {
+    let mut n = net();
+    let sent = attach(&mut n, &["#c"]);
+    let latest = sent.iter().find(|l| l.contains("LATEST #c")).unwrap();
+    feed(
+        &mut n,
+        &format!("@label={} :s BATCH +h chathistory #c", label_of(latest)),
+    );
+    feed(&mut n, ":s BATCH -h");
+    let ev = events(&mut n);
+    assert!(ev.iter().any(|e| matches!(e, Event::HistoryStart { .. })));
+}
+
+#[test]
 fn read_markers_and_mentions() {
     let mut n = net();
     attach(&mut n, &["#c"]);

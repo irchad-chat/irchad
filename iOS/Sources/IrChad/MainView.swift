@@ -39,7 +39,7 @@ struct MainView: View {
                 ContentUnavailableView("Pick a conversation", systemImage: "bubble.left.and.bubble.right")
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .bottomBar {
             if model.calls.state != nil { VoicePanel(nets: nets) }
         }
         .fullScreenCover(isPresented: Binding(

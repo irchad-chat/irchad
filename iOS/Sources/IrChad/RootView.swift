@@ -85,7 +85,7 @@ private struct Toast: View {
                 .font(.callout)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(.regularMaterial, in: Capsule())
+                .glass(in: Capsule(), fallback: AnyShapeStyle(.regularMaterial))
                 .padding(.bottom, 80)
                 .padding(.horizontal, 16)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -151,15 +151,15 @@ private struct VerifySheet: View {
         let step = { (s: SasStep) in model.client.verification(network: v.network, nick: v.nick, step: s) }
         switch v.state {
         case .incoming:
-            Button("Start") { step(.accept) }.buttonStyle(.borderedProminent)
+            Button("Start") { step(.accept) }.glassButton(prominent: true)
             Button("Not now") { step(.cancel) }
         case .waiting:
             Button("Cancel") { step(.cancel) }
         case .compare:
-            Button("They match") { step(.match) }.buttonStyle(.borderedProminent)
+            Button("They match") { step(.match) }.glassButton(prominent: true)
             Button("They don't match", role: .destructive) { step(.cancel) }
         case .done, .failed:
-            Button("Done") { model.verify = nil }.buttonStyle(.borderedProminent)
+            Button("Done") { model.verify = nil }.glassButton(prominent: true)
         }
     }
 }
