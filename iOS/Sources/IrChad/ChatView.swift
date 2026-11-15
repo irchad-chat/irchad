@@ -532,7 +532,7 @@ struct Avatar: View {
     var size: CGFloat = 36
 
     var body: some View {
-        let _ = model.media.tick
+        let _ = url.map { _ in model.media.tick } // no picture, nothing to wait for
         let color = nickColor(nick, dark: scheme == .dark)
         ZStack {
             Circle().fill(color.opacity(0.25))

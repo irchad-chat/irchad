@@ -111,13 +111,27 @@ final class Media {
 
     func gotPreview(network: String, url: String, preview: LinkPreview?) {
         previews["\(network) \(url)"] = preview.map { .ready($0) } ?? .failed
-        tick &+= 1
+        bump()
     }
 
     func gotImage(network: String, url: String, image: UIImage?) {
         let cost = image.map { i in Int(i.size.width * i.size.height * i.scale * i.scale) * 4 * max(1, i.images?.count ?? 1) } ?? 1
         images.setObject(Box(image.map { .ready($0) } ?? .failed), forKey: "\(network) \(url)" as NSString, cost: cost)
-        tick &+= 1
+        bump()
+    }
+
+    @ObservationIgnored private var bumping = false
+
+    /// Scrolling back fetches in bursts, and every view showing media redraws
+    /// on a tick: one per burst, not one per arrival.
+    private func bump() {
+        guard !bumping else { return }
+        bumping = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            bumping = false
+            tick &+= 1
+        }
     }
 
     func gotGifs(query: String, pos: String?, page: GifPage) {
@@ -255,8 +269,11 @@ private func inlineImages(_ model: AppModel, _ m: Message) -> [Link] {
 /// Links whose image is showing inline: the image stands in for the link.
 @MainActor
 func shownImages(_ model: AppModel, network: String, _ m: Message) -> Set<String> {
+    let urls = inlineImages(model, m)
+    // Rows without images mustn't redraw on every image that arrives.
+    guard !urls.isEmpty else { return [] }
     let _ = model.media.tick
-    return Set(inlineImages(model, m).map(\.url).filter {
+    return Set(urls.map(\.url).filter {
         if case .ready? = model.media.image(network: network, url: $0, ask: false) { true } else { false }
     })
 }
