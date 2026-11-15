@@ -60,6 +60,7 @@ const permissions = [
     <h2>Other services</h2>
     <ul>
       <li><b>Link previews, GIFs and images from other sites</b> are fetched by the network's chadd, not by your device, so those sites see the server's address instead of yours. GIF searches go from chadd to <a href="https://klipy.com">KLIPY</a>.</li>
+      <li><b>Sign in with Discord:</b> if you use it, the network's chadd asks Discord only for your basic identity (the <code>identify</code> scope). It receives your Discord user ID and username, suggests an account name from the username, and remembers which Discord user goes with which account so you can sign in again. It doesn't get your email, servers or messages. Discord's own privacy policy applies to the sign-in.</li>
       <li><b>Push notifications (Android):</b> if you choose Push, the network sends encrypted notifications to the UnifiedPush app you pick, such as ntfy, which delivers them to your device. That app's server sees when a notification arrives, but not what it says. Its own privacy policy applies.</li>
     </ul>
 

@@ -1,0 +1,91 @@
+---
+const repo = "https://git.gentoo.party/sam/irchad-ng";
+const site = "https://irchad.chat/";
+const title = "Terms of Service · IrChad";
+const description = "The rules for using the IrChad apps and the official IrChad network, in plain language.";
+const effective = "15 November 2026";
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta name="description" content={description} />
+  <link rel="canonical" href={`${site}terms`} />
+</head>
+<body>
+  <main>
+    <p><a href="/">← IrChad</a></p>
+    <h1>Terms of Service</h1>
+    <p class="muted">Effective {effective}. By using the IrChad apps or the official IrChad network, you agree to these terms.</p>
+
+    <h2>What these terms cover</h2>
+    <p>These terms cover the IrChad apps for Android, iOS, Linux and Windows, and the official network that IrChad's developer runs, which is linked from this site.
+      Anyone can run their own IrChad network. Each of those networks is run by its own operator, and that operator's rules apply there instead of the network rules below.</p>
+
+    <h2>The software</h2>
+    <p>IrChad is free and open source software, licensed under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU General Public License, version 3 or later</a>.
+      That license governs what you can do with the code, and nothing in these terms limits the rights it gives you. The source is on <a href={repo}>our Git server</a>.</p>
+
+    <h2>Your account</h2>
+    <ul>
+      <li>You must be at least 13 years old, or older if your country requires it, to make an account.</li>
+      <li>Keep your password safe. You're responsible for what's posted from your account.</li>
+      <li>If you sign in with Discord, Discord's <a href="https://discord.com/terms">Terms of Service</a> also apply to that sign-in.
+        We receive only your Discord user ID and username, which we use to link the sign-in to your account. See the <a href="/privacy">privacy policy</a>.</li>
+    </ul>
+
+    <h2>Acceptable use on the official network</h2>
+    <p>Don't use the official network to:</p>
+    <ul>
+      <li>post or share anything illegal, including any content that sexually exploits children;</li>
+      <li>harass, threaten or dox other people, or impersonate them;</li>
+      <li>send spam or malware, or run phishing or scams;</li>
+      <li>attack, overload or disrupt the service, including flooding, mass scraping, or getting around bans and limits;</li>
+      <li>infringe other people's copyright or other rights.</li>
+    </ul>
+    <p>Channel operators can moderate their own channels. The network operator may remove content, and suspend or delete accounts that break these rules, with or without notice.
+      Where the law requires it, we may report illegal content to the authorities.</p>
+
+    <h2>Your content</h2>
+    <p>You keep ownership of what you post. To run the service, you give the network permission to store, copy and deliver it to the people and devices it's meant for.
+      That includes keeping channel history and serving the files you upload. Anyone with a file's link can open it, so don't upload anything you wouldn't share.
+      Channels are also visible to people using ordinary IRC clients, which may keep their own copies.</p>
+
+    <h2>Other services</h2>
+    <p>Some features rely on other services, and their own terms apply: <a href="https://klipy.com">KLIPY</a> for GIF search, the UnifiedPush app you pick for push notifications on Android, and Discord if you sign in with it.</p>
+
+    <h2>No warranty</h2>
+    <p>IrChad and the official network are provided "as is", without warranty of any kind, just as the GPL says for the code.
+      We don't promise that the service will be available, uninterrupted or free of bugs. We may change or shut down the service at any time.
+      To the extent the law allows, IrChad's developer isn't liable for any loss or damage that comes from using the apps or the network, including lost messages or data.</p>
+
+    <h2>Ending your use</h2>
+    <p>You can stop using IrChad and <a href="/delete-account">delete your account</a> at any time.
+      We may suspend or end your access to the official network if you break these terms.</p>
+
+    <h2>Changes to these terms</h2>
+    <p>If these terms change, we'll update the effective date above and mention significant changes in the release notes. If you keep using IrChad after a change, you accept the new terms.</p>
+
+    <h2>Contact</h2>
+    <p>Email <a href="mailto:android@irchad.chat">android@irchad.chat</a>, or open an issue on the <a href={`${repo}/issues`}>issue tracker</a>.</p>
+  </main>
+</body>
+</html>
+
+<style is:global>
+  /* The same Catppuccin tokens as privacy.astro. */
+  :root { color-scheme: light dark; --bg: #e6e9ef; --fg: #4c4f69; --muted: #6c6f85; --accent: #40a02b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #11111b; --fg: #cdd6f4; --muted: #a6adc8; --accent: #a6e3a1; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 2rem 16px 4rem; }
+  a { color: inherit; text-decoration-color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 2.25rem; margin: 1rem 0 0; }
+  h2 { font-size: 1.3rem; margin: 2.5rem 0 .5rem; }
+  .muted { color: var(--muted); }
+  li { margin: .35rem 0; }
+</style>
