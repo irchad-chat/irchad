@@ -123,6 +123,55 @@ export const useClient = defineStore('client', () => {
   const signUp = (account: string, password: string, email: string) =>
     attempt(() => client.signUp(account, password, email || null))
   const verify = (code: string) => client.verify(code)
+
+  // Sign in with Discord (D96): this tab goes to Discord and comes back with
+  // `#oauth=<code>`; a first sign-in then asks for a name.
+  const discord = ref(false)
+  client.discordAvailable().then((on) => (discord.value = on))
+  // The name to confirm for a first sign-in, while asking.
+  const discordSuggestion = ref<string | null>(null)
+  const discordBusy = ref(false)
+  async function discordStart() {
+    discordBusy.value = true
+    try {
+      location.assign(await client.discordStart())
+    } catch (err) {
+      error.value = message(err)
+      discordBusy.value = false
+    }
+  }
+  async function discordName(name: string) {
+    discordBusy.value = true
+    try {
+      await client.discordName(name)
+      discordSuggestion.value = null
+      error.value = undefined
+    } catch (err) {
+      error.value = message(err)
+    } finally {
+      discordBusy.value = false
+    }
+  }
+  const discordCancel = () => {
+    discordSuggestion.value = null
+    error.value = undefined
+  }
+  const back = new URLSearchParams(location.hash.slice(1))
+  if (back.has('oauth') || back.has('oauth_error')) {
+    // Off the address bar, so a reload or a copied link doesn't carry it.
+    history.replaceState(null, '', location.pathname + location.search)
+    const code = back.get('oauth')
+    if (code) {
+      discordBusy.value = true
+      client
+        .discordFinish(code)
+        .then((s) => (discordSuggestion.value = s))
+        .catch((err) => (error.value = message(err)))
+        .finally(() => (discordBusy.value = false))
+    } else {
+      error.value = back.get('oauth_error') ?? undefined
+    }
+  }
   const open = (name: string) =>
     attempt(() => {
       want = name.trim()
@@ -263,6 +312,12 @@ export const useClient = defineStore('client', () => {
     connect,
     signUp,
     verify,
+    discord,
+    discordSuggestion,
+    discordBusy,
+    discordStart,
+    discordName,
+    discordCancel,
     open,
     select,
     close,

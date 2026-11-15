@@ -3,6 +3,7 @@ name: Release
 # Push a tag `vX.Y.Z` (matching the workspace version) to publish a release:
 # the Linux tarball, the Windows installer, the signed Android APK
 # (arm64), and the chadd container image at git.gentoo.party/sam/chadd:<version>.
+# The Play bundle goes to Play's production track when its secrets are set.
 # Before tagging, run docs/release.md's checklist (fuzzing stays out of CI).
 on:
   push:
@@ -203,6 +204,43 @@ jobs:
           curl -fsS -X POST -H "Authorization: token ${{ github.token }}" \
             -F "attachment=@android/app/build/outputs/apk/full/release/app-full-release.apk" \
             "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/${{ needs.release.outputs.id }}/assets?name=irchad-android-arm64.apk"
+
+      # The Play bundle (chat.irchad.IrChad), signed with the Play upload key, not
+      # the APK's. Same job so build-rust.sh's cargo build is reused. Skipped until
+      # the ANDROID_PLAY_KEYSTORE / ANDROID_PLAY_KEYSTORE_PASSWORD /
+      # PLAY_SERVICE_ACCOUNT_JSON secrets exist.
+      - name: Build Play bundle
+        id: play
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_PLAY_KEYSTORE }}
+          IRCHAD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_PLAY_KEYSTORE_PASSWORD }}
+          SERVICE_ACCOUNT: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          ABIS: arm64-v8a
+          PROFILE: release
+        working-directory: android
+        run: |
+          if [ -z "$KEYSTORE" ] || [ -z "$IRCHAD_KEYSTORE_PASSWORD" ] || [ -z "$SERVICE_ACCOUNT" ]; then
+            echo "Play secrets missing; skipping the Play Store upload"; exit 0
+          fi
+          export IRCHAD_KEYSTORE="$RUNNER_TEMP/play.p12"
+          echo "$KEYSTORE" | base64 -d > "$IRCHAD_KEYSTORE"
+          ./gradlew --no-daemon bundlePlayRelease
+          rm "$IRCHAD_KEYSTORE"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      # PLAY_SERVICE_ACCOUNT_JSON: a Google Cloud service account's JSON key, invited
+      # in Play Console (Users and permissions) with release rights for the app.
+      - name: Upload to Play
+        if: steps.play.outputs.built == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: chat.irchad.IrChad
+          releaseFiles: android/app/build/outputs/bundle/playRelease/app-play-release.aab
+          mappingFile: android/app/build/outputs/mapping/playRelease/mapping.txt
+          releaseName: ${{ needs.release.outputs.version }}
+          track: production
+          status: completed
 
   chadd-image:
     needs: [release, android]

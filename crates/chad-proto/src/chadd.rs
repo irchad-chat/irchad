@@ -61,6 +61,7 @@ pub const REDACTED: &str = "redacted";
 /// `GET <api>/oauth/discord/start?challenge=<S256 of a PKCE verifier>`, opened
 /// in the browser. Ends in a redirect to `irchad://oauth?origin=<origin>&code=<code>`
 /// (or `&error=<message>`), whose code goes to [`OAUTH_EXCHANGE`] with the verifier (D96).
+/// With `&web=1` it ends at the web client's page with `#oauth=<code>` (or `#oauth_error=`) (D97).
 pub const OAUTH_DISCORD_START: &str = "oauth/discord/start";
 /// `POST <api>/oauth/exchange` with an [`OAuthExchangeRequest`]: an [`OAuthOutcome`].
 pub const OAUTH_EXCHANGE: &str = "oauth/exchange";

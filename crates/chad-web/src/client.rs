@@ -16,6 +16,7 @@ use chad_core::view::View;
 use chad_core::{ConnState, Event, Net, NetCommand, NetworkInfo, Store, Typing, format};
 use chad_irc::Message;
 use chad_irc::keepalive::{Backoff, Keepalive};
+use chad_proto::chadd::RefreshResponse;
 use chad_proto::discovery::Discovery;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -58,6 +59,11 @@ pub(crate) struct Inner {
     pub(crate) net: Net,
     pub(crate) view: View,
     acct: Account,
+    /// `acct.password` is chadd's refresh token (D96): each connect trades it
+    /// for a JWT and a new one.
+    discord: bool,
+    /// A first Discord sign-in waiting on a name: chadd's API and its ticket.
+    pub(crate) ticket: Option<(url::Url, String)>,
     /// A guest signing up: who to go back to if it doesn't work.
     upgrading: Option<Account>,
     /// The last discovery document that worked, if the next fetch doesn't.
@@ -110,6 +116,7 @@ impl Client {
                 error: String::new(),
             },
             guest: false,
+            discord: false,
             oper: false,
             uploads: None,
             gifs: None,
@@ -127,6 +134,8 @@ impl Client {
                 net,
                 view: View::default(),
                 acct: Account::default(),
+                discord: false,
+                ticket: None,
                 upgrading: None,
                 discovery: None,
                 conn: None,
@@ -157,6 +166,7 @@ impl Client {
                     device: device_id(),
                     ..Default::default()
                 },
+                false,
                 w,
             );
         });
@@ -186,6 +196,7 @@ impl Client {
                 device: device_id(),
                 sign_up: Some(email),
                 verifying: false,
+                bearer: None,
             };
             let live_guest = i.acct.guest && i.live();
             if live_guest {
@@ -195,7 +206,7 @@ impl Client {
                 }
                 i.upgrading = Some(i.acct.clone());
             }
-            i.start(acct, w);
+            i.start(acct, false, w);
         });
         Ok(())
     }
@@ -371,8 +382,8 @@ impl Inner {
         self.conn.as_ref().is_some_and(|c| c.login.is_none())
     }
 
-    /// Connect as `acct`, from scratch.
-    fn start(&mut self, acct: Account, w: &W) {
+    /// Connect as `acct`, from scratch; `discord` if its password is a refresh token.
+    pub(crate) fn start(&mut self, acct: Account, discord: bool, w: &W) {
         if acct.name != self.acct.name || acct.guest != self.acct.guest {
             self.session = Arc::default();
         }
@@ -382,6 +393,8 @@ impl Inner {
             acct.name.clone_into(&mut self.net.info.nick);
         }
         self.acct = acct;
+        self.discord = discord;
+        self.net.info.discord = discord;
         self.backoff.reset();
         self.open(w);
     }
@@ -394,20 +407,37 @@ impl Inner {
         }
         let epoch = self.epoch;
         let origin = self.net.info.network.clone();
+        let cached = self.discovery.as_ref().map(|d| d.chadd.api.clone());
+        let refresh = self.discord.then(|| self.acct.password.clone());
         let w = w.clone();
         spawn_local(async move {
             let fetched = chad_core::fetch_discovery(&origin).await;
+            // A JWT for SASL and a new refresh token, before every connect (D96).
+            let api = fetched
+                .as_ref()
+                .ok()
+                .map(|d| d.chadd.api.clone())
+                .or(cached);
+            let refreshed = match (refresh, api) {
+                (Some(r), Some(api)) => Some(chadd::oauth_refresh(&api, &r).await),
+                _ => None,
+            };
             if let Some(rc) = w.upgrade() {
                 run(&rc, |i, w| {
                     if i.epoch == epoch {
-                        i.dial(fetched, w);
+                        i.dial(fetched, refreshed, w);
                     }
                 });
             }
         });
     }
 
-    fn dial(&mut self, fetched: Result<Discovery, String>, w: &W) {
+    fn dial(
+        &mut self,
+        fetched: Result<Discovery, String>,
+        refreshed: Option<Result<(RefreshResponse, chadd::Session), chadd::Error>>,
+        w: &W,
+    ) {
         let d = match fetched {
             Ok(d) => {
                 self.discovery = Some(d.clone());
@@ -418,6 +448,24 @@ impl Inner {
                 None => return self.lost(e, w),
             },
         };
+        self.acct.bearer = None;
+        if self.discord {
+            match refreshed {
+                Some(Ok((r, session))) => {
+                    // Nobody else holds it: this runs between awaits.
+                    if let Ok(mut s) = self.session.try_lock() {
+                        *s = Some(session);
+                    }
+                    self.acct.password = r.refresh;
+                    self.acct.bearer = Some(r.irc_token);
+                }
+                Some(Err(chadd::Error::Unauthorized(_))) => {
+                    return self.fail("Sign in with Discord again.".into(), w);
+                }
+                Some(Err(e)) => return self.lost(e.message(), w),
+                None => return self.lost(format!("Couldn't reach {}.", d.name), w),
+            }
+        }
         login::discovered(&mut self.net, &d, self.acct.guest);
         let login = match Login::start(&mut self.net, &d, self.acct.clone()) {
             Ok(l) => l,
@@ -528,12 +576,14 @@ impl Inner {
             self.net.info.guest = false;
         }
         let Some(d) = &self.discovery else { return };
-        let client = Rc::new(chadd::Client::new(
+        let mut client = chadd::Client::new(
             d.chadd.api.clone(),
             self.acct.name.clone(),
             (!self.acct.guest).then(|| self.acct.password.clone()),
             self.session.clone(),
-        ));
+        );
+        client.discord = self.discord;
+        let client = Rc::new(client);
         self.chadd = Some(client.clone());
         crate::api::on_connect(self, &client, w);
     }
@@ -611,7 +661,7 @@ impl Inner {
             return false;
         };
         self.push_notice(format!("Couldn't sign up: {error}"));
-        self.start(guest, w);
+        self.start(guest, false, w);
         true
     }
 
@@ -718,7 +768,7 @@ fn checked_nick(nick: &str) -> Result<String, JsError> {
 
 /// This browser's device ID, made on first use. Without storage (a private
 /// window, say) it's new every page load, which only costs ergo a device.
-fn device_id() -> String {
+pub(crate) fn device_id() -> String {
     let storage = web_sys::window().and_then(|w| w.local_storage().ok().flatten());
     if let Some(id) = storage
         .as_ref()

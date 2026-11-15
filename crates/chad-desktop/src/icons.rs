@@ -8,6 +8,7 @@ pub const ARROW_DOWN: &str = "\u{E03E}";
 pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 pub const BROADCAST: &str = "\u{E0F2}";
 pub const COPY: &str = "\u{E1CA}";
+pub const DISCORD_LOGO: &str = "\u{E61A}";
 pub const CORNERS_IN: &str = "\u{E1CE}";
 pub const CORNERS_OUT: &str = "\u{E1D0}";
 pub const DOTS_THREE: &str = "\u{E1FE}";

@@ -136,11 +136,14 @@ struct StatusBanner: View {
                     if let f = model.joinFailure, f.invite == net.network {
                         Text(f.error).font(.callout).foregroundStyle(.red)
                     }
-                    Button("Sign in with Discord") {
+                    Button {
                         model.joinFailure = nil
                         model.discordStart(net.network)
+                    } label: {
+                        DiscordLabel()
                     }
                     .glassButton(prominent: true)
+                    .tint(.blurple)
                 } else if net.failed || net.needsCode {
                     HStack {
                         Group {

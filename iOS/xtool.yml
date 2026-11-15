@@ -4,3 +4,6 @@ infoPath: Info.plist
 iconPath: Icon.png
 resources:
   - PrivacyInfo.xcprivacy
+  # Phosphor's discord-logo (MIT), white, 20 pt: loose files, since asset catalogs need actool.
+  - images/discord-logo@2x.png
+  - images/discord-logo@3x.png

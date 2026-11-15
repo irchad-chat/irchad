@@ -6,6 +6,25 @@ private enum Mode: String, CaseIterable {
     case guest = "Guest"
 }
 
+extension Color {
+    /// Discord's blurple, for "Sign in with Discord".
+    static let blurple = Color(red: 0x58 / 255, green: 0x65 / 255, blue: 0xF2 / 255)
+}
+
+/// Phosphor's Discord logo and "Sign in with Discord".
+struct DiscordLabel: View {
+    var body: some View {
+        Label {
+            Text("Sign in with Discord")
+        } icon: {
+            // A loose @2x/@3x PNG (xtool.yml), tinted like the text.
+            Image(uiImage: UIImage(named: "discord-logo") ?? UIImage())
+                .renderingMode(.template)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 /// Paste an invite, log in (or sign up, or be a guest), done. Closes itself
 /// once the network shows up; `onCancel` is nil when there's nothing to go
 /// back to.
@@ -23,6 +42,10 @@ struct JoinView: View {
     /// The invite being joined.
     @State private var busy: String?
     @State private var error: String?
+
+    private var discordOff: Bool {
+        link.trimmingCharacters(in: .whitespaces).isEmpty || busy != nil
+    }
 
     var body: some View {
         let _ = model.tick
@@ -71,11 +94,13 @@ struct JoinView: View {
                         } label: {
                             HStack {
                                 Spacer()
-                                Text("Sign in with Discord")
+                                DiscordLabel()
                                 Spacer()
                             }
                         }
-                        .disabled(link.trimmingCharacters(in: .whitespaces).isEmpty || busy != nil)
+                        .foregroundStyle(.white)
+                        .listRowBackground(Color.blurple.opacity(discordOff ? 0.5 : 1))
+                        .disabled(discordOff)
                     } footer: {
                         Text("No password needed: sign in with your Discord account.")
                     }

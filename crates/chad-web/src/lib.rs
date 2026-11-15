@@ -5,6 +5,7 @@
 
 mod api;
 mod client;
+mod discord;
 mod irc;
 mod snapshot;
 mod timer;

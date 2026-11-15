@@ -63,7 +63,7 @@ The same client also joins ordinary IRC networks (Libera, Rizon, EFnet, …) fro
 ## Accounts and auth
 
 - Users never see NickServ. Registration uses `draft/account-registration` (`REGISTER`), and login uses SASL (SCRAM-SHA-256 preferred, PLAIN fallback).
-- **Sign in with Discord (D96):** chadd is the Discord OAuth2 client and maps Discord users to accounts (`discord.json`). Before each connect the client trades its chadd refresh token at `/api/oauth/refresh` for a 60 s EdDSA JWT, which it logs in with over SASL `IRCV3BEARER` (ergo `accounts.jwt-auth`, `autocreate: false`). The device ID goes in `USER account@device`.
+- **Sign in with Discord (D96):** chadd is the Discord OAuth2 client and maps Discord users to accounts (`discord.json`). Before each connect the client trades its chadd refresh token at `/api/oauth/refresh` for a 60 s EdDSA JWT, which it logs in with over SASL `IRCV3BEARER` (ergo `accounts.jwt-auth`, `autocreate: false`). The device ID goes in `USER account@device`. The web client's callback comes back to its own page with `#oauth=<code>` instead of `irchad://` (D97).
   Account name = nick, enforced by ergo config.
 - ergo **always-on** clients plus multiclient give bouncer behavior for free: channels stay joined, and history is kept while offline.
   Always-on is the default (`accounts.multiclient.always-on: opt-out`, D11). The client logs in as `account@<device>`, treats the server's channel list as authoritative, and fills gaps with `CHATHISTORY AFTER` and `TARGETS`.

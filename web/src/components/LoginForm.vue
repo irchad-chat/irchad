@@ -1,6 +1,6 @@
-<!-- Logging in, signing up, joining as a guest, and the emailed code. -->
+<!-- Logging in, signing up, joining as a guest, the emailed code, and Discord's name prompt. -->
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useClient } from '../stores/client'
 
 const client = useClient()
@@ -9,6 +9,12 @@ const name = ref('')
 const password = ref('')
 const email = ref('')
 const code = ref('')
+const discordName = ref('')
+watch(
+  () => client.discordSuggestion,
+  (s) => (discordName.value = s ?? ''),
+  { immediate: true },
+)
 const host = new URL(client.network).host
 
 const busy = computed(() => client.state?.state === 'connecting')
@@ -27,6 +33,15 @@ function submit() {
       <p>{{ client.state?.error || 'Enter the code from your email.' }}</p>
       <input v-model="code" aria-label="Code" placeholder="Code" autocomplete="one-time-code" required />
       <button class="primary">Verify</button>
+    </form>
+    <form v-else-if="client.discordSuggestion !== null" class="stack" @submit.prevent="client.discordName(discordName)">
+      <p>Pick a name. It's how people see you here, and it can't be changed later.</p>
+      <input v-model="discordName" aria-label="Name" placeholder="Name" autocomplete="username" required />
+      <button class="primary" :disabled="client.discordBusy">
+        {{ client.discordBusy ? 'Signing up…' : 'Continue' }}
+      </button>
+      <button type="button" @click="client.discordCancel()">Cancel</button>
+      <p v-if="client.error" class="err">{{ client.error }}</p>
     </form>
     <form v-else class="stack" @submit.prevent="submit">
       <div class="tabs" role="tablist">
@@ -63,6 +78,13 @@ function submit() {
       <button class="primary" :disabled="busy">
         {{ busy ? 'Connecting…' : mode === 'signup' ? 'Sign up' : mode === 'guest' ? 'Join as a guest' : 'Log in' }}
       </button>
+      <template v-if="client.discord && mode !== 'guest'">
+        <p class="or dim small">or</p>
+        <button type="button" class="discord" :disabled="busy || client.discordBusy" @click="client.discordStart()">
+          <i class="ph ph-discord-logo" />
+          {{ client.discordBusy ? 'Signing in…' : 'Sign in with Discord' }}
+        </button>
+      </template>
       <p v-if="client.state?.error && client.state.state !== 'connecting'" class="err">{{ client.state.error }}</p>
       <p v-if="client.error" class="err">{{ client.error }}</p>
     </form>
@@ -84,6 +106,19 @@ h1 {
 .tabs button {
   flex: 1;
   background: none;
+}
+.or {
+  text-align: center;
+  margin: 0;
+}
+.discord {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #5865f2;
+  border-color: #5865f2;
+  color: #fff;
 }
 .tabs button.on {
   background: var(--surface);

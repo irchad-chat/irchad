@@ -973,9 +973,7 @@ private fun StatusBanner(app: IrChad, net: Network) {
                     app.joinFailures.collect { (inv, e) -> if (inv == net.network) error = e }
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                Button(onClick = { error = null; app.client.discordStart(net.network) }) {
-                    Text("Sign in with Discord")
-                }
+                DiscordButton(onClick = { error = null; app.client.discordStart(net.network) })
             } else if (net.failed || net.needsCode) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(

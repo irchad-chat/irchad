@@ -13,7 +13,7 @@ JAVA_HOME=/usr/lib/jvm/openjdk-bin-21 ./gradlew assembleFullDebug
 adb install -r app/build/outputs/apk/full/debug/app-full-debug.apk
 ```
 
-There are two flavors: `full` is the APK on the releases page (Obtainium), and `play` is the Play Store bundle, built locally with `task play` (not in CI).
+There are two flavors: `full` is the APK on the releases page (Obtainium), and `play` is the Play Store bundle: `release.yml` builds it and uploads it to the production track when the `ANDROID_PLAY_KEYSTORE`, `ANDROID_PLAY_KEYSTORE_PASSWORD` and `PLAY_SERVICE_ACCOUNT_JSON` secrets are set, and `task play` builds it locally.
 `play` drops the "Stay connected" background mode, because Play reviews specialUse foreground services strictly (`app/src/play/AndroidManifest.xml`), so its background notifications only come through UnifiedPush.
 `play` is a separate app, `chat.irchad.IrChad`, signed with its own upload key (`IRCHAD_PLAY_KEYSTORE`, `IRCHAD_PLAY_KEYSTORE_PASSWORD`, alias `irchad`); Google holds its app signing key. So it doesn't update the `full` APK, and both can be installed.
 `app/src/full/assets/adi-registration.properties` proves ownership of `party.gentoo.irchad` for Android developer verification.

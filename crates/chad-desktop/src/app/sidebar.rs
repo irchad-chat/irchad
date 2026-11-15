@@ -245,7 +245,7 @@ impl App {
             };
             ui.label(RichText::new(text).small().color(color));
             if bad && self.view.nets[ni].info.discord {
-                if ui.button("Sign in with Discord").clicked() {
+                if super::dialogs::discord_button(ui, true, 0.0).clicked() {
                     self.core.send(Command::DiscordStart {
                         invite: network.clone(),
                     });

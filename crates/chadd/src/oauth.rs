@@ -3,7 +3,8 @@
 //! `discord.json`, and ergo only ever sees chadd's own JWTs (`accounts.jwt-auth`,
 //! SASL `IRCV3BEARER`), so ergo stays the account authority.
 //!
-//! Browser: `start` → Discord → `callback` → `irchad://oauth?origin&code`.
+//! Browser: `start` → Discord → `callback` → `irchad://oauth?origin&code`, or
+//! for the web client (`start?web=1`) back to its page with `#oauth=<code>`.
 //! App: `exchange` (code + PKCE verifier) → `register` if there's no account
 //! yet → `refresh` before every connect.
 
@@ -92,6 +93,8 @@ struct Pending {
     discord_verifier: String,
     /// The app's PKCE challenge, checked at `exchange`.
     challenge: String,
+    /// Started by the web client: the callback goes back to its page.
+    web: bool,
     at: Instant,
 }
 
@@ -351,6 +354,9 @@ fn prune<T>(map: &mut HashMap<String, T>, at: impl Fn(&T) -> Instant, ttl: Durat
 #[derive(Deserialize)]
 pub struct StartQuery {
     challenge: String,
+    /// `1` from the web client.
+    #[serde(default)]
+    web: Option<String>,
 }
 
 pub async fn start(
@@ -379,6 +385,7 @@ pub async fn start(
             Pending {
                 discord_verifier: verifier.clone(),
                 challenge: q.challenge,
+                web: q.web.as_deref() == Some("1"),
                 at: Instant::now(),
             },
         );
@@ -403,11 +410,33 @@ pub struct CallbackQuery {
     error: Option<String>,
 }
 
-/// Always a page sending the browser on to the app, with a code or an error.
+/// Always a page sending the browser on to the app, with a code or an error;
+/// for the web client, a redirect back to its page.
 pub async fn callback(
     State(state): State<Arc<AppState>>,
     Query(q): Query<CallbackQuery>,
-) -> Html<String> {
+) -> Response {
+    let web = state.oauth.as_ref().is_some_and(|o| {
+        q.state
+            .as_ref()
+            .and_then(|id| crate::lock(&o.pending).get(id).map(|p| p.web))
+            .unwrap_or(false)
+    });
+    if web && let Ok(mut back) = state.config.web() {
+        // In the fragment, so it reaches neither a server's logs nor a Referer.
+        let pair = match finish(&state, q).await {
+            Ok(code) => ("oauth", code),
+            Err(error) => {
+                tracing::warn!(error, "Discord sign-in failed");
+                ("oauth_error", error.to_owned())
+            }
+        };
+        let fragment = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair(pair.0, &pair.1)
+            .finish();
+        back.set_fragment(Some(&fragment));
+        return Redirect::to(back.as_str()).into_response();
+    }
     let origin = state.config.origin.origin().ascii_serialization();
     let mut back = Url::parse("irchad://oauth").expect("static URL");
     back.query_pairs_mut().append_pair("origin", &origin);
@@ -421,7 +450,7 @@ pub async fn callback(
             back.query_pairs_mut().append_pair("error", error);
         }
     }
-    Html(back_to_app(back.as_str()))
+    Html(back_to_app(back.as_str())).into_response()
 }
 
 async fn finish(state: &AppState, q: CallbackQuery) -> Result<String, &'static str> {
@@ -1181,6 +1210,60 @@ MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g
             u.query_pairs()
                 .find(|(key, _)| key == k)
                 .map(|(_, v)| v.into_owned())
+        }
+
+        #[tokio::test]
+        async fn web_sign_in_goes_back_to_the_web_client() {
+            let t = T::new("open").await;
+            let verifier = token();
+            let (s, h, _) = t
+                .call(
+                    Request::get(format!(
+                        "/api/oauth/discord/start?challenge={}&web=1",
+                        challenge(&verifier)
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await;
+            assert_eq!(s, 303);
+            let to = Url::parse(h["location"].to_str().unwrap()).unwrap();
+            let state = param(&to, "state").unwrap();
+            let (s, h, _) = t
+                .call(
+                    Request::get(format!(
+                        "/api/oauth/discord/callback?code=dcode&state={state}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await;
+            assert_eq!(s, 303);
+            let back = Url::parse(h["location"].to_str().unwrap()).unwrap();
+            assert_eq!(
+                back.as_str().split('#').next(),
+                Some("https://chat.example.com/chat/")
+            );
+            let code = back.fragment().unwrap().strip_prefix("oauth=").unwrap();
+            let (s, out) = t
+                .post(
+                    "/api/oauth/exchange",
+                    serde_json::json!({ "code": code, "verifier": verifier }),
+                )
+                .await;
+            assert_eq!(s, 200);
+            assert_eq!(out["kind"], "needs_name");
+
+            // A state nobody started stays on the app's page.
+            let (s, _, page) = t
+                .call(
+                    Request::get("/api/oauth/discord/callback?code=x&state=nope")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await;
+            assert_eq!(s, 200);
+            assert!(page.contains("irchad://oauth"));
         }
 
         #[tokio::test]

@@ -10,13 +10,15 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -32,6 +34,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -44,6 +48,24 @@ private enum class Mode(val label: String) { Login("Log in"), Register("Sign up"
  * Paste an invite, log in (or sign up, or be a guest), done. Closes itself once
  * the network shows up; `onCancel` is null when there's nothing to go back to.
  */
+/** Discord's blurple. */
+private val Blurple = Color(0xFF5865F2)
+
+/** "Sign in with Discord" in Discord's colours, with Phosphor's logo. */
+@Composable
+fun DiscordButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        colors = ButtonDefaults.buttonColors(containerColor = Blurple, contentColor = Color.White),
+    ) {
+        Icon(painterResource(R.drawable.ic_discord), contentDescription = null, Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Sign in with Discord")
+    }
+}
+
 @Composable
 fun JoinScreen(
     app: IrChad,
@@ -159,7 +181,7 @@ fun JoinScreen(
                     }) { Text("Cancel") }
                 }
             } else if (mode != Mode.Guest) {
-                OutlinedButton(
+                DiscordButton(
                     onClick = {
                         val inv = link.trim()
                         error = null
@@ -169,7 +191,7 @@ fun JoinScreen(
                     },
                     enabled = link.isNotBlank() && busy == null,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Sign in with Discord") }
+                )
             }
             Row(
                 Modifier.fillMaxWidth(),

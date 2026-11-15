@@ -3,6 +3,25 @@
 use super::verify::device_row;
 use super::*;
 
+/// Discord's blurple, for "Sign in with Discord".
+const BLURPLE: Color32 = Color32::from_rgb(0x58, 0x65, 0xF2);
+
+/// "Sign in with Discord" in Discord's colours, `width` wide (0 to fit).
+pub(super) fn discord_button(ui: &mut egui::Ui, enabled: bool, width: f32) -> egui::Response {
+    let text = RichText::new(format!("{} Sign in with Discord", icons::DISCORD_LOGO))
+        .color(Color32::WHITE);
+    let r = ui.add_enabled(
+        enabled,
+        egui::Button::new(text)
+            .fill(BLURPLE)
+            .min_size(egui::vec2(width, 0.0)),
+    );
+    // The name without the icon's glyph.
+    r.ctx
+        .accesskit_node_builder(r.id, |n| n.set_label("Sign in with Discord"));
+    r
+}
+
 impl App {
     pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
         self.share_dialog(ctx);
@@ -117,14 +136,7 @@ impl App {
                     .labelled_by(l.id);
                     ui.add_space(8.0);
                     let ready = !busy && !j.invite.trim().is_empty();
-                    if ui
-                        .add_enabled(
-                            ready,
-                            egui::Button::new("Sign in with Discord")
-                                .min_size(egui::vec2(ui.available_width(), 0.0)),
-                        )
-                        .clicked()
-                    {
+                    if discord_button(ui, ready, ui.available_width()).clicked() {
                         discord = true;
                     }
                     ui.add_space(4.0);
