@@ -361,10 +361,10 @@ struct MessageRow: View {
         HStack(alignment: .top, spacing: 10) {
             Rectangle().fill(highlight ? Color.accentColor : .clear).frame(width: 3)
             if head {
-                Avatar(network: network, nick: m.nick, url: m.avatar)
+                Avatar(network: network, nick: m.nick, url: m.avatar, size: 40)
                     .onTapGesture(perform: onProfile)
             } else {
-                Color.clear.frame(width: 36, height: 1)
+                Color.clear.frame(width: 40, height: 1)
             }
             VStack(alignment: .leading, spacing: 2) {
                 if let rid = m.replyTo {
@@ -454,10 +454,10 @@ struct MessageRow: View {
     /// A custom emoji's image, or its `:name:` until that has loaded.
     private func reactionLabel(_ r: Reaction) -> Text {
         let _ = model.media.tick
-        guard let url = r.image, let i = model.media.emojiImage(network: network, url: url, height: 16) else {
-            return Text("\(r.emoji) \(r.nicks.count)")
+        guard let url = r.image, let i = model.media.emojiImage(network: network, url: url, height: 18) else {
+            return Text(r.emoji).font(.system(size: 16)) + Text("  \(r.nicks.count)")
         }
-        return Text(Image(uiImage: i)).baselineOffset(-3) + Text(" \(r.nicks.count)")
+        return Text(Image(uiImage: i)).baselineOffset(-4) + Text("  \(r.nicks.count)")
     }
 
     private var reactions: some View {
@@ -472,11 +472,13 @@ struct MessageRow: View {
                         model.client.react(network: network, target: target, msgid: id, emoji: r.emoji)
                     }
                 } label: {
+                    // Discord's size: 28pt tall, an 18pt emoji, about 50pt wide.
                     reactionLabel(r)
-                        .font(.caption)
+                        .font(.system(size: 14))
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(mine ? Color.accentColor.opacity(0.25) : Color(.secondarySystemBackground), in: Capsule())
+                        .frame(height: 28)
+                        .background(mine ? Color.accentColor.opacity(0.25) : Color(.secondarySystemBackground),
+                                    in: RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(r.emoji), \(r.nicks.count): \(r.nicks.joined(separator: ", "))")

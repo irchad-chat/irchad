@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -141,6 +142,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
@@ -1041,7 +1043,7 @@ private fun MessageRow(
     ) {
         Box(Modifier.width(3.dp).size(3.dp, 20.dp).background(bar))
         Spacer(Modifier.width(9.dp))
-        if (head) Avatar(app, network, m.nick, m.avatar) else Spacer(Modifier.width(36.dp))
+        if (head) Avatar(app, network, m.nick, m.avatar, 40.dp) else Spacer(Modifier.width(40.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             if (m.replyTo != null) {
@@ -1107,9 +1109,10 @@ private fun MessageRow(
                                 append(" ${r.nicks.size}")
                             },
                             inlineContent = inline,
-                            style = MaterialTheme.typography.labelMedium,
+                            // Discord's size: 28 tall, an 18 emoji (1.4em), about 50 wide.
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp),
                             modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(
                                     if (mine) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surfaceVariant,
@@ -1119,7 +1122,9 @@ private fun MessageRow(
                                     onClickLabel = if (mine) "Take back ${r.emoji}" else "React ${r.emoji}",
                                 ) { onReact(r) }
                                 .semantics { contentDescription = "${r.emoji} from ${r.nicks.joinToString(", ")}" }
-                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                                .height(28.dp)
+                                .wrapContentHeight(Alignment.CenterVertically)
+                                .padding(horizontal = 8.dp),
                         )
                     }
                 }

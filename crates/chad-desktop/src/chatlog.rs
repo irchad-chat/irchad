@@ -22,7 +22,7 @@ const GUTTER: f32 = 8.0;
 /// A new header after this much quiet, even from the same person.
 const GROUP_GAP_MS: i64 = 5 * 60 * 1000;
 pub const QUICK_REACTIONS: [&str; 4] = ["👍", "❤", "😂", "😮"];
-const AVATAR: f32 = 32.0;
+const AVATAR: f32 = 40.0;
 /// Inline images per message.
 const MAX_IMAGES: usize = 3;
 
@@ -262,11 +262,7 @@ impl ChatLog {
             .split('\n')
             .map(|l| (l.chars().count() as f32 / per_line).ceil().max(1.0))
             .sum::<f32>();
-        let extra = if m.reactions.is_empty() {
-            0.0
-        } else {
-            line + 6.0
-        };
+        let extra = if m.reactions.is_empty() { 0.0 } else { 32.0 };
         lines * line + extra + ROW_GAP
     }
 
@@ -712,16 +708,27 @@ fn row_ui(
                     for r in &m.reactions {
                         let mine = r.nicks.iter().any(|n| n == own_nick);
                         let label = format!("{} {}", r.emoji, r.nicks.len());
-                        let height = ui.text_style_height(&egui::TextStyle::Body);
+                        // Discord's size: 28px tall, an 18px emoji, about 50px wide.
+                        let count = egui::RichText::new(r.nicks.len().to_string()).size(14.0);
                         let chip = match chad_core::emoji::lookup(&r.emoji, extras.emoji)
-                            .and_then(|e| extras.media.emoji_image(ui, e, height))
+                            .and_then(|e| extras.media.emoji_image(ui, e, 18.0))
                         {
-                            Some(img) => {
-                                egui::Button::image_and_text(img, r.nicks.len().to_string())
-                            }
-                            None => egui::Button::new(&label),
+                            Some(img) => egui::Button::image_and_text(img, count),
+                            None => egui::Button::new(
+                                egui::RichText::new(format!("{}  {}", r.emoji, r.nicks.len()))
+                                    .size(14.0),
+                            ),
                         };
-                        let resp = ui.add(chip.small().selected(mine));
+                        let resp = ui.scope(|ui| {
+                            ui.spacing_mut().button_padding = egui::vec2(8.0, 0.0);
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.add(
+                                chip.min_size(egui::vec2(0.0, 28.0))
+                                    .corner_radius(8)
+                                    .selected(mine),
+                            )
+                        });
+                        let resp = resp.inner;
                         resp.widget_info(|| {
                             egui::WidgetInfo::labeled(egui::Role::Button, true, &label)
                         });

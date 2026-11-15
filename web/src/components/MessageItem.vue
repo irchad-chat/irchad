@@ -94,7 +94,7 @@ function remove() {
             @click="client.react(m, r.emoji)"
           >
             <MediaImg v-if="r.image" class="emoji" :url="r.image" :alt="r.emoji">{{ r.emoji }}</MediaImg>
-            <template v-else>{{ r.emoji }}</template>
+            <span v-else class="emoji">{{ r.emoji }}</span>
             {{ r.nicks.length }}
           </button>
         </div>
@@ -189,9 +189,11 @@ function remove() {
 .reaction {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 1px 8px;
-  border-radius: 10px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 14px;
 }
 .reaction.own {
   border-color: var(--accent);
@@ -200,6 +202,9 @@ function remove() {
 .reaction .emoji {
   width: 18px;
   height: 18px;
+  font-size: 16px;
+  line-height: 18px;
+  text-align: center;
 }
 .actions {
   position: absolute;
