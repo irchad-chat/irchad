@@ -50,6 +50,9 @@ pub struct Chadd {
     /// (`POST <api>/meeting`, D86).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub meetings: bool,
+    /// Set when chadd signs people in with Discord ([`crate::chadd::OAUTH_DISCORD_START`], D96).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub discord: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -45,6 +45,17 @@ journalctl -u chadd -o cat | sudo -u chadd python3 upload-owners.py /var/lib/cha
 ```
 Messages sent before the reload aren't indexed, so deletion can't find them.
 
+### Turning on Sign in with Discord (D96, once)
+
+```sh
+openssl genpkey -algorithm ed25519 -out /etc/chadd/jwt.pem && chown chadd: /etc/chadd/jwt.pem && chmod 600 /etc/chadd/jwt.pem
+openssl pkey -in /etc/chadd/jwt.pem -pubout -out /etc/ergo/jwt_pub.pem
+install -o chadd -m 600 /dev/stdin /etc/chadd/discord-secret   # paste the Discord app's client secret, then ^D
+# regenerate ircd.yaml as above (jwt-auth turns on now that jwt_pub.pem exists), systemctl reload ergo,
+# add [discord] to /etc/chadd/chadd.toml (docs/hosting.md), then: systemctl restart chadd
+```
+The Discord app's OAuth2 redirect must be `https://irchad.chat/api/oauth/discord/callback`.
+
 Raw IRC for admins: `ssh -L 6667:127.0.0.1:6667 chad-prod`, then connect a client to `localhost:6667` and `/OPER admin <OPER_PASS>`.
 
 ## App store reviewers

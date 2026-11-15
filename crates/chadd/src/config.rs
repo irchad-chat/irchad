@@ -51,6 +51,8 @@ pub struct Config {
     pub delete: Option<Delete>,
     /// Leave out to turn meetings and public streams off (D86, D87).
     pub meetings: Option<Meetings>,
+    /// "Sign in with Discord" (D96). Leave out to turn it off.
+    pub discord: Option<Discord>,
 }
 
 /// Meetings guests join from a link, with no account (D86).
@@ -222,6 +224,31 @@ pub struct Delete {
     pub state_dir: std::path::PathBuf,
 }
 
+/// "Sign in with Discord" (D96): chadd is the Discord OAuth2 client and signs
+/// the JWTs ergo's `accounts.jwt-auth` takes over SASL `IRCV3BEARER`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Discord {
+    /// The Discord application's client ID. Its redirect must be
+    /// `<chadd api>/oauth/discord/callback`.
+    pub client_id: String,
+    /// A file holding the client secret, so it stays out of this one.
+    pub client_secret_file: std::path::PathBuf,
+    /// Ed25519 private key, PKCS#8 PEM (`openssl genpkey -algorithm ed25519`).
+    /// ergo's `jwt-auth` gets the public half (`openssl pkey -pubout`).
+    pub signing_key: std::path::PathBuf,
+    /// Which Discord user is which account (`discord.json`), and the key that
+    /// signs refresh tokens (`refresh.key`, made on first start).
+    pub state_dir: std::path::PathBuf,
+    /// Discord's API; only tests change it.
+    #[serde(default = "default_discord_api")]
+    pub api: Url,
+}
+
+fn default_discord_api() -> Url {
+    Url::parse("https://discord.com/api/v10/").expect("static URL")
+}
+
 /// ergo's HTTP API, for checking passwords (`docs/notes/ergo-api.md`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -315,6 +342,16 @@ impl Config {
             );
         }
         config.web()?;
+        if let Some(d) = &config.discord {
+            anyhow::ensure!(
+                !d.client_id.is_empty() && d.client_id.bytes().all(|b| b.is_ascii_digit()),
+                "discord.client_id must be the application's numeric ID"
+            );
+            anyhow::ensure!(
+                !d.api.cannot_be_a_base() && d.api.as_str().ends_with('/'),
+                "discord.api must be a base URL ending in /"
+            );
+        }
         if let Some(g) = &config.gifs {
             anyhow::ensure!(
                 g.api.scheme() == "https" && !g.api.cannot_be_a_base(),
@@ -378,6 +415,7 @@ impl Config {
                 emoji: self.emoji.is_some(),
                 delete: self.delete.is_some(),
                 meetings: self.meetings.is_some(),
+                discord: self.discord.is_some(),
             },
             livekit: discovery::Livekit {
                 url: or(&self.endpoints.livekit, &ws_origin, "/livekit")?,

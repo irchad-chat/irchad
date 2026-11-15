@@ -30,6 +30,7 @@ This page is not a hosting guide. For that, see [Host your own network](https://
 | [Soundboard](/docs/voice#soundboard) | `[sounds]` → `dir` | "This server has no sounds yet." |
 | [Game names in activity](/docs/chat#activity) | `discord_games = true` | Only Rich Presence games show |
 | [Deleting your data with your account](/docs/getting-started#leaving-a-network-deleting-your-account) | `[delete]` | Only the account is removed |
+| Sign in with Discord | `[discord]`, plus `accounts.jwt-auth` in ircd.yaml | No **Sign in with Discord** button |
 
 Link previews and images from other sites need no setting. `[cache]` only makes them faster.
 
@@ -52,6 +53,7 @@ Link previews and images from other sites need no setting. `[cache]` only makes 
 | Long pasted messages | `limits.multiline.max-bytes`, `limits.multiline.max-lines` | Pastes are split into more messages |
 | [Deleting your data with your account](/docs/getting-started#leaving-a-network-deleting-your-account) | `history.retention.enable-account-indexing: true` | Only the account is removed |
 | [Push notifications](/docs/mobile#notifications) on Android | `webpush.enabled: true` | Use "Stay connected" instead |
+| Sign in with Discord | `accounts.jwt-auth.enabled: true`, `autocreate: false`, an `eddsa` token with chadd's public key, `account-claims: ["account"]`, `validate-aud: ["irchad-ergo"]` | "… doesn't support logging in." after Discord |
 
 ## Set per channel
 

@@ -50,6 +50,9 @@ pub struct Params {
     pub joining: Option<String>,
     /// Save the password after the next login (it came from `SignIn`).
     pub save_password: bool,
+    /// Signs in with Discord (D96): `password` is chadd's refresh token, and
+    /// each connect trades it for a JWT and a new one.
+    pub discord: bool,
     pub db_path: PathBuf,
     pub secrets: Arc<dyn SecretStore>,
     pub media: Option<Arc<dyn Media>>,
@@ -325,6 +328,7 @@ fn classic_discovery(origin: &str) -> Result<Discovery, String> {
             emoji: false,
             delete: false,
             meetings: false,
+            discord: false,
         },
         livekit: proto_discovery::Livekit { url },
         registration: Registration::Closed,
@@ -348,6 +352,31 @@ async fn session(
         Err(e) if p.joining.is_some() => return End::Fatal(e),
         Err(e) => return End::Lost(e),
     };
+    let bearer = if p.discord {
+        match chadd::oauth_refresh(&d.chadd.api, password).await {
+            Ok((r, session)) => {
+                *p.session.lock().await = Some(session);
+                // The old one stays good until it expires, so a failed save
+                // only means the 90 days don't slide this time.
+                if let Err(e) = p
+                    .secrets
+                    .save(&net.info.network, &p.account, &r.refresh)
+                    .await
+                {
+                    tracing::warn!("{}: saving the refresh token: {e}", net.info.network);
+                }
+                p.password = Some(r.refresh);
+                Some(r.irc_token)
+            }
+            Err(chadd::Error::Unauthorized(_)) => {
+                return End::Fatal("Sign in with Discord again.".into());
+            }
+            Err(e) if p.joining.is_some() => return End::Fatal(e.message()),
+            Err(e) => return End::Lost(e.message()),
+        }
+    } else {
+        None
+    };
     let acct = Account {
         name: p.account.clone(),
         password: password.to_owned(),
@@ -355,6 +384,7 @@ async fn session(
         device: p.device.clone(),
         sign_up: p.register.clone(),
         verifying: p.verifying.is_some(),
+        bearer,
     };
     let login = match Login::start(net, &d, acct) {
         Ok(l) => l,
@@ -450,12 +480,14 @@ async fn live(
     d: &Discovery,
     mut ws: Connection,
 ) -> End {
-    let client = Arc::new(chadd::Client::new(
+    let mut client = chadd::Client::new(
         d.chadd.api.clone(),
         p.account.clone(),
         (!p.guest).then(|| password.to_owned()),
         p.session.clone(),
-    ));
+    );
+    client.discord = p.discord;
+    let client = Arc::new(client);
     fetch(NetCommand::Emoji, net, &client, sink);
     // Dropping `call` hangs up.
     let mut call: Option<mpsc::UnboundedReceiver<MediaEvent>> = None;
@@ -570,12 +602,26 @@ async fn live(
                 }
                 // chadd deletes the messages and uploads too (D69).
                 Some(ToNet::Cmd(NetCommand::DeleteAccount)) if !p.guest && d.chadd.delete => {
-                    match chadd::delete_account(&d.chadd.api, &p.account, password).await {
+                    let res = if p.discord {
+                        // No password to ask for again (D96): the session vouches.
+                        let account = p.account.clone();
+                        client
+                            .call(|api, t| {
+                                let account = account.clone();
+                                async move { chadd::delete_account(&api, &account, "", Some(&t)).await }
+                            })
+                            .await
+                    } else {
+                        chadd::delete_account(&d.chadd.api, &p.account, password, None)
+                            .await
+                            .map_err(chadd::Error::message)
+                    };
+                    match res {
                         Ok(()) => {
                             let _ = ws.send(&Message::new("QUIT", ["account deleted"])).await;
                             return End::Remove;
                         }
-                        Err(e) => net.error(e.message()),
+                        Err(e) => net.error(e),
                     }
                 }
                 Some(ToNet::Cmd(NetCommand::DeleteAccount)) if !p.guest => {
@@ -645,6 +691,12 @@ async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
         net.store.set_meta("origin", &origin);
         net.store.set_meta("account", &p.account);
     }
+    if p.discord {
+        // Its refresh token was saved before connecting (D96); `password`
+        // may be the one it replaced.
+        net.store.set_meta(DISCORD_META.0, DISCORD_META.1);
+        return;
+    }
     if upgraded {
         net.store.delete_meta("guest");
         net.store.set_meta("rejoin", "1");
@@ -658,6 +710,9 @@ async fn logged_in(net: &mut Net, p: &mut Params, password: &str, sink: &Sink) {
         sink.send(net.drain_events());
     }
 }
+
+/// Store meta marking a network that signs in with Discord (D96).
+pub const DISCORD_META: (&str, &str) = ("auth", "discord");
 
 /// The secret store entry holding the key to a network's E2EE pickles.
 fn e2e_secret(origin: &str) -> String {
@@ -877,6 +932,17 @@ fn fetch(
                     }
                 });
             }
+        }
+        NetCommand::SetPassword { password } => {
+            tokio::spawn(async move {
+                let result = client
+                    .call(|api, t| {
+                        let password = password.clone();
+                        async move { chadd::set_password(&api, &t, &password).await }
+                    })
+                    .await;
+                sink.send([Event::PasswordSet { network, result }]);
+            });
         }
         NetCommand::Sounds => {
             tokio::spawn(async move {

@@ -1,4 +1,5 @@
-//! SASL over `AUTHENTICATE`: SCRAM-SHA-256 (RFC 5802 / 7677), falling back to PLAIN.
+//! SASL over `AUTHENTICATE`: SCRAM-SHA-256 (RFC 5802 / 7677), falling back to PLAIN,
+//! or ergo's `IRCV3BEARER` with a JWT (D96).
 //!
 //! Sans-IO, like [`crate::cap`]: send [`Sasl::start`], feed every message to
 //! [`Sasl::handle`] until it reports [`Progress::LoggedIn`] or [`Progress::Failed`].
@@ -37,6 +38,8 @@ pub enum Error {
 pub enum Mechanism {
     ScramSha256,
     Plain,
+    /// `\0jwt\0<token>`: a chadd-issued JWT instead of a password (D96).
+    Ircv3Bearer,
 }
 
 impl Mechanism {
@@ -44,6 +47,7 @@ impl Mechanism {
         match self {
             Self::ScramSha256 => "SCRAM-SHA-256",
             Self::Plain => "PLAIN",
+            Self::Ircv3Bearer => "IRCV3BEARER",
         }
     }
 }
@@ -108,6 +112,23 @@ impl Sasl {
         })
     }
 
+    /// Logs in with a JWT over `IRCV3BEARER`. The device ID can't ride along
+    /// (ergo ignores the authzid), so send it in `USER <account>@<device>`.
+    pub fn bearer(token: &str, mechs: &str) -> Result<Self, Error> {
+        if !(mechs.is_empty() || mechs.split(',').any(|s| s == Mechanism::Ircv3Bearer.name())) {
+            return Err(Error::NoMechanism);
+        }
+        Ok(Self {
+            user: String::new(),
+            password: token.into(),
+            mech: Mechanism::Ircv3Bearer,
+            plain_ok: false,
+            state: State::MechSent,
+            buf: String::new(),
+            nonce: String::new(),
+        })
+    }
+
     pub fn mechanism(&self) -> Mechanism {
         self.mech
     }
@@ -164,6 +185,10 @@ impl Sasl {
                 // authzid stays empty: ergo compares it to the authcid *with* the device ID.
                 self.state = State::Sent;
                 format!("\0{}\0{}", self.user, self.password)
+            }
+            (State::MechSent, Mechanism::Ircv3Bearer) => {
+                self.state = State::Sent;
+                format!("\0jwt\0{}", self.password)
             }
             (State::MechSent, Mechanism::ScramSha256) => {
                 let user = self.user.replace('=', "=3D").replace(',', "=2C");
@@ -381,6 +406,32 @@ mod tests {
 
         assert_eq!(
             Sasl::new("bob", "pw", "EXTERNAL").unwrap_err(),
+            Error::NoMechanism
+        );
+    }
+
+    #[test]
+    fn bearer_sends_jwt_and_never_falls_back() {
+        let token = "a".repeat(600);
+        let mut s = Sasl::bearer(&token, "PLAIN,SCRAM-SHA-256,IRCV3BEARER").unwrap();
+        assert_eq!(s.start().to_line().unwrap(), "AUTHENTICATE IRCV3BEARER");
+        let out = sent(s.handle(&line("AUTHENTICATE +")));
+        assert_eq!(out.len(), 3, "605 bytes -> 808 base64 -> 400+400+8");
+        let b64: String = out
+            .iter()
+            .map(|l| l.strip_prefix("AUTHENTICATE ").unwrap())
+            .collect();
+        assert_eq!(
+            B64.decode(b64).unwrap(),
+            format!("\0jwt\0{token}").as_bytes()
+        );
+        assert_eq!(
+            s.handle(&line("904 * :bad")),
+            Progress::Failed(Error::Rejected)
+        );
+
+        assert_eq!(
+            Sasl::bearer("t", "PLAIN,SCRAM-SHA-256").unwrap_err(),
             Error::NoMechanism
         );
     }

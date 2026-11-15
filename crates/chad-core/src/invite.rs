@@ -28,7 +28,8 @@ pub fn parse(input: &str) -> Result<Invite, String> {
     };
     let channel = query("channel").filter(|c| c.starts_with('#') && !c.contains([' ', ',']));
     let origin = match url.scheme() {
-        "irchad" => {
+        // `irchad://oauth` is a Discord sign-in coming back (D96), not an invite.
+        "irchad" if url.host_str() == Some("join") => {
             let inner = query("origin").ok_or_else(bad)?;
             let inner = Url::parse(&inner).map_err(|_| bad())?;
             if inner.scheme() != "https" {
@@ -147,6 +148,7 @@ mod tests {
             "http://chat.example.com",
             "irchad://join?origin=http://evil",
             "irchad://join",
+            "irchad://oauth?origin=https://chat.example.com&code=x",
             "file:///etc/passwd",
             "has space.com",
         ] {

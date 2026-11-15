@@ -33,6 +33,8 @@ pub struct Account {
     pub sign_up: Option<Option<String>>,
     /// Signed up already and waiting on the emailed code: don't sign up again.
     pub verifying: bool,
+    /// A JWT from chadd for SASL `IRCV3BEARER`, instead of the password (D96).
+    pub bearer: Option<String>,
 }
 
 /// What [`Login::handle`] made of a line.
@@ -76,10 +78,15 @@ impl Login {
         net.caps = Negotiator::new();
         net.isupport.clear();
         let name = acct.name.as_str();
+        // `IRCV3BEARER` can't carry the device ID; ergo takes it from USER (D96).
+        let user = match acct.bearer {
+            Some(_) => format!("{name}@{}", acct.device),
+            None => name.to_owned(),
+        };
         let out = vec![
             Negotiator::start(),
             Message::new("NICK", [name]),
-            Message::new("USER", [name, "0", "*", name]),
+            Message::new("USER", [user.as_str(), "0", "*", name]),
         ];
         Ok(Self {
             acct,
@@ -245,7 +252,11 @@ impl Login {
             format!("{}@{}", acct.name, acct.device)
         };
         let mechs = net.caps.value("sasl").unwrap_or_default();
-        let mut s = Sasl::new(&user, &acct.password, mechs).map_err(sasl_error)?;
+        let mut s = match &acct.bearer {
+            Some(token) => Sasl::bearer(token, mechs),
+            None => Sasl::new(&user, &acct.password, mechs),
+        }
+        .map_err(sasl_error)?;
         out.push(s.start());
         Ok(Some(s))
     }
@@ -316,6 +327,7 @@ mod tests {
                 nick: String::new(),
                 state: ConnState::Connecting,
                 guest: false,
+                discord: false,
                 oper: false,
                 uploads: None,
                 gifs: None,
@@ -373,6 +385,36 @@ mod tests {
         assert_eq!(n.info.nick, "bob");
         let (step, _) = feed(&mut l, &mut n, ":s 376 bob :End of MOTD");
         assert_eq!(step, Step::Done("bob".into()));
+    }
+
+    #[test]
+    fn discord_logs_in_with_a_jwt_and_the_device_in_user() {
+        let mut n = net();
+        let a = Account {
+            bearer: Some("h.p.s".into()),
+            ..acct("bob", false)
+        };
+        let mut l = Login::start(&mut n, &discovery("open"), a).unwrap();
+        let first: Vec<_> = l.out.drain(..).map(|m| m.to_line().unwrap()).collect();
+        // IRCV3BEARER can't carry the device ID; ergo reads it from USER (D96).
+        assert_eq!(first[2], "USER bob@laptop 0 * bob");
+        feed(&mut l, &mut n, ":s CAP * LS :sasl=PLAIN,IRCV3BEARER");
+        let (_, out) = feed(&mut l, &mut n, ":s CAP * ACK :sasl");
+        assert_eq!(out, ["AUTHENTICATE IRCV3BEARER"]);
+        let (_, out) = feed(&mut l, &mut n, "AUTHENTICATE +");
+        assert_eq!(out, ["AUTHENTICATE AGp3dABoLnAucw=="]); // "\0jwt\0h.p.s"
+        let (step, _) = feed(&mut l, &mut n, ":s 903 bob :SASL authentication successful");
+        assert_eq!(step, Step::LoggedIn);
+
+        // A server without jwt-auth can't take it.
+        let a = Account {
+            bearer: Some("t".into()),
+            ..acct("bob", false)
+        };
+        let mut l = Login::start(&mut n, &discovery("open"), a).unwrap();
+        feed(&mut l, &mut n, ":s CAP * LS :sasl=PLAIN");
+        let (step, _) = feed(&mut l, &mut n, ":s CAP * ACK :sasl");
+        assert!(matches!(step, Step::Fatal(_)), "{step:?}");
     }
 
     #[test]

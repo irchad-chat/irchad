@@ -12,7 +12,7 @@ use chad_proto::discovery::{self, Discovery};
 use url::Url;
 
 use crate::config::Config;
-use crate::{api, cache, delete, emoji, fetch, files, games, gifs, meeting, sounds, stream};
+use crate::{api, cache, delete, emoji, fetch, files, games, gifs, meeting, oauth, sounds, stream};
 use tower_http::services::ServeDir;
 
 pub struct AppState {
@@ -48,6 +48,8 @@ pub struct AppState {
     pub meetings: api::Throttle,
     /// Guest meeting tokens, per IP.
     pub guests: api::Throttle,
+    /// "Sign in with Discord", when configured (D96).
+    pub oauth: Option<oauth::OAuth>,
 }
 
 impl AppState {
@@ -60,6 +62,10 @@ impl AppState {
             .build()?;
         let cache = cache::Cache::new(config.cache.as_ref())?;
         let redacted = delete::load_redacted(config.delete.as_ref()).into();
+        let oauth = match &config.discord {
+            Some(d) => Some(oauth::OAuth::load(d, &discovery.chadd.api)?),
+            None => None,
+        };
         Ok(Self {
             config,
             discovery,
@@ -80,6 +86,7 @@ impl AppState {
             deletions: tokio::sync::Notify::new(),
             meetings: api::Throttle::new(10),
             guests: api::Throttle::new(30),
+            oauth,
         })
     }
 }
@@ -112,6 +119,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         files = files
             .route("/api/account/delete", post(delete::delete_account))
             .route("/api/redacted", post(delete::redacted));
+    }
+    if state.config.discord.is_some() {
+        files = files
+            .route("/api/oauth/discord/start", get(oauth::start))
+            .route("/api/oauth/discord/callback", get(oauth::callback))
+            .route("/api/oauth/exchange", post(oauth::exchange))
+            .route("/api/oauth/register", post(oauth::register))
+            .route("/api/oauth/refresh", post(oauth::refresh))
+            .route("/api/oauth/password", post(oauth::password));
     }
     let max_upload = state.config.uploads.as_ref().map_or(0, |u| u.max_bytes);
     Router::new()
@@ -468,7 +484,7 @@ fn shell(state: &AppState, title: &str, head: &str, main: &str) -> String {
     )
 }
 
-fn escape(s: &str) -> String {
+pub fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

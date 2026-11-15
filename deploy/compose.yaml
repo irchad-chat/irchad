@@ -13,6 +13,8 @@ services:
     volumes:
       - ergo-data:/ircd
       - ./ergo.yaml:/ircd/ircd.yaml:ro
+      # Checks chadd's JWTs for "Sign in with Discord" (D96). Dev-only key.
+      - ./jwt-dev.pub.pem:/ircd/jwt_pub.pem:ro
       # HISTSERV EXPORT output, shared with chadd for account deletion (D69).
       - ergo-export:/ircd/export
     ports:
@@ -33,6 +35,7 @@ services:
     volumes:
       - ergo2-data:/ircd
       - ./ergo.yaml:/ircd/ircd.yaml:ro
+      - ./jwt-dev.pub.pem:/ircd/jwt_pub.pem:ro
       - ergo2-export:/ircd/export
     ports:
       - "127.0.0.1:6668:6667"
@@ -59,6 +62,10 @@ services:
       RUST_LOG: "${RUST_LOG:-info}"
     volumes:
       - ./chadd.toml:/etc/chadd/chadd.toml:ro
+      # "Sign in with Discord" (D96): the dev signing key, and the Discord
+      # app's secret. Set DISCORD_SECRET_FILE to a real one to try it.
+      - ./jwt-dev.pem:/etc/chadd/jwt.pem:ro
+      - ${DISCORD_SECRET_FILE:-./discord-secret.example}:/etc/chadd/discord-secret:ro
       - chadd-uploads:/var/lib/chadd/uploads
       - chadd-state:/var/lib/chadd/state
       - ergo-export:/var/lib/chadd/export

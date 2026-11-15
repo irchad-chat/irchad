@@ -27,6 +27,16 @@ web = "http://localhost:5173/"
 secret = "chad-dev-meeting-secret-0123456789abcdef"
 ttl_hours = 24
 
+# "Sign in with Discord" (D96). The app's redirect must be
+# <origin>/api/oauth/discord/callback, e.g. https://chat.localhost:8443/... or
+# whatever IRCHAD_HOST in deploy/.env makes it. Without a real secret
+# (DISCORD_SECRET_FILE, see compose.yaml) the button shows but Discord says no.
+[discord]
+client_id = "1571365831345185029"
+client_secret_file = "/etc/chadd/discord-secret"
+signing_key = "/etc/chadd/jwt.pem"
+state_dir = "/var/lib/chadd/state"
+
 [livekit]
 key = "devkey"
 secret = "chad-dev-livekit-secret-0123456789abcdef"

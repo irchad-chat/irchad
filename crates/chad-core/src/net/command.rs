@@ -162,6 +162,13 @@ impl Net {
             }
             // Offline: the set we have stays.
             NetCommand::Emoji => {}
+            NetCommand::SetPassword { .. } => {
+                let network = self.id();
+                self.events.push(Event::PasswordSet {
+                    network,
+                    result: Err("You're offline right now.".into()),
+                });
+            }
             NetCommand::Sounds => {
                 let network = self.id();
                 self.events.push(Event::Sounds {

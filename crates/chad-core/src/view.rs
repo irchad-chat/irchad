@@ -555,6 +555,7 @@ mod tests {
             nick: "me".into(),
             state,
             guest: false,
+            discord: false,
             uploads: None,
             gifs: None,
             games: false,

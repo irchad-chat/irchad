@@ -16,8 +16,11 @@ thiserror.workspace = true
 url.workspace = true
 rusqlite = { version = "0.41", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+base64 = "0.22"
 getrandom = "0.3"
 hex = "0.4"
+# PKCE for "Sign in with Discord" (D96).
+sha2 = "0.10"
 emojis = "0.9.1"
 # `Instant`/`SystemTime` that work in the browser too (std's panic there).
 web-time = "1.1"

@@ -9,8 +9,11 @@ use tokio::sync::mpsc;
 use crate::conn::{self, Params, ToNet};
 use crate::login::valid_nick;
 use crate::net::Net;
+use crate::oauth::{self, Flow};
 use crate::store::Store;
-use crate::{Auth, Command, Config, ConnState, Core, Event, NetCommand, NetworkInfo, invite};
+use crate::{
+    Auth, Command, Config, ConnState, Core, Event, NetCommand, NetworkInfo, chadd, invite,
+};
 
 #[derive(Clone)]
 pub struct Sink {
@@ -60,6 +63,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
         upgrading: None,
         joining: None,
         save_password: false,
+        discord: false,
         db_path,
         secrets: cfg.secrets.clone(),
         media: cfg.media.clone(),
@@ -106,12 +110,96 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                 None
             }
         };
-        let p = params(account, password, path);
+        let mut p = params(account, password, path);
+        p.discord = store.meta(conn::DISCORD_META.0).as_deref() == Some(conn::DISCORD_META.1);
         nets.insert(origin.clone(), spawn(origin, store, p, &sink));
     }
 
+    // A "Sign in with Discord" waiting on the browser or a name (D96).
+    let mut flow: Option<Flow> = None;
     while let Some(cmd) = rx.recv().await {
+        // shortcut: chadd is called inline, so other networks' commands wait
+        // the second or so it takes; spawn it if that's ever noticeable.
+        let cmd = match cmd {
+            Command::DiscordStart { invite } => {
+                flow = None;
+                match discord_start(&invite).await {
+                    Ok(f) => {
+                        sink.send([Event::OpenUrl { url: f.start_url() }]);
+                        flow = Some(f);
+                    }
+                    Err(error) => sink.send([Event::JoinFailed { invite, error }]),
+                }
+                continue;
+            }
+            Command::DiscordCallback { url } => {
+                let Some(cb) = oauth::parse_callback(&url) else {
+                    tracing::warn!("ignoring a malformed sign-in redirect");
+                    continue;
+                };
+                // Not ours, or not now: someone else's link (D96).
+                let Some(f) = flow.take_if(|f| f.origin == cb.origin && f.ticket.is_none()) else {
+                    tracing::warn!("ignoring a sign-in redirect we didn't start");
+                    continue;
+                };
+                let outcome = match cb.result {
+                    Ok(code) => chadd::oauth_exchange(&f.api, &code, &f.verifier)
+                        .await
+                        .map_err(chadd::Error::message),
+                    Err(e) => Err(e),
+                };
+                match discord_outcome(outcome, f, &mut flow, &sink) {
+                    Some(cmd) => cmd,
+                    None => continue,
+                }
+            }
+            Command::DiscordName { name } => {
+                let Some(f) = flow.take_if(|f| f.ticket.is_some()) else {
+                    continue;
+                };
+                let ticket = f.ticket.as_deref().unwrap_or_default();
+                match chadd::oauth_register(&f.api, ticket, name.trim()).await {
+                    // The name can't be had, or the server's busy: ask again.
+                    Err(chadd::Error::Other(error)) => {
+                        sink.send([Event::DiscordNeedsName {
+                            invite: f.invite.clone(),
+                            suggestion: name,
+                            error: Some(error),
+                        }]);
+                        flow = Some(f);
+                        continue;
+                    }
+                    outcome => match discord_outcome(
+                        outcome.map_err(chadd::Error::message),
+                        f,
+                        &mut flow,
+                        &sink,
+                    ) {
+                        Some(cmd) => cmd,
+                        None => continue,
+                    },
+                }
+            }
+            Command::DiscordCancel => {
+                flow = None;
+                continue;
+            }
+            cmd => cmd,
+        };
         match cmd {
+            // Signed in with Discord on a network we have: its new login (D96).
+            Command::Join {
+                invite,
+                auth: Auth::Discord { refresh, .. },
+            } if invite::parse(&invite)
+                .ok()
+                .and_then(|i| nets.get(&i.origin))
+                .is_some_and(|t| !t.is_closed()) =>
+            {
+                let origin = invite::parse(&invite).expect("guarded").origin;
+                let cmd = NetCommand::SignIn { password: refresh };
+                let _ = nets[&origin].send(ToNet::Cmd(cmd));
+            }
             Command::Join { invite, auth } => {
                 let inv = match invite::parse(&invite) {
                     Ok(i) => i,
@@ -125,6 +213,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                     sink.send([Event::JoinFailed { invite, error }]);
                     continue;
                 }
+                let discord = matches!(auth, Auth::Discord { .. });
                 let (account, password, register) = match auth {
                     Auth::Login { account, password } => (account, Some(password), None),
                     Auth::Register {
@@ -133,6 +222,7 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                         email,
                     } => (account, Some(password), Some(email)),
                     Auth::Guest { nick } => (nick, None, None),
+                    Auth::Discord { account, refresh } => (account, Some(refresh), None),
                 };
                 let account = account.trim().to_owned();
                 if !valid_nick(&account) {
@@ -154,10 +244,16 @@ async fn manager(cfg: Config, mut rx: mpsc::UnboundedReceiver<Command>, sink: Si
                 let mut p = params(account, password, path);
                 p.guest = guest;
                 p.register = register;
+                p.discord = discord;
                 p.joining = Some(invite);
                 let tx = spawn_with(inv.origin.clone(), store, p, &sink, inv.channel);
                 nets.insert(inv.origin, tx);
             }
+            // Taken care of before this match.
+            Command::DiscordStart { .. }
+            | Command::DiscordCallback { .. }
+            | Command::DiscordName { .. }
+            | Command::DiscordCancel => {}
             Command::Background { on } => {
                 for tx in nets.values() {
                     let _ = tx.send(ToNet::Background(on));
@@ -204,6 +300,7 @@ fn spawn_with(
         nick: p.account.clone(),
         state: ConnState::Connecting,
         guest: p.guest,
+        discord: p.discord,
         uploads: None,
         gifs: None,
         games: false,
@@ -231,6 +328,52 @@ fn spawn_with(
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(conn::run(net, p, rx, sink.clone()));
     tx
+}
+
+/// A new sign-in for `invite`, if its server does Discord.
+async fn discord_start(invite: &str) -> Result<Flow, String> {
+    let inv = invite::parse(invite)?;
+    if invite::classic(&inv.origin) {
+        return Err("That network doesn't sign in with Discord.".into());
+    }
+    let d = crate::discovery::fetch(&inv.origin).await?;
+    if !d.chadd.discord {
+        return Err(format!("{} doesn't sign in with Discord.", d.name));
+    }
+    Ok(Flow::new(invite.to_owned(), inv.origin, d.chadd.api))
+}
+
+/// chadd's answer: a join to run, a name to ask for, or a failure to show.
+fn discord_outcome(
+    outcome: Result<chad_proto::chadd::OAuthOutcome, String>,
+    mut f: Flow,
+    flow: &mut Option<Flow>,
+    sink: &Sink,
+) -> Option<Command> {
+    use chad_proto::chadd::OAuthOutcome;
+    match outcome {
+        Ok(OAuthOutcome::SignedIn { account, refresh }) => Some(Command::Join {
+            invite: f.invite,
+            auth: Auth::Discord { account, refresh },
+        }),
+        Ok(OAuthOutcome::NeedsName { suggestion, ticket }) => {
+            sink.send([Event::DiscordNeedsName {
+                invite: f.invite.clone(),
+                suggestion,
+                error: None,
+            }]);
+            f.ticket = Some(ticket);
+            *flow = Some(f);
+            None
+        }
+        Err(error) => {
+            sink.send([Event::JoinFailed {
+                invite: f.invite,
+                error,
+            }]);
+            None
+        }
+    }
 }
 
 /// Enough to keep the name a single IRC parameter; the server judges the rest.

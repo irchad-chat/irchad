@@ -17,6 +17,7 @@ fn net() -> Net {
         nick: "bob".into(),
         state: ConnState::Connecting,
         guest: false,
+        discord: false,
         uploads: None,
         gifs: None,
         games: false,

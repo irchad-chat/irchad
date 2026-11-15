@@ -35,9 +35,51 @@ impl App {
             Event::JoinFailed { invite, error } => match &mut self.join {
                 Some(j) if j.busy.as_deref() == Some(&invite) => {
                     j.busy = None;
+                    j.discord = None;
                     j.error = Some(error);
                 }
                 _ => self.toast(error),
+            },
+            Event::OpenUrl { url } => {
+                if let Some(j) = &mut self.join
+                    && let Some(DiscordStep::Browser(link)) = &mut j.discord
+                {
+                    *link = Some(url.clone());
+                }
+                ctx.open_url(egui::OpenUrl::new_tab(url));
+            }
+            Event::DiscordNeedsName {
+                invite,
+                suggestion,
+                error,
+            } => {
+                let step = DiscordStep::Name {
+                    name: suggestion,
+                    error,
+                };
+                match &mut self.join {
+                    Some(j) if j.busy.as_deref() == Some(&invite) => j.discord = Some(step),
+                    // Signing in again from the sidebar, but the account's gone.
+                    _ => {
+                        self.join = Some(JoinDialog {
+                            invite: invite.clone(),
+                            busy: Some(invite),
+                            discord: Some(step),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            Event::PasswordSet { network, result } => match (&mut self.set_password, result) {
+                (Some(d), Err(e)) if d.network == network => {
+                    d.busy = false;
+                    d.error = Some(e);
+                }
+                (_, Err(e)) => self.toast(e),
+                (_, Ok(())) => {
+                    self.set_password = None;
+                    self.toast("Password set. Other IRC clients can log in with it now.".into());
+                }
             },
             Event::SignUpFailed { network, error } => match &mut self.signup {
                 Some(s) if s.network == network => {
@@ -429,6 +471,12 @@ impl App {
         }
         while let Ok(msg) = self.os.try_recv() {
             match msg {
+                // A Discord sign-in coming back from the browser (D96).
+                Os::Open(url) if chad_core::oauth::is_callback(&url) => {
+                    tracing::info!("Discord sign-in came back from the browser");
+                    self.core.send(Command::DiscordCallback { url });
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
                 Os::Open(url) => self.open_invite(&url),
                 Os::Show => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));

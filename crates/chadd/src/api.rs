@@ -82,16 +82,25 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> ApiResult<LoginResponse> {
     let account = check_password(&state, &headers, &req.account, &req.password).await?;
-    let token = AccessToken::with_api_key(SESSION_ISSUER, &state.session_secret)
-        .with_identity(&account)
-        .with_ttl(SESSION_TTL)
-        .to_jwt()
-        .map_err(|e| internal(&e))?;
+    let (token, expires_in) = mint_session(&state, &account)?;
     Ok(Json(LoginResponse {
         token,
         account,
-        expires_in: SESSION_TTL.as_secs(),
+        expires_in,
     }))
+}
+
+/// A session token for `account`, and its lifetime in seconds.
+pub fn mint_session(
+    state: &AppState,
+    account: &str,
+) -> Result<(String, u64), (StatusCode, Json<ApiError>)> {
+    let token = AccessToken::with_api_key(SESSION_ISSUER, &state.session_secret)
+        .with_identity(account)
+        .with_ttl(SESSION_TTL)
+        .to_jwt()
+        .map_err(|e| internal(&e))?;
+    Ok((token, SESSION_TTL.as_secs()))
 }
 
 /// The account as ergo spells it, if the password is right. Throttled.

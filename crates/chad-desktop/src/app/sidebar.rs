@@ -193,6 +193,18 @@ impl App {
                     if self.view.nets[ni].info.meetings && ui.button("New meeting").clicked() {
                         self.send(&network, NetCommand::CreateMeeting);
                     }
+                    let info = &self.view.nets[ni].info;
+                    if info.discord
+                        && !info.guest
+                        && ui.button("Password for other IRC clients…").clicked()
+                    {
+                        self.set_password = Some(PasswordDialog {
+                            network: network.clone(),
+                            password: String::new(),
+                            busy: false,
+                            error: None,
+                        });
+                    }
                     if ui.button("Browse channels…").clicked() {
                         self.browse = Some(ChannelBrowser::new(network.clone()));
                         self.send(&network, NetCommand::ListChannels);
@@ -232,7 +244,13 @@ impl App {
                 ui.visuals().warn_fg_color
             };
             ui.label(RichText::new(text).small().color(color));
-            if bad {
+            if bad && self.view.nets[ni].info.discord {
+                if ui.button("Sign in with Discord").clicked() {
+                    self.core.send(Command::DiscordStart {
+                        invite: network.clone(),
+                    });
+                }
+            } else if bad {
                 let mut go = false;
                 ui.horizontal(|ui| {
                     let r = ui.add(

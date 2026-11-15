@@ -51,12 +51,28 @@ pub const MAX_EMOJI: usize = 500;
 /// what they play. `404` when the server doesn't offer it.
 pub const GAMES: &str = "games";
 /// `POST <api>/account/delete` with a [`LoginRequest`] (no session: the password
-/// is asked again). `202 Accepted` once chadd has queued the deletion; it then
+/// is asked again), or with a Bearer session and an empty body for an account
+/// that signs in with Discord (D96). `202 Accepted` once chadd has queued the deletion; it then
 /// unregisters the account, redacts its messages and deletes its uploads (D69).
 pub const ACCOUNT_DELETE: &str = "account/delete";
 /// `POST <api>/redacted` with a [`RedactedRequest`], no auth: msgids chadd has
 /// deleted, so clients can drop their local copies (D69).
 pub const REDACTED: &str = "redacted";
+/// `GET <api>/oauth/discord/start?challenge=<S256 of a PKCE verifier>`, opened
+/// in the browser. Ends in a redirect to `irchad://oauth?origin=<origin>&code=<code>`
+/// (or `&error=<message>`), whose code goes to [`OAUTH_EXCHANGE`] with the verifier (D96).
+pub const OAUTH_DISCORD_START: &str = "oauth/discord/start";
+/// `POST <api>/oauth/exchange` with an [`OAuthExchangeRequest`]: an [`OAuthOutcome`].
+pub const OAUTH_EXCHANGE: &str = "oauth/exchange";
+/// `POST <api>/oauth/register` with an [`OAuthRegisterRequest`]: makes the
+/// account, then [`OAuthOutcome::SignedIn`]. `409` if the name can't be had.
+pub const OAUTH_REGISTER: &str = "oauth/register";
+/// `POST <api>/oauth/refresh` with a [`RefreshRequest`]: a [`RefreshResponse`]
+/// before every IRC connect. `401` means sign in with Discord again.
+pub const OAUTH_REFRESH: &str = "oauth/refresh";
+/// `POST <api>/oauth/password` with a [`PasswordRequest`] and a Bearer session:
+/// sets the account's password, for other IRC clients and FILEHOST (D96).
+pub const OAUTH_PASSWORD: &str = "oauth/password";
 /// Most msgids in one [`RedactedResponse`].
 pub const REDACTED_PAGE: usize = 1000;
 
@@ -93,6 +109,53 @@ pub struct LoginResponse {
     pub account: String,
     /// Seconds until `token` expires.
     pub expires_in: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthExchangeRequest {
+    /// From the `irchad://oauth` redirect.
+    pub code: String,
+    /// The PKCE verifier whose S256 went to [`OAUTH_DISCORD_START`].
+    pub verifier: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OAuthOutcome {
+    /// Keep `refresh` in the secret store; it's this device's login.
+    SignedIn { account: String, refresh: String },
+    /// No account yet: ask for a name (prefilled with `suggestion`), then
+    /// [`OAUTH_REGISTER`] with `ticket`.
+    NeedsName { suggestion: String, ticket: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OAuthRegisterRequest {
+    pub ticket: String,
+    pub account: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshRequest {
+    pub refresh: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshResponse {
+    pub account: String,
+    /// For SASL `IRCV3BEARER`; good for a minute.
+    pub irc_token: String,
+    /// A session token, as [`LoginResponse::token`].
+    pub session: String,
+    /// Seconds until `session` expires.
+    pub expires_in: u64,
+    /// Replaces the one sent: save it.
+    pub refresh: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PasswordRequest {
+    pub password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

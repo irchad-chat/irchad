@@ -13,6 +13,7 @@ mod files;
 mod games;
 mod gifs;
 mod meeting;
+mod oauth;
 mod routes;
 mod sounds;
 mod stream;

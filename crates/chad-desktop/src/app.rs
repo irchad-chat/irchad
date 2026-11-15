@@ -82,6 +82,7 @@ pub struct App {
     delete_account: bool,
     /// A guest making an account.
     signup: Option<SignUpDialog>,
+    set_password: Option<PasswordDialog>,
     adding: Option<(BufferKind, String)>,
     /// "Browse channels…": the network's LIST.
     browse: Option<ChannelBrowser>,
@@ -309,6 +310,23 @@ struct JoinDialog {
     /// The invite sent to the core, while waiting for the outcome.
     busy: Option<String>,
     error: Option<String>,
+    /// Signing in with Discord (D96), once started.
+    discord: Option<DiscordStep>,
+}
+
+enum DiscordStep {
+    /// In the browser, at this link once the core has made it.
+    Browser(Option<String>),
+    /// A first sign-in: the account name to use.
+    Name { name: String, error: Option<String> },
+}
+
+/// A password for other IRC clients, on a Discord account (D96).
+struct PasswordDialog {
+    network: String,
+    password: String,
+    busy: bool,
+    error: Option<String>,
 }
 
 impl Default for JoinDialog {
@@ -324,6 +342,7 @@ impl Default for JoinDialog {
             email: String::new(),
             busy: None,
             error: None,
+            discord: None,
         }
     }
 }
@@ -487,6 +506,7 @@ impl App {
             confirm_remove: None,
             delete_account: false,
             signup: None,
+            set_password: None,
             adding: None,
             browse: None,
             toasts: Vec::new(),

@@ -57,6 +57,10 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
 - [x] Account deletion removes the account's data, for Play's rules (D69): chadd unregisters it, redacts its channel messages live, `HISTSERV FORGET`s its DMs, deletes its uploads, and clients redact their copies from `/api/redacted` after each connect.
   In chad-core, so Android, iOS and desktop all use it with no UI change. Prod needs ergo's new `chadd` oper and export dir, and `upload-owners.py` run once.
 
+- [ ] Sign in with Discord (D96), found during Phase 6. chadd, chad-core and desktop are done; Android, iOS (`ASWebAuthenticationSession`) and web still need the button, the browser hand-off and the `irchad://oauth` redirect (chad-ffi doesn't expose `Command::DiscordStart`/`DiscordCallback`/`DiscordName` yet).
+  Not done for any client: linking Discord to an existing password account, and a per-device sign-out.
+- [ ] Later: a shared Discord sign-in service, so servers don't each need a Discord app. Plan in [notes/oauth-broker.md](../notes/oauth-broker.md).
+
 ## Done when
 - The phone joins via an invite link, receives push while backgrounded, talks in voice with desktop users, and watches a desktop screen share.
 

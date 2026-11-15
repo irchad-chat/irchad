@@ -8,6 +8,7 @@ impl App {
         self.share_dialog(ctx);
         self.join_dialog(ctx);
         self.signup_dialog(ctx);
+        self.password_dialog(ctx);
         self.browse_dialog(ctx);
         self.email_code_dialog(ctx);
         self.remove_dialog(ctx);
@@ -46,9 +47,13 @@ impl App {
 
     /// Joining a network from an invite.
     fn join_dialog(&mut self, ctx: &egui::Context) {
+        if self.join.as_ref().is_some_and(|j| j.discord.is_some()) {
+            return self.discord_dialog(ctx);
+        }
         if let Some(j) = &mut self.join {
             let mut submit = false;
             let mut cancel = false;
+            let mut discord = false;
             let busy = j.busy.is_some();
             let modal = egui::Modal::new(egui::Id::unique("join")).show(ctx, |ui| {
                 ui.set_width(360.0);
@@ -110,6 +115,20 @@ impl App {
                             .desired_width(f32::INFINITY),
                     )
                     .labelled_by(l.id);
+                    ui.add_space(8.0);
+                    let ready = !busy && !j.invite.trim().is_empty();
+                    if ui
+                        .add_enabled(
+                            ready,
+                            egui::Button::new("Sign in with Discord")
+                                .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        )
+                        .clicked()
+                    {
+                        discord = true;
+                    }
+                    ui.add_space(4.0);
+                    ui.vertical_centered(|ui| ui.label(RichText::new("or").weak()));
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -184,6 +203,18 @@ impl App {
                 submit = go || (ready && !busy && ui.input(|i| i.key_pressed(Key::Enter)));
                 cancel = no;
             });
+            if discord {
+                let url = j.invite.trim().to_owned();
+                match invite::parse(&url) {
+                    Err(e) => j.error = Some(e),
+                    Ok(_) => {
+                        j.error = None;
+                        j.busy = Some(url.clone());
+                        j.discord = Some(DiscordStep::Browser(None));
+                        self.core.send(Command::DiscordStart { invite: url });
+                    }
+                }
+            }
             if submit {
                 let url = if j.classic {
                     let scheme = if j.plaintext { "irc" } else { "ircs" };
@@ -224,6 +255,129 @@ impl App {
             if (cancel || modal.should_close()) && !busy {
                 self.join = None;
             }
+        }
+    }
+
+    /// "Sign in with Discord" (D96): waiting on the browser, then maybe a name.
+    fn discord_dialog(&mut self, ctx: &egui::Context) {
+        let Some(j) = &mut self.join else { return };
+        let mut cancel = false;
+        let mut name_sent = None;
+        let server = j
+            .busy
+            .as_deref()
+            .and_then(|b| invite::parse(b).ok())
+            .map(|i| i.origin.trim_start_matches("https://").to_owned())
+            .unwrap_or_default();
+        let modal = egui::Modal::new(egui::Id::unique("discord")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            match &mut j.discord {
+                Some(DiscordStep::Browser(link)) => {
+                    ui.heading("Sign in with Discord");
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Finish signing in in your browser.");
+                    });
+                    if let Some(link) = link {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Browser didn't open?").weak());
+                            if ui.button("Copy the link").clicked() {
+                                ui.ctx().copy_text(link.clone());
+                            }
+                        });
+                    }
+                    ui.add_space(8.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        cancel = ui.button("Cancel").clicked();
+                    });
+                }
+                // `join_dialog` only sends us here with a step.
+                None => {}
+                Some(DiscordStep::Name { name, error }) => {
+                    ui.heading("Choose your name");
+                    ui.label(
+                        RichText::new(format!(
+                            "This is your account on {server}, and other IRC \
+                             clients see it too. It can't be changed later."
+                        ))
+                        .weak(),
+                    );
+                    ui.add_space(8.0);
+                    let l = ui.label("Username");
+                    let r = ui
+                        .add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY))
+                        .labelled_by(l.id);
+                    if let Some(e) = error {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(e.as_str()).color(ui.visuals().error_fg_color));
+                    }
+                    ui.add_space(8.0);
+                    let ready = !name.trim().is_empty();
+                    let (go, no) = footer(ui, "Continue", ready, false);
+                    if go || (ready && r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
+                        name_sent = Some(name.trim().to_owned());
+                    }
+                    cancel = no;
+                }
+            }
+        });
+        if let Some(name) = name_sent {
+            j.discord = Some(DiscordStep::Browser(None));
+            self.core.send(Command::DiscordName { name });
+        } else if cancel || modal.should_close() {
+            self.core.send(Command::DiscordCancel);
+            j.busy = None;
+            j.discord = None;
+        }
+    }
+
+    /// "Password for other IRC clients…" on a Discord account (D96).
+    fn password_dialog(&mut self, ctx: &egui::Context) {
+        let Some(d) = &mut self.set_password else {
+            return;
+        };
+        let mut submit = false;
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::unique("set-password")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading("Password for other IRC clients");
+            ui.label(
+                RichText::new(
+                    "IrChad signs you in with Discord. Other IRC clients log in \
+                     with your username and this password.",
+                )
+                .weak(),
+            );
+            ui.add_space(8.0);
+            let l = ui.label("Password");
+            let r = ui
+                .add_enabled(
+                    !d.busy,
+                    egui::TextEdit::singleline(&mut d.password)
+                        .password(true)
+                        .desired_width(f32::INFINITY),
+                )
+                .labelled_by(l.id);
+            if let Some(e) = &d.error {
+                ui.add_space(4.0);
+                ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+            }
+            ui.add_space(8.0);
+            let ready = d.password.len() >= 8 && !d.busy;
+            let (go, no) = footer(ui, "Set password", ready, d.busy);
+            submit = go || (ready && r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)));
+            cancel = no;
+        });
+        if submit {
+            d.busy = true;
+            d.error = None;
+            let password = std::mem::take(&mut d.password);
+            let network = d.network.clone();
+            self.send(&network, NetCommand::SetPassword { password });
+        } else if (cancel || modal.should_close()) && !d.busy {
+            self.set_password = None;
         }
     }
 
@@ -1091,5 +1245,22 @@ fn emoji_picker(
     match net.and_then(|i| nets.get_mut(i)) {
         Some(n) => emoji::picker(ui, query, &n.emoji, &mut n.ui.media),
         None => emoji::picker(ui, query, &[], &mut crate::media::Media::default()),
+    }
+}
+
+#[cfg(test)]
+impl App {
+    /// What `Event::DiscordNeedsName` does, for screenshots: there's no
+    /// chadd behind them to send it.
+    pub(crate) fn shot_discord_name(&mut self, invite: &str, name: &str, error: Option<&str>) {
+        self.join = Some(JoinDialog {
+            invite: invite.into(),
+            busy: Some(invite.into()),
+            discord: Some(DiscordStep::Name {
+                name: name.into(),
+                error: error.map(Into::into),
+            }),
+            ..Default::default()
+        });
     }
 }

@@ -56,7 +56,20 @@ pub async fn delete_account(
             "This server doesn't delete accounts.",
         ));
     };
-    let account = api::check_password(&state, &headers, &req.account, &req.password).await?;
+    let account = match &state.oauth {
+        // A Discord account has no password to ask for again (D96).
+        Some(o) if headers.contains_key(axum::http::header::AUTHORIZATION) => {
+            let account = api::session_account(&state, &headers)?;
+            if !o.linked(&account).await {
+                return Err(fail(
+                    StatusCode::FORBIDDEN,
+                    "Enter your password to delete your account.",
+                ));
+            }
+            account
+        }
+        _ => api::check_password(&state, &headers, &req.account, &req.password).await?,
+    };
     // The name is the job: hex keeps any account name a safe file name.
     let job = cfg.state_dir.join("jobs").join(hex::encode(&account));
     if let Err(e) = tokio::fs::write(&job, b"").await {
@@ -213,6 +226,9 @@ async fn queued(jobs: &Path) -> Vec<(PathBuf, String)> {
 async fn run(state: &AppState, cfg: &Delete, account: &str) -> anyhow::Result<()> {
     let mut irc = Irc::connect(cfg).await?;
     unregister(&mut irc, account).await?;
+    if let Some(o) = &state.oauth {
+        o.unlink(account).await;
+    }
     let file = export(&mut irc, account).await?;
     let path = cfg.export_dir.join(&file);
     let messages = read_export(&path).await?;

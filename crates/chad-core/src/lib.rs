@@ -20,6 +20,7 @@ mod manager;
 pub mod mention;
 pub mod music;
 mod net;
+pub mod oauth;
 mod platform;
 pub mod secrets;
 mod store;
@@ -121,6 +122,23 @@ pub enum Command {
         invite: String,
         auth: Auth,
     },
+    /// "Sign in with Discord" (D96): answered with `Event::OpenUrl` for the
+    /// browser. Its `irchad://oauth` redirect goes to `DiscordCallback`; then
+    /// maybe `Event::DiscordNeedsName`, and the network joins (or signs in
+    /// again, if it's one we have). Failures are `Event::JoinFailed`.
+    DiscordStart {
+        invite: String,
+    },
+    /// An `irchad://oauth?...` URL the OS handed the app.
+    DiscordCallback {
+        url: String,
+    },
+    /// The account name for a first Discord sign-in.
+    DiscordName {
+        name: String,
+    },
+    /// The user gave up on the browser or the name.
+    DiscordCancel,
     /// Forget a network: disconnect, delete its cache and password.
     Remove {
         network: String,
@@ -152,6 +170,12 @@ pub enum Auth {
     /// channels are rejoined on reconnect and anything said while away is missed.
     Guest {
         nick: String,
+    },
+    /// Signed in with Discord; `refresh` is chadd's token (D96). Apps start
+    /// with `Command::DiscordStart`, which ends here by itself.
+    Discord {
+        account: String,
+        refresh: String,
     },
 }
 
@@ -272,6 +296,11 @@ pub enum NetCommand {
     /// Try again with this password after `ConnState::Failed` (a missing or
     /// changed password, say). It's saved once a login works.
     SignIn {
+        password: String,
+    },
+    /// A password for other IRC clients, on an account that signs in with
+    /// Discord (D96). Answered with `Event::PasswordSet`.
+    SetPassword {
         password: String,
     },
     /// A guest makes an account and carries on as it, keeping their channels
@@ -398,6 +427,18 @@ pub enum Event {
         invite: String,
         error: String,
     },
+    /// Open this in the browser (`Command::DiscordStart`).
+    OpenUrl {
+        url: String,
+    },
+    /// A first Discord sign-in: ask for the account name, prefilled with
+    /// `suggestion`, and answer with `Command::DiscordName`. `error` says why
+    /// the last name didn't work.
+    DiscordNeedsName {
+        invite: String,
+        suggestion: String,
+        error: Option<String>,
+    },
     /// A guest's `NetCommand::Register` didn't work; they're a guest again.
     SignUpFailed {
         network: String,
@@ -477,6 +518,11 @@ pub enum Event {
         network: String,
         nick: String,
         channel: String,
+    },
+    /// `NetCommand::SetPassword` is done.
+    PasswordSet {
+        network: String,
+        result: Result<(), String>,
     },
     /// Something went wrong, in words a user understands.
     Error {
@@ -674,6 +720,8 @@ pub struct NetworkInfo {
     pub state: ConnState,
     /// No account; `NetCommand::Register` makes one.
     pub guest: bool,
+    /// Signs in with Discord (D96): "sign in again" is `Command::DiscordStart`.
+    pub discord: bool,
     // Whether or not we're an oper.
     pub oper: bool,
     /// Largest upload chadd takes, if it takes them (and we have an account).

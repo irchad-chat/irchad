@@ -100,6 +100,19 @@ From a checkout of this repo, copy the files over and fill them in:
   export_dir = "/var/lib/ergo/export"
   state_dir = "/var/lib/chadd"
 
+  # Optional: "Sign in with Discord" (D96). Make an application at
+  # https://discord.com/developers/applications, add the OAuth2 redirect
+  # https://chat.example.com/api/oauth/discord/callback, and put its client
+  # secret in the file below. The signing key is made with
+  #   openssl genpkey -algorithm ed25519 -out /etc/chadd/jwt.pem
+  #   openssl pkey -in /etc/chadd/jwt.pem -pubout -out /etc/ergo/jwt_pub.pem
+  # and ergo-prod.py turns on ergo's jwt-auth once /etc/ergo/jwt_pub.pem exists.
+  [discord]
+  client_id = "<DISCORD_CLIENT_ID>"
+  client_secret_file = "/etc/chadd/discord-secret"
+  signing_key = "/etc/chadd/jwt.pem"
+  state_dir = "/var/lib/chadd"
+
   # Optional: custom emoji. Every <name>.png, .jpg, .gif or .webp in here is
   # :name: (2 to 32 of a-z, 0-9 and _; 1 MiB at most). Add and remove files
   # at will. Everything in the directory is public.

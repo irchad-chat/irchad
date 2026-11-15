@@ -94,6 +94,24 @@ fn join_dialog() {
 }
 
 #[test]
+fn join_dialog_discord() {
+    let mut s = Shots::new(Some("https://chat.localhost:8443/"));
+    s.harness.run();
+    s.harness.get_by_label("Sign in with Discord");
+    s.shot("join_dialog_discord");
+    s.harness
+        .state_mut()
+        .shot_discord_name("https://chat.localhost:8443/", "sam_h", None);
+    s.shot("discord_name");
+    s.harness.state_mut().shot_discord_name(
+        "https://chat.localhost:8443/",
+        "nickserv",
+        Some("That name is taken. Try another."),
+    );
+    s.shot("discord_name_taken");
+}
+
+#[test]
 fn join_dialog_classic() {
     let mut s = Shots::new(Some("https://chat.localhost:8443/"));
     s.harness.run();

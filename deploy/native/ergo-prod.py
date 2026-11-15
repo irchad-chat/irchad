@@ -6,9 +6,14 @@ usage: ergo-prod.py <server-name> <network-name> <oper-bcrypt-hash> <api-token> 
 Every replacement must match exactly once, so a changed ergo.yaml fails loudly.
 """
 
+import os
 import sys
 
 host, network, oper_hash, token, chadd_hash = sys.argv[1:6]
+
+# "Sign in with Discord" (D96): chadd's signing key, public half. ergo won't
+# start with a key-file that isn't there, so it stays off until it is.
+JWT_KEY = "/etc/ergo/jwt_pub.pem"
 
 REPLACE = [
     ("    name: ChadDev # irchad:", f"    name: {network}"),
@@ -29,9 +34,13 @@ REPLACE = [
     ('        - "chad-dev-api-token" # irchad: dev only; must match chadd\'s config', f'        - "{token}"'),
     ('    output-path: "/ircd/export" #', '    output-path: "/var/lib/ergo/export" #'),
     ('        #"draft/FILEHOST": "https://example.com/filehost"', f'        "draft/FILEHOST": "https://{host}/api/upload"'),
+    ('                key-file: "/ircd/jwt_pub.pem" # irchad:', f'                key-file: "{JWT_KEY}"'),
 ]
 
 text = sys.stdin.read()
+if not os.path.exists(JWT_KEY):
+    REPLACE.append(("        enabled: true # irchad:\n        # should we automatically create users on presentation of a valid token?\n        # irchad: no.",
+                    "        enabled: false\n        # should we automatically create users on presentation of a valid token?\n        # irchad: no."))
 for old, new in REPLACE:
     if text.count(old) != 1:
         sys.exit(f"ergo-prod: expected exactly one match for {old!r}, found {text.count(old)}")

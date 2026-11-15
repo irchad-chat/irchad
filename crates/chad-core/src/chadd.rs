@@ -9,8 +9,9 @@ use web_time::Instant;
 
 use chad_proto::chadd::{
     self, ApiError, Game, GifPage, GifSearch, LinkPreview, LoginRequest, LoginResponse,
-    PreviewRequest, RedactedRequest, RedactedResponse, Sound, UploadResponse, VoiceTokenRequest,
-    VoiceTokenResponse,
+    OAuthExchangeRequest, OAuthOutcome, OAuthRegisterRequest, PasswordRequest, PreviewRequest,
+    RedactedRequest, RedactedResponse, RefreshRequest, RefreshResponse, Sound, UploadResponse,
+    VoiceTokenRequest, VoiceTokenResponse,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
@@ -58,8 +59,11 @@ impl Error {
 pub struct Client {
     pub api: Url,
     account: String,
-    /// `None` for a guest: no chadd session.
+    /// `None` for a guest: no chadd session. The refresh token on a network
+    /// that signs in with Discord (D96).
     password: Option<String>,
+    /// `password` is a refresh token.
+    pub discord: bool,
     session: Arc<tokio::sync::Mutex<Option<Session>>>,
 }
 
@@ -74,6 +78,7 @@ impl Client {
             api,
             account,
             password,
+            discord: false,
             session,
         }
     }
@@ -109,9 +114,14 @@ impl Client {
             match fresh {
                 Some(s) => s.token,
                 None => {
-                    let s = login(&self.api, &self.account, password)
-                        .await
-                        .map_err(Error::message)?;
+                    let s = if self.discord {
+                        // The refresh token it hands back isn't kept: the one
+                        // we have stays good, and the next connect saves a new one.
+                        oauth_refresh(&self.api, password).await.map(|r| r.1)
+                    } else {
+                        login(&self.api, &self.account, password).await
+                    };
+                    let s = s.map_err(Error::message)?;
                     *session = Some(s.clone());
                     s.token
                 }
@@ -148,25 +158,100 @@ pub async fn login(api: &Url, account: &str, password: &str) -> Result<Session, 
         password: password.to_owned(),
     };
     let r: LoginResponse = post(api, chadd::LOGIN, None, &req).await?;
+    Ok(session(r.token, r.expires_in))
+}
+
+fn session(token: String, expires_in: u64) -> Session {
     // A minute early, so it doesn't run out mid-request.
-    let ttl = Duration::from_secs(r.expires_in.min(86_400)).saturating_sub(Duration::from_secs(60));
-    Ok(Session {
-        token: r.token,
+    let ttl = Duration::from_secs(expires_in.min(86_400)).saturating_sub(Duration::from_secs(60));
+    Session {
+        token,
         until: Instant::now() + ttl,
-    })
+    }
+}
+
+/// The `irchad://oauth` code and our PKCE verifier: an account, or a name to pick (D96).
+pub async fn oauth_exchange(api: &Url, code: &str, verifier: &str) -> Result<OAuthOutcome, Error> {
+    let req = OAuthExchangeRequest {
+        code: code.to_owned(),
+        verifier: verifier.to_owned(),
+    };
+    post(api, chadd::OAUTH_EXCHANGE, None, &req).await
+}
+
+/// Makes the account a Discord sign-in asked for.
+pub async fn oauth_register(api: &Url, ticket: &str, account: &str) -> Result<OAuthOutcome, Error> {
+    let req = OAuthRegisterRequest {
+        ticket: ticket.to_owned(),
+        account: account.to_owned(),
+    };
+    post(api, chadd::OAUTH_REGISTER, None, &req).await
+}
+
+/// Before each connect: a JWT for SASL, a session, and a new refresh token.
+/// [`Error::Unauthorized`] means the user has to sign in with Discord again.
+pub async fn oauth_refresh(api: &Url, refresh: &str) -> Result<(RefreshResponse, Session), Error> {
+    let req = RefreshRequest {
+        refresh: refresh.to_owned(),
+    };
+    let r: RefreshResponse = post(api, chadd::OAUTH_REFRESH, None, &req).await?;
+    // Bounded like everything else from the server (D14).
+    let ok = (1..=64).contains(&r.account.len())
+        && (1..=4096).contains(&r.irc_token.len())
+        && (1..=4096).contains(&r.refresh.len());
+    if !ok {
+        return Err(Error::Other(
+            "The server sent something odd. Try again later.".into(),
+        ));
+    }
+    let s = session(r.session.clone(), r.expires_in);
+    Ok((r, s))
+}
+
+/// A password for other IRC clients, on an account that signs in with Discord.
+pub async fn set_password(api: &Url, session: &str, password: &str) -> Result<(), Error> {
+    let req = PasswordRequest {
+        password: password.to_owned(),
+    };
+    let json = serde_json::to_vec(&req).map_err(|e| Error::Other(e.to_string()))?;
+    request(
+        api,
+        chadd::OAUTH_PASSWORD,
+        Some(session),
+        Body::Json(json),
+        MAX_BODY,
+    )
+    .await
+    .map(drop)
 }
 
 /// Has chadd delete the account with its messages and uploads (D69). Done once
 /// chadd has queued it; the account is gone moments later.
-pub async fn delete_account(api: &Url, account: &str, password: &str) -> Result<(), Error> {
+/// With `session` (a Discord account, D96) instead of the password.
+pub async fn delete_account(
+    api: &Url,
+    account: &str,
+    password: &str,
+    session: Option<&str>,
+) -> Result<(), Error> {
     let req = LoginRequest {
         account: account.to_owned(),
-        password: password.to_owned(),
+        password: if session.is_some() {
+            String::new()
+        } else {
+            password.to_owned()
+        },
     };
     let json = serde_json::to_vec(&req).map_err(|e| Error::Other(e.to_string()))?;
-    request(api, chadd::ACCOUNT_DELETE, None, Body::Json(json), MAX_BODY)
-        .await
-        .map(drop)
+    request(
+        api,
+        chadd::ACCOUNT_DELETE,
+        session,
+        Body::Json(json),
+        MAX_BODY,
+    )
+    .await
+    .map(drop)
 }
 
 /// Msgids chadd deleted after `since` (D69), and the cursor to keep. With no
