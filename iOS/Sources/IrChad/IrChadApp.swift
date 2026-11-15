@@ -11,8 +11,14 @@ struct IrChadApp: App {
                 .environment(model)
                 .preferredColorScheme(model.settings.theme.scheme)
                 .onOpenURL { url in
-                    // `irchad://join?origin=…` from chadd's landing page.
-                    if url.scheme == "irchad" { model.invite = url.absoluteString }
+                    // `irchad://join?origin=…` from chadd's landing page; a Discord
+                    // sign-in (D96) normally comes back through the auth session
+                    // instead, and the core drops one it didn't start.
+                    if url.scheme == "irchad", url.host() == "oauth" {
+                        model.client.discordCallback(url: url.absoluteString)
+                    } else if url.scheme == "irchad" {
+                        model.invite = url.absoluteString
+                    }
                 }
         }
         .onChange(of: phase) { _, p in model.notifier.phase(p) }

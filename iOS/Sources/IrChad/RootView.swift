@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 struct RootView: View {
@@ -8,6 +9,8 @@ struct RootView: View {
     /// the join screen stays up by `adding`, not by the list being empty.
     @State private var settled = false
     @State private var reason = ""
+    @State private var discordName = ""
+    @Environment(\.webAuthenticationSession) private var webAuth
 
     var body: some View {
         let _ = model.tick
@@ -51,6 +54,27 @@ struct RootView: View {
         } message: {
             Text("Thanks for letting us know. The moderators of this server will look into it.")
         }
+        .onChange(of: model.discordURL) { _, url in
+            guard let url else { return }
+            Task { await discord(url) }
+        }
+        .alert(
+            "Choose your name",
+            isPresented: Binding(get: { model.discordName != nil }, set: { if !$0 { model.discordName = nil } }),
+            presenting: model.discordName
+        ) { _ in
+            TextField("Username", text: $discordName)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Continue") {
+                model.client.discordName(name: discordName.trimmingCharacters(in: .whitespaces))
+            }
+            Button("Cancel", role: .cancel) { model.discordCancel() }
+        } message: { ask in
+            Text((ask.error.map { "\($0)\n\n" } ?? "")
+                + "This is your account on the server, and other IRC clients see it too. It can't be changed later.")
+        }
+        .onChange(of: model.discordName) { _, ask in if let ask { discordName = ask.suggestion } }
         .sheet(isPresented: Binding(get: { model.verify != nil }, set: { if !$0 { closeVerify() } })) {
             if let v = model.verify { VerifySheet(v: v) }
         }
@@ -59,6 +83,20 @@ struct RootView: View {
             settled = true
         }
         .onChange(of: settled && nets.isEmpty, initial: true) { _, none in if none { adding = true } }
+    }
+
+    /// Discord's page in an auth session, which hands the `irchad://oauth`
+    /// redirect straight back (D96).
+    private func discord(_ url: URL) async {
+        do {
+            let back = try await webAuth.authenticate(
+                using: url, callbackURLScheme: "irchad", preferredBrowserSession: .shared
+            )
+            model.discordURL = nil
+            model.client.discordCallback(url: back.absoluteString)
+        } catch {
+            model.discordCancel()
+        }
     }
 
     private func close() {

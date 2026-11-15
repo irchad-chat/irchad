@@ -198,6 +198,8 @@ fun Root(app: IrChad, invite: String?, open: Focus?, pip: Boolean, inviteTaken: 
     }
     val verify by app.verify.collectAsState()
     verify?.let { VerifyDialog(app, it) }
+    val discordName by app.discordName.collectAsState()
+    discordName?.let { DiscordNameDialog(app, it) }
     val reported by app.reported.collectAsState()
     if (reported) {
         AlertDialog(
@@ -475,7 +477,13 @@ private fun ChatScreen(
 
     when (dialog) {
         "settings" -> SettingsDialog(app) { dialog = null }
-        "status" -> StatusDialog(app, net, onProfile = { dialog = "profile" }, onLeave = { dialog = "leave" }) { dialog = null }
+        "status" -> StatusDialog(
+            app, net,
+            onProfile = { dialog = "profile" },
+            onPassword = { dialog = "password" },
+            onLeave = { dialog = "leave" },
+        ) { dialog = null }
+        "password" -> PasswordDialog(app, net) { dialog = null }
         "profile" -> ProfileDialog(app, tick, net) { dialog = null }
         "leave" -> LeaveDialog(app, net) { dialog = null }
         "devices" -> buf?.let { DevicesDialog(app, tick, net, it.target) { dialog = null } } ?: run { dialog = null }
@@ -536,7 +544,14 @@ private fun ReportDialog(app: IrChad, net: Network, nick: String, target: String
 
 /** Online or away, and the way to the profile and to leaving, like desktop's status menu. */
 @Composable
-private fun StatusDialog(app: IrChad, net: Network, onProfile: () -> Unit, onLeave: () -> Unit, onDismiss: () -> Unit) {
+private fun StatusDialog(
+    app: IrChad,
+    net: Network,
+    onProfile: () -> Unit,
+    onPassword: () -> Unit,
+    onLeave: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     val s = app.settings
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -551,6 +566,7 @@ private fun StatusDialog(app: IrChad, net: Network, onProfile: () -> Unit, onLea
                 }
                 if (!s.away && app.away) Hint("You're away because you haven't used IrChad for a while.")
                 if (!net.guest) TextButton(onClick = onProfile) { Text("Edit profile…") }
+                if (net.discord) TextButton(onClick = onPassword) { Text("Password for other IRC clients…") }
                 TextButton(onClick = onLeave) { Text("Leave ${net.name}…", color = MaterialTheme.colorScheme.error) }
             }
         },
@@ -640,6 +656,96 @@ private fun Devices(devices: List<Device>, onRemove: ((String) -> Unit)?) {
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** A first Discord sign-in: the account name, which can't change later (D96). */
+@Composable
+private fun DiscordNameDialog(app: IrChad, ask: DiscordName) {
+    var name by remember(ask) { mutableStateOf(ask.suggestion) }
+    val cancel = {
+        app.discordName.value = null
+        app.client.discordCancel()
+        app.joinFailures.tryEmit(ask.invite to "Discord sign-in cancelled")
+        Unit
+    }
+    AlertDialog(
+        onDismissRequest = cancel,
+        title = { Text("Choose your name") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "This is your account on the server, and other IRC clients see it too. " +
+                        "It can't be changed later.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    name, { name = it },
+                    label = { Text("Username") },
+                    singleLine = true,
+                    isError = ask.error != null,
+                    supportingText = ask.error?.let { e -> { Text(e) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(enabled = name.isNotBlank(), onClick = {
+                app.discordName.value = null
+                app.client.discordName(name.trim())
+            }) { Text("Continue") }
+        },
+        dismissButton = { TextButton(onClick = cancel) { Text("Cancel") } },
+    )
+}
+
+/** A password so other IRC clients can log in to a Discord account (D96). */
+@Composable
+private fun PasswordDialog(app: IrChad, net: Network, onDismiss: () -> Unit) {
+    var password by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+    LaunchedEffect(net.network) {
+        app.passwordSet.collect { (network, e) ->
+            if (network != net.network) return@collect
+            busy = false
+            if (e == null) {
+                Toast.makeText(ctx, "Password set", Toast.LENGTH_SHORT).show()
+                onDismiss()
+            } else {
+                error = e
+            }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Password for other IRC clients") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "IrChad signs you in with Discord. Other IRC clients log in " +
+                        "as ${net.nick} with this password.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    password, { password = it; error = null },
+                    label = { Text("Password (8 or more characters)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    isError = error != null,
+                    supportingText = error?.let { e -> { Text(e) } },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(enabled = password.length >= 8 && !busy, onClick = {
+                busy = true
+                app.client.setPassword(net.network, password)
+            }) { Text("Set password") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** Forget the network here, as on desktop; optionally delete the account too. */
@@ -860,7 +966,17 @@ private fun StatusBanner(app: IrChad, net: Network) {
     Surface(color = MaterialTheme.colorScheme.secondaryContainer) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(status, style = MaterialTheme.typography.bodyMedium)
-            if (net.failed || net.needsCode) {
+            if (net.failed && net.discord) {
+                // No password to type: the browser again (D96).
+                var error by remember(net.network) { mutableStateOf<String?>(null) }
+                LaunchedEffect(net.network) {
+                    app.joinFailures.collect { (inv, e) -> if (inv == net.network) error = e }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Button(onClick = { error = null; app.client.discordStart(net.network) }) {
+                    Text("Sign in with Discord")
+                }
+            } else if (net.failed || net.needsCode) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(
                         input, { input = it }, singleLine = true,

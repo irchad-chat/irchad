@@ -9,6 +9,20 @@ struct Sel: Hashable, Codable {
     let target: String
 }
 
+/// A first Discord sign-in waiting for an account name (D96).
+struct DiscordName: Equatable {
+    let invite: String
+    let suggestion: String
+    let error: String?
+}
+
+/// The answer to `Client.setPassword`; `error` is nil when it worked.
+struct PasswordResult: Equatable {
+    let id = UUID()
+    let network: String
+    let error: String?
+}
+
 struct Verify: Equatable {
     let network: String
     let nick: String
@@ -40,6 +54,12 @@ final class AppModel {
     var focus: Sel?
     /// An `irchad://` invite that opened the app, until the join screen takes it.
     var invite: String?
+    /// A Discord sign-in (D96): the invite or network it's for, while one runs.
+    var discordInvite: String?
+    /// Discord's sign-in page, for `RootView`'s auth session.
+    var discordURL: URL?
+    var discordName: DiscordName?
+    var passwordSet: PasswordResult?
 
     let settings = Settings()
     let media = Media()
@@ -104,6 +124,21 @@ final class AppModel {
 
     func toast(_ text: String) {
         notice = text
+    }
+
+    /// "Sign in with Discord" for an invite, or for a failed `Network.discord`.
+    func discordStart(_ invite: String) {
+        discordInvite = invite
+        client.discordStart(invite: invite)
+    }
+
+    /// The user closed the browser or the name prompt.
+    func discordCancel() {
+        client.discordCancel()
+        discordURL = nil
+        discordName = nil
+        if let i = discordInvite { joinFailure = (i, "Discord sign-in cancelled") }
+        discordInvite = nil
     }
 
     fileprivate func verification(network: String, nick: String, state: Sas) {
@@ -203,6 +238,18 @@ final class Bridge: Listener, @unchecked Sendable {
 
     func reported(network: String) {
         main { $0.reported = true }
+    }
+
+    func openUrl(url: String) {
+        main { $0.discordURL = URL(string: url) }
+    }
+
+    func discordNeedsName(invite: String, suggestion: String, error: String?) {
+        main { $0.discordName = DiscordName(invite: invite, suggestion: suggestion, error: error) }
+    }
+
+    func passwordSet(network: String, error: String?) {
+        main { $0.passwordSet = PasswordResult(network: network, error: error) }
     }
 }
 

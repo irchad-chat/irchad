@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -58,12 +59,15 @@ fun JoinScreen(
     var email by rememberSaveable { mutableStateOf("") }
     var busy by rememberSaveable { mutableStateOf<String?>(null) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
+    // `busy` is a Discord sign-in waiting on the browser (D96).
+    var discord by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(invite) { if (invite != null) link = invite }
     LaunchedEffect(Unit) {
         app.joinFailures.collect { (inv, e) ->
             if (inv == busy) {
                 busy = null
+                discord = false
                 error = e
             }
         }
@@ -145,6 +149,28 @@ fun JoinScreen(
                 )
             }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (discord && busy != null) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Finish signing in in your browser.", Modifier.weight(1f))
+                    TextButton(onClick = {
+                        app.client.discordCancel()
+                        busy = null
+                        discord = false
+                    }) { Text("Cancel") }
+                }
+            } else if (mode != Mode.Guest) {
+                OutlinedButton(
+                    onClick = {
+                        val inv = link.trim()
+                        error = null
+                        busy = inv
+                        discord = true
+                        app.client.discordStart(inv)
+                    },
+                    enabled = link.isNotBlank() && busy == null,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Sign in with Discord") }
+            }
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,

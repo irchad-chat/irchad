@@ -60,6 +60,26 @@ struct JoinView: View {
                 if let error {
                     Section { Text(error).foregroundStyle(.red) }
                 }
+                if mode != .guest {
+                    Section {
+                        Button {
+                            let inv = link.trimmingCharacters(in: .whitespacesAndNewlines)
+                            error = nil
+                            busy = inv
+                            model.discordStart(inv)
+                            model.notifier.askPermission()
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Sign in with Discord")
+                                Spacer()
+                            }
+                        }
+                        .disabled(link.trimmingCharacters(in: .whitespaces).isEmpty || busy != nil)
+                    } footer: {
+                        Text("No password needed: sign in with your Discord account.")
+                    }
+                }
                 Section {
                     Button(action: submit) {
                         HStack {

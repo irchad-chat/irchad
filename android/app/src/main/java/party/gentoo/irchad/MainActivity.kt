@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
         val app = application as IrChad
         if (savedInstanceState == null) {
             invite.value = intent.inviteOrNull()
+            intent.oauthOrNull()?.let { app.client.discordCallback(it) }
             open.value = intent.focusOrNull()
             intent.sharedOrNull()?.let { app.shared.value = it }
         }
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.inviteOrNull()?.let { invite.value = it }
+        intent.oauthOrNull()?.let { (application as IrChad).client.discordCallback(it) }
         intent.focusOrNull()?.let { open.value = it }
         intent.sharedOrNull()?.let { (application as IrChad).shared.value = it }
     }
@@ -130,7 +132,11 @@ private fun Intent.sharedOrNull(): Shared? {
 }
 
 private fun Intent.inviteOrNull(): String? =
-    data?.takeIf { action == Intent.ACTION_VIEW && it.scheme == "irchad" }?.toString()
+    data?.takeIf { action == Intent.ACTION_VIEW && it.scheme == "irchad" && it.host != "oauth" }?.toString()
+
+/** A Discord sign-in coming back from the browser (D96); the core drops one it didn't start. */
+private fun Intent.oauthOrNull(): String? =
+    data?.takeIf { action == Intent.ACTION_VIEW && it.scheme == "irchad" && it.host == "oauth" }?.toString()
 
 /** Material You: the wallpaper's palette (D41). */
 @Composable

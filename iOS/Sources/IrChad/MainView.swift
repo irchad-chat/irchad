@@ -150,6 +150,7 @@ private struct NetworkHeader: View {
     let onProfile: () -> Void
     @State private var leaving = false
     @State private var signingUp = false
+    @State private var settingPassword = false
 
     var body: some View {
         HStack {
@@ -170,6 +171,9 @@ private struct NetworkHeader: View {
                 if net.guest {
                     Button("Create an account…", systemImage: "person.badge.plus") { signingUp = true }
                 }
+                if net.discord {
+                    Button("Password for other IRC clients…", systemImage: "key") { settingPassword = true }
+                }
                 Button("Leave network…", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                     leaving = true
                 }
@@ -187,11 +191,61 @@ private struct NetworkHeader: View {
             Text("This device forgets the network, its messages and your password. Deleting the account also removes it and its channels from the server.")
         }
         .sheet(isPresented: $signingUp) { SignUpView(net: net) }
+        .sheet(isPresented: $settingPassword) { PasswordView(net: net) }
     }
 }
 
 /// A guest makes an account on `net`, keeping their channels. A failure
 /// comes back as a toast; an email code is asked for in the chat's banner.
+/// A password so other IRC clients can log in to a Discord account (D96).
+private struct PasswordView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let net: Network
+    @State private var password = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("Password (8 or more characters)", text: $password)
+                        .textContentType(.newPassword)
+                } footer: {
+                    Text("IrChad signs you in with Discord. Other IRC clients log in as \(net.nick) with this password.")
+                }
+                if let error {
+                    Section { Text(error).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("Password for other IRC clients")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Set") {
+                        busy = true
+                        error = nil
+                        model.client.setPassword(network: net.network, password: password)
+                    }
+                    .disabled(password.count < 8 || busy)
+                }
+            }
+        }
+        .onChange(of: model.passwordSet) { _, r in
+            guard let r, r.network == net.network else { return }
+            busy = false
+            if let e = r.error {
+                error = e
+            } else {
+                model.toast("Password set")
+                dismiss()
+            }
+        }
+    }
+}
+
 private struct SignUpView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss

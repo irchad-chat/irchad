@@ -131,7 +131,17 @@ struct StatusBanner: View {
         if let status = net.status {
             VStack(alignment: .leading, spacing: 8) {
                 Text(status).font(.callout)
-                if net.failed || net.needsCode {
+                if net.failed && net.discord {
+                    // No password to type: the browser again (D96).
+                    if let f = model.joinFailure, f.invite == net.network {
+                        Text(f.error).font(.callout).foregroundStyle(.red)
+                    }
+                    Button("Sign in with Discord") {
+                        model.joinFailure = nil
+                        model.discordStart(net.network)
+                    }
+                    .glassButton(prominent: true)
+                } else if net.failed || net.needsCode {
                     HStack {
                         Group {
                             if net.needsCode {

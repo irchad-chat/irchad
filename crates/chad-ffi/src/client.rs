@@ -167,6 +167,15 @@ impl Client {
                         result,
                     } => listener.sound(network, file, result.ok().map(|b| b.0.to_vec())),
                     Event::Reported { network } => listener.reported(network),
+                    Event::OpenUrl { url } => listener.open_url(url),
+                    Event::DiscordNeedsName {
+                        invite,
+                        suggestion,
+                        error,
+                    } => listener.discord_needs_name(invite, suggestion, error),
+                    Event::PasswordSet { network, result } => {
+                        listener.password_set(network, result.err())
+                    }
                     _ => {}
                 }
                 listener.changed();
@@ -206,6 +215,29 @@ impl Client {
     pub fn join_guest(&self, invite: String, nick: String) {
         let auth = Auth::Guest { nick };
         self.core.send(Command::Join { invite, auth });
+    }
+
+    /// "Sign in with Discord" (D96) for an invite, or for a `Network::discord`
+    /// that failed: `Listener::open_url`, then `discord_callback` with the
+    /// redirect, then maybe `Listener::discord_needs_name`. Failures come as
+    /// `Listener::join_failed`.
+    pub fn discord_start(&self, invite: String) {
+        self.core.send(Command::DiscordStart { invite });
+    }
+
+    /// An `irchad://oauth?...` URL the OS (or the auth session) handed the app.
+    pub fn discord_callback(&self, url: String) {
+        self.core.send(Command::DiscordCallback { url });
+    }
+
+    /// The account name for a first Discord sign-in.
+    pub fn discord_name(&self, name: String) {
+        self.core.send(Command::DiscordName { name });
+    }
+
+    /// The user closed the browser or the name prompt.
+    pub fn discord_cancel(&self) {
+        self.core.send(Command::DiscordCancel);
     }
 
     /// `Listener::notify` for every message (true), or only DMs and mentions.
@@ -590,6 +622,12 @@ impl Client {
         self.net(network, NetCommand::SignIn { password });
     }
 
+    /// A password for other IRC clients on a `Network::discord` account:
+    /// `Listener::password_set`.
+    pub fn set_password(&self, network: String, password: String) {
+        self.net(network, NetCommand::SetPassword { password });
+    }
+
     /// What a link says about itself, through chadd: `Listener::preview`.
     pub fn preview(&self, network: String, url: String) {
         self.net(network, NetCommand::Preview { url });
@@ -640,6 +678,7 @@ impl Client {
                     failed,
                     needs_code,
                     guest: n.info.guest,
+                    discord: n.info.discord,
                     gifs: n.info.gifs.clone(),
                     uploads: n.info.uploads,
                     receipts: n.info.receipts,

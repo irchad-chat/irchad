@@ -109,6 +109,9 @@ impl Listener for Nop {
     fn sounds(&self, _: String, _: Vec<Clip>, _: Option<String>) {}
     fn sound(&self, _: String, _: String, _: Option<Vec<u8>>) {}
     fn reported(&self, _: String) {}
+    fn open_url(&self, _: String) {}
+    fn discord_needs_name(&self, _: String, _: String, _: Option<String>) {}
+    fn password_set(&self, _: String, _: Option<String>) {}
 }
 impl Voice for Nop {
     fn join(&self, _: u64, _: String, _: String, _: Arc<Call>) {}

@@ -1,7 +1,10 @@
 package party.gentoo.irchad
 
 import android.app.Application
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -40,6 +43,10 @@ class IrChad : Application() {
     val verify = MutableStateFlow<Verify?>(null)
     /** The server took a report: say so until dismissed. */
     val reported = MutableStateFlow(false)
+    /** A first Discord sign-in waiting for an account name (D96). */
+    val discordName = MutableStateFlow<DiscordName?>(null)
+    /** (network, error) answering `Client.setPassword`; error null when it worked. */
+    val passwordSet = MutableSharedFlow<Pair<String, String?>>(extraBufferCapacity = 4)
 
     val calls by lazy { Calls(this) }
     val media by lazy { Media(this) }
@@ -107,6 +114,27 @@ class IrChad : Application() {
                 override fun reported(network: String) {
                     reported.value = true
                 }
+
+                // The Discord sign-in page: the browser's irchad://oauth redirect
+                // comes back through MainActivity (D96).
+                override fun openUrl(url: String) {
+                    val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    try {
+                        startActivity(view)
+                    } catch (_: ActivityNotFoundException) {
+                        notices.tryEmit("No browser to sign in with")
+                        client.discordCancel()
+                    }
+                }
+
+                override fun discordNeedsName(invite: String, suggestion: String, error: String?) {
+                    discordName.value = DiscordName(invite, suggestion, error)
+                }
+
+                override fun passwordSet(network: String, error: String?) {
+                    passwordSet.tryEmit(network to error)
+                }
             },
         ).also {
             notifier.started()
@@ -160,6 +188,8 @@ class IrChad : Application() {
 }
 
 data class Verify(val network: String, val nick: String, val state: Sas)
+
+data class DiscordName(val invite: String, val suggestion: String, val error: String?)
 
 /**
  * Passwords encrypted with an AES key that never leaves the Android Keystore,

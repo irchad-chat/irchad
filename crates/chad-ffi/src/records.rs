@@ -13,6 +13,9 @@ pub struct Network {
     /// Waiting for the code from the sign-up email (`verify`).
     pub needs_code: bool,
     pub guest: bool,
+    /// Signs in with Discord (D96): "sign in again" is `Client::discord_start`
+    /// with `network`, and there's no password to type.
+    pub discord: bool,
     /// Who GIF search comes from, if the network has it.
     pub gifs: Option<String>,
     /// Largest upload in bytes, if the network takes them.

@@ -63,6 +63,15 @@ pub trait Listener: Send + Sync {
     fn sound(&self, network: String, file: String, bytes: Option<Vec<u8>>);
     /// The server took a `Client::report`: say it was sent. A failure comes as `notice`.
     fn reported(&self, network: String);
+    /// Open this in the browser: the Discord sign-in page (D96). Its
+    /// `irchad://oauth` redirect goes to `Client::discord_callback`.
+    fn open_url(&self, url: String);
+    /// A first Discord sign-in: ask for the account name, prefilled with
+    /// `suggestion`, and answer with `Client::discord_name`. `error` says why
+    /// the last name didn't work.
+    fn discord_needs_name(&self, invite: String, suggestion: String, error: Option<String>);
+    /// The answer to `Client::set_password`: `None` when it worked.
+    fn password_set(&self, network: String, error: Option<String>);
 }
 
 /// A soundboard button (D37).
