@@ -764,6 +764,14 @@ impl Net {
             Some(v) if !dm => mention::decode(v, &text),
             _ => Vec::new(),
         };
+        let reply_to = head
+            .tag("+draft/reply")
+            .filter(|i| i.len() <= 128)
+            .map(str::to_owned);
+        // A reply to one of ours highlights like a mention, when we have the parent.
+        let to_us = (reply_to.as_deref())
+            .and_then(|id| self.store.get(id))
+            .is_some_and(|(_, p)| p.own);
         Some((
             target,
             ChatMessage {
@@ -778,10 +786,7 @@ impl Net {
                     .unwrap_or_else(time::now_ms),
                 account: head.tag("account").map(str::to_owned),
                 kind,
-                reply_to: head
-                    .tag("+draft/reply")
-                    .filter(|i| i.len() <= 128)
-                    .map(str::to_owned),
+                reply_to,
                 edits: head
                     .tag("+chad/edit")
                     .filter(|i| i.len() <= 128)
@@ -790,7 +795,7 @@ impl Net {
                 redacted: false,
                 edited: false,
                 reactions: Vec::new(),
-                mention: !own && (dm || self.mentioned(&text, &mentions)),
+                mention: !own && (dm || to_us || self.mentioned(&text, &mentions)),
                 own,
                 nick,
                 text,

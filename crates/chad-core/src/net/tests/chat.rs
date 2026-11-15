@@ -772,3 +772,23 @@ fn invite_sends_and_offers_only_our_own_invites() {
         .collect();
     assert_eq!(got, ["to alice #c", "from alice #secret"]);
 }
+
+#[test]
+fn replies_to_us_highlight() {
+    let mut n = net();
+    attach(&mut n, &["#c"]);
+    feed(&mut n, "@msgid=a :bob!u@h PRIVMSG #c :mine");
+    feed(&mut n, "@msgid=b :carol!u@h PRIVMSG #c :theirs");
+    events(&mut n);
+    feed(&mut n, "@msgid=r1;+draft/reply=a :alice!u@h PRIVMSG #c :ok");
+    feed(&mut n, "@msgid=r2;+draft/reply=b :alice!u@h PRIVMSG #c :ok");
+    feed(
+        &mut n,
+        "@msgid=r3;+draft/reply=gone :alice!u@h PRIVMSG #c :ok",
+    );
+    let hl: Vec<_> = messages(&events(&mut n))
+        .iter()
+        .map(|m| m.mention)
+        .collect();
+    assert_eq!(hl, [true, false, false]);
+}
