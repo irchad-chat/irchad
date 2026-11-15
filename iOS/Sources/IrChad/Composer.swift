@@ -77,7 +77,9 @@ struct Composer: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
         }
-        .background(.bar)
+        // Down through the keyboard's area too: with a hardware keyboard that's just the
+        // shortcut bar, and messages would scroll by in the gap.
+        .background { Rectangle().fill(.bar).ignoresSafeArea(edges: .bottom) }
         .onChange(of: draft) { _, d in
             let blank = d.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             model.client.typing(network: net.network, target: buf.target, active: !blank)
