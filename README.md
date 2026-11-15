@@ -5,7 +5,8 @@
 # IrChad
 
 **A Discord-style client for IRC, with voice, screen share and encrypted DMs.**<br>
-Paste an invite link and you're in. No server lists, no NickServ, and you host it yourself.
+Paste an invite link and you're in. No server lists, no NickServ, and you host it yourself.<br>
+Underneath it's plain IRCv3, so **your IRC client works too**: `ircs://irchad.chat:6697`
 
 [![Release](https://img.shields.io/gitea/v/release/sam/irchad-ng?gitea_url=https%3A%2F%2Fgit.gentoo.party&style=flat-square&label=release&labelColor=1e1e2e&color=a6e3a1)](https://git.gentoo.party/sam/irchad-ng/releases)
 [![CI](https://git.gentoo.party/sam/irchad-ng/actions/workflows/ci.yaml/badge.svg)](https://git.gentoo.party/sam/irchad-ng/actions?workflow=ci.yaml)
@@ -21,6 +22,7 @@ Paste an invite link and you're in. No server lists, no NickServ, and you host i
 [**Website**](https://irchad.chat) ·
 [**Try it in your browser**](https://irchad.chat/chat/) ·
 [**Install**](#install) ·
+[**Join from an IRC client**](#already-on-irc) ·
 [**Docs**](https://irchad.chat/docs) ·
 [**Host a network**](#host-a-network) ·
 [**Chat with us**](#community)
@@ -85,6 +87,34 @@ One compose file runs ergo, LiveKit and chadd behind Caddy, on your own server. 
 </table>
 
 Also: replies, reactions and typing indicators, server-side history with synced read markers, an emoji picker and GIF search, uploads and link previews, a soundboard, per-app audio in screen shares, several networks at once, and a game overlay. The [website](https://irchad.chat/#all-features) has the full table.
+
+## Already on IRC?
+
+An IrChad network **is an IRC network**. It's a stock [ergo](https://github.com/ergochat/ergo) server, with no bridge, no gateway and no proprietary protocol in the way. You don't need our client to be here.
+
+Point WeeChat, irssi, HexChat, Halloy, gamja, goguma or anything else at the official network:
+
+```
+/connect irchad.chat 6697 -tls
+/join #general
+```
+
+| | |
+|---|---|
+| **Address** | `ircs://irchad.chat:6697` (TLS only) |
+| **WebSocket** | `wss://irchad.chat/irc` (subprotocol `text.ircv3.net`) |
+| **Home channel** | `#general` |
+| **Accounts** | SASL PLAIN; register with NickServ or `draft/account-registration` |
+| **IRCv3** | `draft/chathistory`, `draft/persistence` (always-on, no bouncer needed), `draft/multiline`, `draft/read-marker`, `message-tags`, `echo-message`, `labeled-response` and the rest of what ergo offers |
+
+What to expect from a plain client:
+
+- **You're a first-class user.** IrChad users and IRC users sit in the same channels and see the same messages. Not degrading IRC for IRC clients is a hard rule of the project.
+- **IrChad's extras degrade to readable text.** They ride in `+chad/…` client tags and `chad/…` metadata, with a text fallback, so you never get a channel full of garbage.
+- **Voice, screen share and encrypted DMs need the IrChad client.** Those run over LiveKit and Olm, which IRC doesn't carry.
+- **Admins live in IRC.** There is no admin UI; networks are run with `/mode`, `/msg ChanServ` and `METADATA` from a normal client.
+
+It works the other way round, too: IrChad is a regular IRC client. Its **Classic IRC** tab connects to Libera.Chat, Rizon, EFnet or any other `ircs://host:port` with SASL or NickServ, just without the voice and upload extras that need an IrChad network behind them.
 
 ## Install
 
@@ -165,7 +195,7 @@ It's one Cargo workspace (Rust, edition 2024). The desktop UI is egui on wgpu, I
 ## Community
 
 - **IRC:** [`#irchad` on Libera.Chat](https://web.libera.chat/#irchad) (`ircs://irc.libera.chat:6697/#irchad`)
-- **The official IrChad network:** [get the app and join](https://irchad.chat/invite), or [join in your browser](https://irchad.chat/chat/)
+- **The official IrChad network:** [get the app and join](https://irchad.chat/invite), [join in your browser](https://irchad.chat/chat/), or connect any IRC client to `ircs://irchad.chat:6697` and `/join #general`
 - **Source and issues:** [git.gentoo.party/sam/irchad-ng](https://git.gentoo.party/sam/irchad-ng)
 
 ## License
