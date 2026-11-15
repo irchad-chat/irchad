@@ -54,8 +54,5 @@ echo "built $out"
 if $upload; then
     # shellcheck source=/dev/null
     . "$signing/asc.env"
-    # Transporter looks for AuthKey_<id>.p8 in ~/.appstoreconnect/private_keys.
-    mkdir -p "$HOME/.appstoreconnect/private_keys"
-    cp -n "$signing/AuthKey_$ASC_KEY_ID.p8" "$HOME/.appstoreconnect/private_keys/" || true
-    iTMSTransporter -m upload -assetFile "$out" -apiKey "$ASC_KEY_ID" -apiIssuer "$ASC_ISSUER_ID" -v informational
+    python3 -I "$here/upload.py" "$out" "$ASC_KEY_ID" "$ASC_ISSUER_ID" "$signing/AuthKey_$ASC_KEY_ID.p8"
 fi

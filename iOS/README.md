@@ -25,7 +25,7 @@ It writes `rust/`, `Sources/IrChad/Generated/` and `Sources/chad_ffiFFI/include/
 The bundle ID is `chat.irchad.IrChad`, on team `8YBK7EUM7W`.
 xtool 1.24 only signs for development, so `./release.sh` builds a release with xtool and then finishes the bundle as Xcode would (`finish-app.py`).
 It adds the DT* keys and the SDK version in the binary, and signs with `rcodesign` (`cargo install apple-codesign`).
-`./release.sh --upload` also sends the `.ipa` to App Store Connect with Apple's Transporter (`iTMSTransporter`).
+`./release.sh --upload` also sends the `.ipa` to App Store Connect through its Build Uploads API (`upload.py`); Transporter on Linux refuses without a Mac-made `AppStoreInfo.plist`.
 
 Signing material lives outside the repo, in `~/irchad-signing/` (override with `SIGNING=`):
 `dist.key` and `dist.pem` (the Apple Distribution key and certificate), the App Store `.mobileprovision`,

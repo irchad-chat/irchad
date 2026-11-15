@@ -5,9 +5,9 @@
 	<key>CFBundleDisplayName</key>
 	<string>IrChad</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.31</string>
+	<string>0.1.39</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.31</string>
+	<string>0.1.39</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -19,6 +19,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>IrChad doesn't use the camera; the voice library it's built on includes video support.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Voice channels send your microphone to the people in them.</string>
 	<key>UIBackgroundModes</key>

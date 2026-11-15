@@ -26,7 +26,7 @@ Decisions: D58 (TLS roots), D59 (shape of the app), D60 (notifications while sus
   - [x] `PrivacyInfo.xcprivacy` (UserDefaults, file timestamps, disk space; account ID, messages, media and other content for app functionality).
   - [x] `iOS/release.sh` + `finish-app.py`: xtool can't sign for distribution, writes no DT* keys and stamps the deployment target as the SDK version (xtool #351), so the script fixes these and signs with rcodesign.
   - [ ] `iOS/icon/`: Assets.car built once on a Mac with `actool` (no Linux compiler that App Store processing accepts yet).
-  - [ ] Install Transporter for Linux and do a first TestFlight upload; answer export compliance there, then set `ITSAppUsesNonExemptEncryption`.
+  - [ ] First TestFlight upload (`upload.py`, Build Uploads API, since Transporter on Linux needs a Mac-made AppStoreInfo.plist); answer export compliance there, then set `ITSAppUsesNonExemptEncryption`.
 - [ ] CI: no job builds iOS. The CI image would need Swift and xtool's SDK, which comes out of Xcode's `.xip`.
 
 ## Done when
