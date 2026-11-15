@@ -1,6 +1,7 @@
 import AVFoundation
 import SwiftUI
 
+
 /// A new header after this much quiet, even from the same person.
 private let groupGapMs: Int64 = 5 * 60 * 1000
 
@@ -26,7 +27,7 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 StatusBanner(net: net)
                 if buf.encryption == .changed { KeysChanged(net: net, buf: buf) }
-                MessageList(net: net, buf: buf, replyTo: $replyTo, editing: $editing)
+                MessageList(net: net, buf: buf, replyTo: $replyTo, editing: $editing, openDm: openDm(net))
             }
             .bottomBar {
                 Composer(net: net, buf: buf, replyTo: $replyTo, editing: $editing)
@@ -35,11 +36,7 @@ struct ChatView: View {
             .navigationBarTitleDisplayMode(.inline)
             // A column when there's room, a sheet when not (Split View, Slide Over, phones).
             .inspector(isPresented: membersShown(buf)) {
-                MembersSheet(net: net, channel: buf.target) { nick in
-                    members = false
-                    model.client.openDm(network: net.network, nick: nick)
-                    select(Sel(network: net.network, target: nick))
-                }
+                MembersSheet(net: net, channel: buf.target, open: openDm(net))
                 .inspectorColumnWidth(min: 200, ideal: 260, max: 360)
             }
             .task(id: "\(buf.unread) \(phase == .active)") {
@@ -88,6 +85,14 @@ struct ChatView: View {
                 Button { membersShown(buf).wrappedValue.toggle() } label: { Image(systemName: "person.2") }
                     .accessibilityLabel("Members")
             }
+        }
+    }
+
+    private func openDm(_ net: Network) -> (String) -> Void {
+        { nick in
+            members = false
+            model.client.openDm(network: net.network, nick: nick)
+            select(Sel(network: net.network, target: nick))
         }
     }
 
@@ -181,7 +186,16 @@ private struct MessageList: View {
     let buf: Buffer
     @Binding var replyTo: Message?
     @Binding var editing: Message?
+    let openDm: (String) -> Void
     @State private var reactTo: String?
+    /// Whose profile card is up.
+    @State private var card: String?
+    /// Scrolled up far enough to offer a way back down.
+    @State private var away = false
+    @State private var scroller = ScrollerRef()
+    /// Jumping to the end: rows measured after it lands (previews, images) push
+    /// the end further down, so it follows the end until the user drags.
+    @State private var chase = false
     /// A reply's parent asked for with `loadAround`, to scroll to once loaded.
     @State private var jump: String?
 
@@ -211,6 +225,7 @@ private struct MessageList: View {
                             network: net.network, m: m, head: head, dm: buf.dm, ownNick: net.nick,
                             parent: m.replyTo.flatMap { byId[$0] },
                             onParent: { id in
+                                chase = false
                                 if byId[id] != nil {
                                     withAnimation { proxy.scrollTo(id, anchor: .center) }
                                 } else {
@@ -221,16 +236,47 @@ private struct MessageList: View {
                             onReply: { replyTo = m; editing = nil },
                             onEdit: { editing = m; replyTo = nil },
                             onReact: { reactTo = m.msgid },
+                            onProfile: { card = m.nick },
                             target: buf.target,
                             seenAt: m.msgid != nil && m.msgid == buf.seen ? buf.seenAt : nil
                         )
                     }
                 }
                 .padding(.bottom, 8)
+                .background(ScrollerFinder(ref: scroller))
             }
             .defaultScrollAnchor(.bottom)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
+            .onScrollGeometryChange(for: CGFloat.self) { g in
+                g.contentSize.height - g.visibleRect.maxY
+            } action: { _, left in
+                if (left > 300) != away { withAnimation(.smooth(duration: 0.2)) { away = left > 300 } }
+                if chase && left > 1 { toBottom() }
+            }
+            .onScrollPhaseChange { _, p in
+                // Not `.tracking`: tapping the chip mid-fling touches the scroll view too.
+                if p == .interacting { chase = false }
+            }
+            .overlay(alignment: .bottom) {
+                if away {
+                    Button {
+                        chase = true
+                        toBottom()
+                    } label: {
+                        HStack(spacing: 6) { Text("Jump to latest"); Image(systemName: "arrow.down") }
+                            .font(.callout.weight(.medium))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            // A plain button only takes taps where it draws: make the whole pill count.
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .glass(in: Capsule(), fallback: AnyShapeStyle(.regularMaterial))
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85, anchor: .bottom)))
+                }
+            }
             .onChange(of: msgs.count) { _, _ in
                 if let j = jump, byId[j] != nil {
                     jump = nil
@@ -261,6 +307,19 @@ private struct MessageList: View {
                 reactTo = nil
             }, onGif: { _ in })
         }
+        .sheet(item: Binding(get: { card.map(IdBox.init) }, set: { card = $0?.id })) { c in
+            ProfileCard(net: net, channel: buf.target, nick: c.id,
+                        account: msgs.last { $0.nick == c.id }?.account, openDm: openDm)
+        }
+    }
+
+    /// Straight to the end of the content as measured right now. SwiftUI's own
+    /// jump loses to a fling and does nothing when asked twice for the same edge.
+    private func toBottom() {
+        guard let sv = scroller.view else { return }
+        let inset = sv.adjustedContentInset
+        let y = max(-inset.top, sv.contentSize.height + inset.bottom - sv.bounds.height)
+        sv.setContentOffset(CGPoint(x: sv.contentOffset.x, y: y), animated: false)
     }
 
     private func typing(_ text: String) -> some View {
@@ -292,6 +351,7 @@ struct MessageRow: View {
     let onReply: () -> Void
     let onEdit: () -> Void
     let onReact: () -> Void
+    let onProfile: () -> Void
     let target: String
     /// When they read up to this message, if "Seen" goes under it (D68).
     let seenAt: Int64?
@@ -302,6 +362,7 @@ struct MessageRow: View {
             Rectangle().fill(highlight ? Color.accentColor : .clear).frame(width: 3)
             if head {
                 Avatar(network: network, nick: m.nick, url: m.avatar)
+                    .onTapGesture(perform: onProfile)
             } else {
                 Color.clear.frame(width: 36, height: 1)
             }
@@ -321,7 +382,11 @@ struct MessageRow: View {
                 }
                 if head {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(m.shown).fontWeight(.semibold).foregroundStyle(nickColor(m.nick, dark: scheme == .dark))
+                        Button(action: onProfile) {
+                            Text(m.shown).fontWeight(.semibold).foregroundStyle(nickColor(m.nick, dark: scheme == .dark))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Shows their profile")
                         Text(Date(timeIntervalSince1970: TimeInterval(m.time) / 1000), style: .time)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -554,7 +619,7 @@ extension Color {
 }
 
 /// Someone's activity, with its track's progress ticking under it.
-private struct ActivityLine: View {
+struct ActivityLine: View {
     let text: String
     let music: Music?
 
@@ -583,7 +648,7 @@ private struct ActivityLine: View {
     }
 }
 
-/// One member in the sheet: tap to DM, long press for their song's link.
+/// One member in the list: tap for their profile card.
 private struct MemberRow: View {
     @Environment(AppModel.self) private var model
     let net: Network
@@ -593,9 +658,8 @@ private struct MemberRow: View {
     var body: some View {
         let _ = model.tick // profiles change without the member changing
         let p = model.client.profile(network: net.network, nick: m.nick)
-        let link: URL? = p.music?.url.flatMap { URL(string: $0) }
         Button {
-            if m.nick.lowercased() != net.nick.lowercased() { open(m.nick) }
+            open(m.nick)
         } label: {
             HStack(spacing: 12) {
                 Avatar(network: net.network, nick: m.nick, url: p.avatar)
@@ -618,12 +682,6 @@ private struct MemberRow: View {
             }
         }
         .buttonStyle(.plain)
-        // Tapping the row opens a DM, so the song link is a long press away.
-        .contextMenu {
-            if let link {
-                SwiftUI.Link(destination: link) { Label("Open link", systemImage: "link") }
-            }
-        }
     }
 }
 
@@ -632,6 +690,7 @@ private struct MembersSheet: View {
     let net: Network
     let channel: String
     let open: (String) -> Void
+    @State private var card: String?
 
     var body: some View {
         let _ = model.tick
@@ -644,7 +703,7 @@ private struct MembersSheet: View {
                         if !group.isEmpty {
                             Section("\(away ? "Away" : "Online") — \(group.count)") {
                                 ForEach(group, id: \.nick) { m in
-                                    MemberRow(net: net, m: m, open: open)
+                                    MemberRow(net: net, m: m) { card = $0 }
                                 }
                             }
                         }
@@ -657,5 +716,33 @@ private struct MembersSheet: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium, .large])
+        .sheet(item: Binding(get: { card.map(IdBox.init) }, set: { card = $0?.id })) { c in
+            ProfileCard(net: net, channel: channel, nick: c.id, openDm: open)
+        }
+    }
+}
+
+/// The UIScrollView behind a SwiftUI ScrollView, for what SwiftUI can't do.
+final class ScrollerRef {
+    weak var view: UIScrollView?
+}
+
+/// Put in a ScrollView's content: finds the UIScrollView it sits in.
+struct ScrollerFinder: UIViewRepresentable {
+    let ref: ScrollerRef
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.isUserInteractionEnabled = false
+        return v
+    }
+
+    func updateUIView(_ v: UIView, context: Context) {
+        // Not in the hierarchy until the next turn of the run loop.
+        DispatchQueue.main.async {
+            var s = v.superview
+            while let x = s, !(x is UIScrollView) { s = x.superview }
+            ref.view = s as? UIScrollView
+        }
     }
 }
