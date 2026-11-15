@@ -355,6 +355,10 @@ struct MessageRow: View {
     let target: String
     /// When they read up to this message, if "Seen" goes under it (D68).
     let seenAt: Int64?
+    /// Swipe right to left to reply. `horizontal` is decided by the first movement, so scrolling never swipes;
+    /// a `GestureState` springs back on its own even when the scroll view takes the touch.
+    @GestureState(resetTransaction: Transaction(animation: .snappy)) private var swipe: (horizontal: Bool?, x: CGFloat) = (nil, 0)
+    private let reach: CGFloat = 64
 
     var body: some View {
         let highlight = m.mention && !dm
@@ -418,8 +422,30 @@ struct MessageRow: View {
         .padding(.top, head ? 10 : 1)
         .padding(.bottom, 1)
         .background(highlight ? Color.accentColor.opacity(0.08) : .clear)
+        .offset(x: swipe.x)
+        .background(alignment: .trailing) {
+            if swipe.x < 0 {
+                Image(systemName: "arrowshape.turn.up.left.fill")
+                    .foregroundStyle(.secondary)
+                    .opacity(min(1, -swipe.x / reach))
+                    .padding(.trailing, 20)
+            }
+        }
         .contentShape(Rectangle())
+        .simultaneousGesture(swipeToReply, including: m.msgid != nil && !m.redacted ? .all : .subviews)
+        .sensoryFeedback(.impact, trigger: swipe.x <= -reach) { _, past in past }
         .contextMenu { menu }
+    }
+
+    private var swipeToReply: some Gesture {
+        DragGesture(minimumDistance: 15)
+            .updating($swipe) { v, s, _ in
+                if s.horizontal == nil { s.horizontal = abs(v.translation.width) > abs(v.translation.height) }
+                if s.horizontal == true { s.x = min(0, max(-reach, v.translation.width)) }
+            }
+            .onEnded { v in
+                if abs(v.translation.width) > abs(v.translation.height) && v.translation.width <= -reach { onReply() }
+            }
     }
 
     /// The text without links to images that show inline.

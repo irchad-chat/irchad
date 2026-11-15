@@ -155,6 +155,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import party.gentoo.irchad.core.Buffer
 import party.gentoo.irchad.core.Link
 import party.gentoo.irchad.core.Lock
@@ -947,6 +958,7 @@ private fun Log(
                             if (r.nicks.any { it.equals(net.nick, true) }) c.unreact(net.network, buf.target, id, r.emoji)
                             else c.react(net.network, buf.target, id, r.emoji)
                         },
+                        onReply = if (m.msgid != null && !m.redacted) ({ onReply(m) }) else null,
                     )
                     DropdownMenu(expanded = menu?.key == m.key, onDismissRequest = { menu = null }) {
                         if (m.msgid != null && !m.redacted) {
@@ -1031,109 +1043,146 @@ private fun Log(
 private fun MessageRow(
     app: IrChad, network: String, own: String, m: Message, head: Boolean, dm: Boolean, parent: Message?,
     seenAt: Long?, onLong: () -> Unit, onParent: () -> Unit, onReact: (Reaction) -> Unit,
+    onReply: (() -> Unit)?,
 ) {
     val time = remember(m.time) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(m.time)) }
     val bar = if (m.mention && !dm) MaterialTheme.colorScheme.primary else Color.Transparent
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = {}, onLongClick = onLong)
-            .background(if (m.mention && !dm) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
-            .padding(start = 0.dp, end = 16.dp, top = if (head) 10.dp else 1.dp, bottom = 1.dp),
-    ) {
-        Box(Modifier.width(3.dp).size(3.dp, 20.dp).background(bar))
-        Spacer(Modifier.width(9.dp))
-        if (head) Avatar(app, network, m.nick, m.avatar, 40.dp) else Spacer(Modifier.width(40.dp))
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            if (m.replyTo != null) {
-                Text(
-                    "↪ " + (parent?.let { p -> "${p.shown}: " + (if (p.redacted) "Message deleted" else p.text) }
-                        ?: "Replying to an earlier message"),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable(onClickLabel = "Jump to the message", onClick = onParent),
-                )
-            }
-            if (head) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(m.shown, fontWeight = FontWeight.SemiBold, color = nickColor(m.nick))
-                    Spacer(Modifier.width(8.dp))
-                    Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (m.encrypted) {
-                        Icon(Icons.Default.Lock, "Encrypted", Modifier.padding(start = 4.dp).size(12.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-            val faint = MaterialTheme.colorScheme.onSurfaceVariant
-            val inline = emojiInline(
-                app, network,
-                remember(m.spans, m.reactions) { m.spans.mapNotNull { it.emoji } + m.reactions.mapNotNull { it.image } },
+    // Swipe right to left to reply: the row follows the finger up to `reach`, and letting go past it replies.
+    val swipe = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val reach = with(LocalDensity.current) { 64.dp.toPx() }
+    Box(Modifier.fillMaxWidth()) {
+        if (swipe.value < 0f) {
+            Text(
+                "↩",
+                fontSize = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 20.dp)
+                    .alpha((-swipe.value / reach).coerceIn(0f, 1f)),
             )
-            val hidden = shownImages(app, network, m)
-            val spans = remember(m.spans, hidden) {
-                if (hidden.isEmpty()) m.spans
-                else m.spans.filterNot { it.link && it.text in hidden }
-                    .dropWhile { it.text.isBlank() }.dropLastWhile { it.text.isBlank() }
-            }
-            when {
-                m.redacted -> Text("Message deleted", fontStyle = FontStyle.Italic, color = faint)
-                m.undecryptable -> Text("Couldn't decrypt this message.", fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.error)
-                m.action -> Text(
-                    styled(spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} ", emoji = inline.keys),
-                    fontStyle = FontStyle.Italic,
-                    inlineContent = inline,
-                )
-                // Nothing but shown images: no empty line above them.
-                spans.isEmpty() && m.spans.isNotEmpty() -> {}
-                else -> Text(
-                    styled(spans, MaterialTheme.colorScheme.primary, emoji = inline.keys),
-                    color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
-                    inlineContent = inline,
-                )
-            }
-            if (m.edited && !m.redacted) Text("(edited)", style = MaterialTheme.typography.labelSmall, color = faint)
-            MessageLinks(app, network, m)
-            m.failed?.let { Text("Not sent: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
-            if (m.reactions.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
-                    for (r in m.reactions) {
-                        val mine = r.nicks.any { it.equals(own, true) }
-                        Text(
-                            // A custom emoji's image, or its `:name:` until that has loaded.
-                            buildAnnotatedString {
-                                val image = r.image
-                                if (image != null && image in inline) appendInlineContent(image, r.emoji) else append(r.emoji)
-                                append(" ${r.nicks.size}")
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(swipe.value.roundToInt(), 0) }
+                .then(
+                    if (onReply == null) Modifier
+                    else Modifier.pointerInput(m.key) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (swipe.value <= -reach) onReply()
+                                scope.launch { swipe.animateTo(0f) }
                             },
-                            inlineContent = inline,
-                            // Discord's size: 28 tall, an 18 emoji (1.4em), about 50 wide.
-                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (mine) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                )
-                                .clickable(
-                                    enabled = m.msgid != null,
-                                    onClickLabel = if (mine) "Take back ${r.emoji}" else "React ${r.emoji}",
-                                ) { onReact(r) }
-                                .semantics { contentDescription = "${r.emoji} from ${r.nicks.joinToString(", ")}" }
-                                .height(28.dp)
-                                .wrapContentHeight(Alignment.CenterVertically)
-                                .padding(horizontal = 8.dp),
-                        )
+                            onDragCancel = { scope.launch { swipe.animateTo(0f) } },
+                        ) { change, dx ->
+                            change.consume()
+                            val next = (swipe.value + dx).coerceIn(-reach, 0f)
+                            if (next <= -reach && swipe.value > -reach) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            scope.launch { swipe.snapTo(next) }
+                        }
+                    },
+                )
+                .combinedClickable(onClick = {}, onLongClick = onLong)
+                .background(if (m.mention && !dm) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                .padding(start = 0.dp, end = 16.dp, top = if (head) 10.dp else 1.dp, bottom = 1.dp),
+        ) {
+            Box(Modifier.width(3.dp).size(3.dp, 20.dp).background(bar))
+            Spacer(Modifier.width(9.dp))
+            if (head) Avatar(app, network, m.nick, m.avatar, 40.dp) else Spacer(Modifier.width(40.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                if (m.replyTo != null) {
+                    Text(
+                        "↪ " + (parent?.let { p -> "${p.shown}: " + (if (p.redacted) "Message deleted" else p.text) }
+                            ?: "Replying to an earlier message"),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable(onClickLabel = "Jump to the message", onClick = onParent),
+                    )
+                }
+                if (head) {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(m.shown, fontWeight = FontWeight.SemiBold, color = nickColor(m.nick))
+                        Spacer(Modifier.width(8.dp))
+                        Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (m.encrypted) {
+                            Icon(Icons.Default.Lock, "Encrypted", Modifier.padding(start = 4.dp).size(12.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
-            }
-            if (seenAt != null) {
-                val at = remember(seenAt) {
-                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(seenAt))
+                val faint = MaterialTheme.colorScheme.onSurfaceVariant
+                val inline = emojiInline(
+                    app, network,
+                    remember(m.spans, m.reactions) { m.spans.mapNotNull { it.emoji } + m.reactions.mapNotNull { it.image } },
+                )
+                val hidden = shownImages(app, network, m)
+                val spans = remember(m.spans, hidden) {
+                    if (hidden.isEmpty()) m.spans
+                    else m.spans.filterNot { it.link && it.text in hidden }
+                        .dropWhile { it.text.isBlank() }.dropLastWhile { it.text.isBlank() }
                 }
-                Text("Seen $at", style = MaterialTheme.typography.labelSmall, color = faint, modifier = Modifier.padding(top = 2.dp))
+                when {
+                    m.redacted -> Text("Message deleted", fontStyle = FontStyle.Italic, color = faint)
+                    m.undecryptable -> Text("Couldn't decrypt this message.", fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.error)
+                    m.action -> Text(
+                        styled(spans, MaterialTheme.colorScheme.primary, prefix = "* ${m.shown} ", emoji = inline.keys),
+                        fontStyle = FontStyle.Italic,
+                        inlineContent = inline,
+                    )
+                    // Nothing but shown images: no empty line above them.
+                    spans.isEmpty() && m.spans.isNotEmpty() -> {}
+                    else -> Text(
+                        styled(spans, MaterialTheme.colorScheme.primary, emoji = inline.keys),
+                        color = if (m.pending) faint else if (m.notice) faint else Color.Unspecified,
+                        inlineContent = inline,
+                    )
+                }
+                if (m.edited && !m.redacted) Text("(edited)", style = MaterialTheme.typography.labelSmall, color = faint)
+                MessageLinks(app, network, m)
+                m.failed?.let { Text("Not sent: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
+                if (m.reactions.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 2.dp)) {
+                        for (r in m.reactions) {
+                            val mine = r.nicks.any { it.equals(own, true) }
+                            Text(
+                                // A custom emoji's image, or its `:name:` until that has loaded.
+                                buildAnnotatedString {
+                                    val image = r.image
+                                    if (image != null && image in inline) appendInlineContent(image, r.emoji) else append(r.emoji)
+                                    append(" ${r.nicks.size}")
+                                },
+                                inlineContent = inline,
+                                // Discord's size: 28 tall, an 18 emoji (1.4em), about 50 wide.
+                                style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (mine) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surfaceVariant,
+                                    )
+                                    .clickable(
+                                        enabled = m.msgid != null,
+                                        onClickLabel = if (mine) "Take back ${r.emoji}" else "React ${r.emoji}",
+                                    ) { onReact(r) }
+                                    .semantics { contentDescription = "${r.emoji} from ${r.nicks.joinToString(", ")}" }
+                                    .height(28.dp)
+                                    .wrapContentHeight(Alignment.CenterVertically)
+                                    .padding(horizontal = 8.dp),
+                            )
+                        }
+                    }
+                }
+                if (seenAt != null) {
+                    val at = remember(seenAt) {
+                        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(seenAt))
+                    }
+                    Text("Seen $at", style = MaterialTheme.typography.labelSmall, color = faint, modifier = Modifier.padding(top = 2.dp))
+                }
             }
         }
     }
@@ -1253,6 +1302,9 @@ private fun Composer(
     val draft = rememberSaveable(net.network, buf.target, saver = TextFieldState.Saver) { TextFieldState() }
     // Nicks picked from the `@` list, sent as `+chad/mentions` (D66).
     var picked by remember(net.network, buf.target) { mutableStateOf(listOf<String>()) }
+    // Starting a reply (or an edit) brings up the keyboard, like iOS.
+    val field = remember { FocusRequester() }
+    LaunchedEffect(replyTo?.key) { if (replyTo != null) field.requestFocus() }
     // Editing starts from the message's text, without its formatting (like desktop).
     LaunchedEffect(editing?.key) {
         editing?.let {
@@ -1416,7 +1468,7 @@ private fun Composer(
                 unfocusedIndicatorColor = Color.Transparent,
             ),
             // Keyboard GIFs, stickers and pasted images upload like attachments.
-            modifier = Modifier.weight(1f).contentReceiver { t ->
+            modifier = Modifier.weight(1f).focusRequester(field).contentReceiver { t ->
                 if (!t.hasMediaType(MediaType.Image)) return@contentReceiver t
                 val uris = mutableListOf<android.net.Uri>()
                 val rest = t.consume { item -> item.uri?.also { uris += it } != null }
