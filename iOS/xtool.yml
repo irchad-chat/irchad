@@ -7,3 +7,5 @@ resources:
   # Phosphor's discord-logo (MIT), white, 20 pt: loose files, since asset catalogs need actool.
   - images/discord-logo@2x.png
   - images/discord-logo@3x.png
+  # The app icon again (crates/chad-desktop/assets/icon.png), for the welcome cards.
+  - images/logo.png

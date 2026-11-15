@@ -76,6 +76,8 @@ pub struct App {
     join: Option<JoinDialog>,
     /// The first-launch card on screen.
     welcome_card: usize,
+    /// The app icon, for the first-launch cards.
+    logo: Option<egui::TextureHandle>,
     verify_code: String,
     signin_password: String,
     verify_dismissed: Option<String>,
@@ -513,6 +515,7 @@ impl App {
             settings_section: settings::Section::default(),
             join: None,
             welcome_card: 0,
+            logo: None,
             verify_code: String::new(),
             signin_password: String::new(),
             verify_dismissed: None,
@@ -844,9 +847,19 @@ impl App {
         let at = self.welcome_card.min(last);
         let card = &cards[at];
         let mut done = false;
+        let logo = self.logo.get_or_insert_with(|| {
+            let icon = platform::window_icon();
+            let size = [icon.width as usize, icon.height as usize];
+            let image = egui::ColorImage::from_rgba_unmultiplied(size, &icon.rgba);
+            ui.ctx()
+                .load_texture("logo", image, egui::TextureOptions::LINEAR)
+        });
+        let logo = egui::Image::new((logo.id(), egui::Vec2::splat(96.0)));
         ui.vertical_centered(|ui| {
-            ui.add_space(ui.available_height() / 3.0);
+            ui.add_space(ui.available_height() / 4.0);
             ui.set_max_width(420.0);
+            ui.add(logo);
+            ui.add_space(12.0);
             ui.label(RichText::new(card.title).heading().size(26.0));
             ui.add_space(8.0);
             ui.label(RichText::new(card.body).size(16.0));

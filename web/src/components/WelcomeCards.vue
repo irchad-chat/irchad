@@ -2,6 +2,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { welcomeCards } from '../wasm/chad_web'
+// A copy of packaging/linux/party.gentoo.IrChad.svg.
+import logo from '../assets/logo.svg'
 
 const emit = defineEmits<{ done: [] }>()
 const cards = welcomeCards()
@@ -12,6 +14,7 @@ const next = () => (last.value ? emit('done') : at.value++)
 
 <template>
   <section class="welcome stack">
+    <img class="logo" :src="logo" alt="" width="88" height="88" />
     <h1>{{ cards[at]?.title }}</h1>
     <p class="dim">{{ cards[at]?.body }}</p>
     <p class="dots dim" role="img" :aria-label="`Step ${at + 1} of ${cards.length}`">
@@ -28,6 +31,9 @@ const next = () => (last.value ? emit('done') : at.value++)
 <style scoped>
 .welcome {
   text-align: center;
+}
+.logo {
+  margin: 0 auto;
 }
 .welcome > p {
   margin: 0;

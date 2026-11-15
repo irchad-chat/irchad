@@ -1,5 +1,10 @@
 package party.gentoo.irchad
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.colorResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -331,6 +336,15 @@ fun WelcomeScreen(onDone: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(Modifier.size(48.dp))
+            // The launcher icon, drawn the way the launcher does.
+            Image(
+                painterResource(R.drawable.ic_launcher_foreground),
+                contentDescription = null,
+                Modifier
+                    .size(96.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(colorResource(R.color.launcher_bg)),
+            )
             Text(card.title, style = MaterialTheme.typography.headlineMedium, textAlign = TextAlign.Center)
             Text(
                 card.body,

@@ -273,6 +273,10 @@ struct WelcomeView: View {
         let last = at >= cards.count - 1
         VStack(spacing: 16) {
             Spacer()
+            Image(uiImage: UIImage(named: "logo") ?? UIImage())
+                .resizable()
+                .frame(width: 88, height: 88)
+                .accessibilityHidden(true)
             if cards.indices.contains(at) {
                 Text(cards[at].title).font(.title.bold()).multilineTextAlignment(.center)
                 Text(cards[at].body).font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)

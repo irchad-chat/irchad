@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- IrChad logo: a speech bubble with an IRC "#". Catppuccin Mocha base and green. -->
+  <rect width="256" height="256" rx="56" fill="#1e1e2e"/>
+  <g transform="translate(13 8.4) scale(1.15)">
+    <rect x="26" y="30" width="148" height="118" rx="34" fill="#a6e3a1"/>
+    <path d="M60 140 L46 178 L100 146 Z" fill="#a6e3a1"/>
+    <path d="M90 56 L80 124 M124 56 L114 124 M62 78 L142 78 M58 104 L138 104" stroke="#1e1e2e" stroke-width="13" stroke-linecap="round" fill="none"/>
+  </g>
+</svg>
