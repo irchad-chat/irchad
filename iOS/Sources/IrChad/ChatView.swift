@@ -103,7 +103,7 @@ struct ChatView: View {
 }
 
 /// Connecting, reconnecting, a failed login, or a sign-up waiting on its code.
-private struct StatusBanner: View {
+struct StatusBanner: View {
     @Environment(AppModel.self) private var model
     let net: Network
     @State private var input = ""
@@ -224,7 +224,8 @@ private struct MessageList: View {
                 }
             }
         }
-        .overlay(alignment: .bottomLeading) {
+        // An inset, not an overlay: the list makes room instead of hiding its last message.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if !buf.typing.isEmpty {
                 let who = buf.typing
                 Text(who.count == 1 ? "\(who[0]) is typing…"
@@ -233,6 +234,7 @@ private struct MessageList: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.background)
             }
         }

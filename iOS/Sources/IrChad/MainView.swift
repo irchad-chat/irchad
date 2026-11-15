@@ -100,12 +100,15 @@ struct MainView: View {
                     get: { !collapsed.contains(n.network) },
                     set: { if $0 { collapsed.remove(n.network) } else { collapsed.insert(n.network) } }
                 )) {
-                    if let status = n.status {
+                    let bufs = model.client.buffers(network: n.network)
+                    // No conversation to show the banner in yet (fresh sign-up): ask here.
+                    if bufs.isEmpty && (n.failed || n.needsCode) {
+                        StatusBanner(net: n)
+                    } else if let status = n.status {
                         Label(status, systemImage: n.failed ? "exclamationmark.triangle" : "arrow.triangle.2.circlepath")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    let bufs = model.client.buffers(network: n.network)
                     ForEach(bufs, id: \.target) { b in
                         BufferRow(net: n, buf: b)
                             .tag(Sel(network: n.network, target: b.target))
