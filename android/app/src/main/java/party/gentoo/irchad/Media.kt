@@ -159,8 +159,23 @@ class Media(private val app: IrChad) {
 
     sealed interface Img {
         data object Loading : Img
-        /** `bytes`: what it holds in memory, roughly. */
-        class Ready(val drawable: Drawable, val bytes: Int) : Img
+        /** `bytes`: what it holds in memory, roughly. `source`: an animated one's encoded bytes. */
+        class Ready(val drawable: Drawable, val bytes: Int, private val source: ByteArray? = null) : Img {
+            /**
+             * A drawable for one view, fitting `side` pixels. A drawable belongs to one
+             * view, and an animated one only moves there, so each view decodes its own,
+             * at its own size to keep a screenful of them small.
+             */
+            fun forView(side: Int): Drawable = if (source == null) {
+                drawable.constantState?.newDrawable() ?: drawable
+            } else try {
+                drawable(source, side.coerceIn(1, MAX_PIXELS)).first
+            } catch (e: Exception) {
+                drawable
+            } catch (e: OutOfMemoryError) {
+                drawable
+            }
+        }
         data object Failed : Img
     }
 
@@ -221,24 +236,30 @@ class Media(private val app: IrChad) {
     // Server-sent bytes (D14): only the formats desktop and chadd take, bounded
     // in size, and any failure only loses the image.
     private fun decode(bytes: ByteArray): Img.Ready? = if (!isImage(bytes)) null else try {
-        var animated = false
-        val d = ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { d, info, _ ->
-            val (w, h) = info.size.width to info.size.height
-            animated = info.isAnimated
-            if (w > MAX_SIDE || h > MAX_SIDE || animated && w.toLong() * h > MAX_ANIMATED) {
-                throw java.io.IOException("too big")
-            }
-            val big = maxOf(w, h)
-            if (big > MAX_PIXELS) d.setTargetSize(maxOf(1, w * MAX_PIXELS / big), maxOf(1, h * MAX_PIXELS / big))
-        }
+        val (d, animated) = drawable(bytes, MAX_PIXELS)
         // An animated drawable keeps its source and decodes frames from it.
         val held = d.intrinsicWidth * d.intrinsicHeight * 4 * (if (animated) 2 else 1)
-        Img.Ready(d, held + if (animated) bytes.size else 0)
+        Img.Ready(d, held + if (animated) bytes.size else 0, bytes.takeIf { animated })
     } catch (e: Exception) {
         null
     } catch (e: OutOfMemoryError) {
         null
     }
+}
+
+/** `bytes` scaled to fit `side` pixels, and whether it's animated. Throws for anything too big. */
+private fun drawable(bytes: ByteArray, side: Int): Pair<Drawable, Boolean> {
+    var animated = false
+    val d = ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { d, info, _ ->
+        val (w, h) = info.size.width to info.size.height
+        animated = info.isAnimated
+        if (w > MAX_SIDE || h > MAX_SIDE || animated && w.toLong() * h > MAX_ANIMATED) {
+            throw java.io.IOException("too big")
+        }
+        val big = maxOf(w, h)
+        if (big > side) d.setTargetSize(maxOf(1, w * side / big), maxOf(1, h * side / big))
+    }
+    return d to animated
 }
 
 /** PNG, JPEG, GIF or WebP by magic bytes. */
@@ -270,18 +291,18 @@ fun RemoteImage(
         )
         Media.Img.Failed -> {}
         is Media.Img.Ready -> {
-            val d = img.drawable
             val px = with(LocalDensity.current) { 1.dp.toPx() }
-            val (w, h) = d.intrinsicWidth.coerceAtLeast(1) / px to d.intrinsicHeight.coerceAtLeast(1) / px
+            val (w, h) = img.drawable.intrinsicWidth.coerceAtLeast(1) / px to img.drawable.intrinsicHeight.coerceAtLeast(1) / px
             val scale = minOf(1f, maxW.value / w, maxH.value / h)
+            // Cropped to fill, the short side has to cover the view; no size given means any.
+            val side = (maxOf(maxW.value, maxH.value) * px * if (fill) 2 else 1).toInt()
+            val d = remember(img, side) { img.forView(if (side > 0) side else MAX_PIXELS) }
             AndroidView(
                 factory = {
                     ImageView(it).apply {
                         scaleType = if (fill) ImageView.ScaleType.CENTER_CROP else ImageView.ScaleType.FIT_CENTER
                     }
                 },
-                // shortcut: a drawable animates in the last view it was set on, so the
-                // same GIF twice on screen animates once; decode per view if that matters.
                 update = {
                     if (it.drawable !== d) {
                         it.setImageDrawable(d)
@@ -305,11 +326,10 @@ fun RemoteImage(
 fun EmojiImage(app: IrChad, network: String, url: String, name: String, modifier: Modifier = Modifier) {
     val tick by app.media.tick.collectAsState()
     val img = remember(tick, network, url) { app.media.image(network, url, true) }
-    val shared = (img as? Media.Img.Ready)?.drawable ?: return
-    // One emoji is on screen many times, and a drawable belongs to one view.
-    // shortcut: an animated one has no constant state to copy, so it's shared and
-    // moves only in the last view it was set on; decode per view if that matters.
-    val d = remember(shared) { shared.constantState?.newDrawable() ?: shared }
+    val ready = img as? Media.Img.Ready ?: return
+    // They're drawn at about text height.
+    val side = with(LocalDensity.current) { 48.dp.roundToPx() }
+    val d = remember(ready, side) { ready.forView(side) }
     AndroidView(
         factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
         update = {

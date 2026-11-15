@@ -12,6 +12,8 @@ private let maxSide = 8192
 private let maxAnimated = 2048 * 2048
 /// What one animation's decoded frames may hold; later frames are dropped.
 private let maxAnimationBytes = 48 << 20
+/// An animated custom emoji keeps this many frames at each size it's drawn.
+private let maxEmojiFrames = 120
 /// What decoded images may hold in memory, all together.
 private let cacheBytes = 64 << 20
 
@@ -46,8 +48,9 @@ final class Media {
         return c
     }()
     @ObservationIgnored private var previews: [String: Prev] = [:]
-    /// Custom emoji at the size text wants them, by "network url height".
-    @ObservationIgnored private var emoji: [String: UIImage] = [:]
+    /// Custom emoji at the size text wants them, by "network url height":
+    /// every frame, and how long the loop takes.
+    @ObservationIgnored private var emoji: [String: ([UIImage], TimeInterval)] = [:]
     @ObservationIgnored private let monitor = NWPathMonitor()
 
     init() {
@@ -81,21 +84,39 @@ final class Media {
 
     /// A custom emoji's image `height` points tall, for a line of text, once
     /// it has loaded. It's fetched whatever the media settings say: it comes
-    /// from the network itself. An animated one is its first frame, because
-    /// `Text` can't hold a view.
-    func emojiImage(network: String, url: String, height: CGFloat) -> UIImage? {
+    /// from the network itself. An animated one is its frame at `date`: `Text`
+    /// can't hold a view, so `EmojiTicks` draws the text again for each frame.
+    func emojiImage(network: String, url: String, height: CGFloat, at date: Date = .now) -> UIImage? {
         let key = "\(network) \(url) \(Int(height))"
-        if let i = emoji[key] { return i }
-        guard case let .ready(full)? = image(network: network, url: url, ask: true) else { return nil }
-        let still = full.images?.first ?? full
-        let h = max(1, height.rounded())
-        // A wide one keeps its shape, up to a point.
-        let w = min(h * 3, (still.size.width * h / max(still.size.height, 1)).rounded())
-        let size = CGSize(width: max(1, w), height: h)
-        let scaled = UIGraphicsImageRenderer(size: size).image { _ in still.draw(in: CGRect(origin: .zero, size: size)) }
-        if emoji.count >= 512 { emoji.removeAll() }
-        emoji[key] = scaled
-        return scaled
+        if emoji[key] == nil {
+            guard case let .ready(full)? = image(network: network, url: url, ask: true) else { return nil }
+            let all = full.images ?? [full]
+            let h = max(1, height.rounded())
+            // A wide one keeps its shape, up to a point.
+            let w = min(h * 3, (full.size.width * h / max(full.size.height, 1)).rounded())
+            let size = CGSize(width: max(1, w), height: h)
+            let renderer = UIGraphicsImageRenderer(size: size)
+            // Every `skip`th frame of a long one: they're all scaled here.
+            let skip = (all.count + maxEmojiFrames - 1) / maxEmojiFrames
+            let frames = stride(from: 0, to: all.count, by: max(1, skip)).map { i in
+                renderer.image { _ in all[i].draw(in: CGRect(origin: .zero, size: size)) }
+            }
+            if emoji.count >= 512 { emoji.removeAll() }
+            emoji[key] = (frames, full.duration)
+        }
+        guard let (frames, duration) = emoji[key] else { return nil }
+        guard frames.count > 1, duration > 0 else { return frames.first }
+        let t = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: duration)
+        return frames[min(frames.count - 1, Int(t / duration * Double(frames.count)))]
+    }
+
+    /// How long each frame of an animated custom emoji shows, once it has
+    /// loaded; `nil` for a still one.
+    func emojiStep(network: String, url: String) -> TimeInterval? {
+        guard case let .ready(full)? = image(network: network, url: url, ask: true),
+              let n = full.images?.count, n > 1, full.duration > 0
+        else { return nil }
+        return max(1.0 / 30, full.duration / Double(min(n, maxEmojiFrames)))
     }
 
     /// `nil` when it isn't loaded and `ask` is off.
@@ -229,6 +250,24 @@ struct RemoteImage: View {
                 .onTapGesture { onOpen?(i) }
                 .accessibilityLabel("Image")
                 .accessibilityAddTraits(onOpen != nil ? .isButton : [])
+        }
+    }
+}
+
+/// Draws `content` again for each frame of the animated custom emoji among
+/// `urls`, with the time to draw them at. Without one, it's drawn once.
+struct EmojiTicks<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    let network: String
+    let urls: [String]
+    @ViewBuilder let content: (Date) -> Content
+
+    var body: some View {
+        let _ = urls.isEmpty ? 0 : model.media.tick
+        if let step = urls.compactMap({ model.media.emojiStep(network: network, url: $0) }).min() {
+            TimelineView(.periodic(from: .now, by: step)) { content($0.date) }
+        } else {
+            content(.now)
         }
     }
 }
@@ -504,10 +543,12 @@ private struct EmojiTab: View {
                     ForEach(custom, id: \.name) { e in
                         let code = ":\(e.name):"
                         Button { onEmoji(code) } label: {
-                            if let i = model.media.emojiImage(network: network, url: e.url, height: 32) {
-                                Image(uiImage: i)
-                            } else {
-                                Text(e.name).font(.caption2).lineLimit(1)
+                            EmojiTicks(network: network, urls: [e.url]) { now in
+                                if let i = model.media.emojiImage(network: network, url: e.url, height: 32, at: now) {
+                                    Image(uiImage: i)
+                                } else {
+                                    Text(e.name).font(.caption2).lineLimit(1)
+                                }
                             }
                         }
                         .buttonStyle(.plain)

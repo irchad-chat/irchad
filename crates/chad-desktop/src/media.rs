@@ -591,6 +591,19 @@ mod tests {
     }
 
     #[test]
+    fn decodes_every_gif_frame() {
+        use image::codecs::gif::GifEncoder;
+        let mut gif = Vec::new();
+        let frame = || image::Frame::new(image::RgbaImage::new(4, 4));
+        GifEncoder::new(&mut gif)
+            .encode_frames([frame(), frame(), frame()])
+            .unwrap();
+        let f = decode(&gif, 800).unwrap();
+        assert_eq!(f.len(), 3);
+        assert!(f.iter().all(|(_, delay)| *delay > 0.0));
+    }
+
+    #[test]
     fn applies_exif_orientation() {
         use image::ImageEncoder;
         // Little-endian TIFF with one IFD entry: Orientation (0x112) = 6, rotate 90° CW.

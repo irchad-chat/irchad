@@ -615,3 +615,8 @@ Supersedes D98's "Desktop keeps the IrChad server / Classic IRC switch". Two equ
 
 ## D101: The welcome cards come back every launch until a first network is signed in to (2026-11-15)
 Supersedes D99's "either way out marks them seen for good" and its seen flag. Reading or skipping the cards only puts them away for that run of the app. The per-device flag (`Settings::welcomed`, Android's `welcomed` preference, iOS `UserDefaults`, web `localStorage`) is now set the first time a network connects, so someone who gave up before signing in gets the explanation again next time.
+
+## D102: Animated avatars and custom emoji move everywhere they're drawn (2026-11-15)
+Supersedes D73's "On iOS an animated emoji inside text is a still frame" and "on Android an animated one moves in one place at a time". A GIF (or animated WebP) is an avatar or a custom emoji with nothing new on the wire or on chadd: avatars are uploads (D25) and emoji are files in `[emoji] dir` (D73), and both already kept their bytes.
+Desktop and web already played every frame. Android now decodes an animated image once per view from its kept bytes, at that view's size, because an `AnimatedImageDrawable` only moves in one view; a still image stays one shared decode. iOS plays avatars in a `UIImageView`, and draws text and reactions again for each frame of an animated emoji (`EmojiTicks`, a `TimelineView`), since `Text` takes an image but not a view. An emoji keeps at most 120 frames at each size it's drawn at.
+The cost: on iOS a message with an animated emoji lays its text out again up to 30 times a second while it's on screen.

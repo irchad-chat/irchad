@@ -503,21 +503,25 @@ struct MessageRow: View {
         } else if m.undecryptable {
             Text("Couldn't decrypt this message.").italic().foregroundStyle(.red)
         } else if m.action {
-            styledText(spans, prefix: "* \(m.shown) ", network: network, media: model.media).italic()
+            EmojiTicks(network: network, urls: spans.compactMap(\.emoji)) { now in
+                styledText(spans, prefix: "* \(m.shown) ", network: network, media: model.media, at: now).italic()
+            }
         } else if spans.isEmpty && !m.spans.isEmpty {
             // Nothing but shown images: no empty line above them.
             EmptyView()
         } else {
-            styledText(spans, network: network, media: model.media)
-                .foregroundStyle(m.pending || m.notice ? .secondary : .primary)
-                .textSelection(.enabled)
+            EmojiTicks(network: network, urls: spans.compactMap(\.emoji)) { now in
+                styledText(spans, network: network, media: model.media, at: now)
+                    .foregroundStyle(m.pending || m.notice ? .secondary : .primary)
+                    .textSelection(.enabled)
+            }
         }
     }
 
     /// A custom emoji's image, or its `:name:` until that has loaded.
-    private func reactionLabel(_ r: Reaction) -> Text {
+    private func reactionLabel(_ r: Reaction, at now: Date) -> Text {
         let _ = model.media.tick
-        guard let url = r.image, let i = model.media.emojiImage(network: network, url: url, height: 18) else {
+        guard let url = r.image, let i = model.media.emojiImage(network: network, url: url, height: 18, at: now) else {
             return Text(r.emoji).font(.system(size: 16)) + Text("  \(r.nicks.count)")
         }
         return Text(Image(uiImage: i)).baselineOffset(-4) + Text("  \(r.nicks.count)")
@@ -536,7 +540,7 @@ struct MessageRow: View {
                     }
                 } label: {
                     // Discord's size: 28pt tall, an 18pt emoji, about 50pt wide.
-                    reactionLabel(r)
+                    EmojiTicks(network: network, urls: r.image.map { [$0] } ?? []) { reactionLabel(r, at: $0) }
                         .font(.system(size: 14))
                         .padding(.horizontal, 8)
                         .frame(height: 28)
@@ -660,7 +664,11 @@ struct Avatar: View {
         ZStack {
             Circle().fill(color.opacity(0.25))
             if let url, case let .ready(img)? = model.media.image(network: network, url: url, ask: model.media.auto) {
-                Image(uiImage: img).resizable().scaledToFill()
+                if img.images != nil {
+                    Animated(image: img, fill: true)
+                } else {
+                    Image(uiImage: img).resizable().scaledToFill()
+                }
             } else {
                 Text(nick.prefix(1).uppercased()).font(.system(size: size * 0.45, weight: .bold)).foregroundStyle(color)
             }
@@ -681,7 +689,7 @@ func nickColor(_ nick: String, dark: Bool) -> Color {
 /// `styled`, with each custom emoji that has loaded as its image. `Text` takes
 /// an image only as another `Text`, so the runs between them are joined.
 @MainActor
-func styledText(_ spans: [Span], prefix: String = "", network: String, media: Media) -> Text {
+func styledText(_ spans: [Span], prefix: String = "", network: String, media: Media, at now: Date = .now) -> Text {
     guard spans.contains(where: { $0.emoji != nil }) else { return Text(styled(spans, prefix: prefix)) }
     let _ = media.tick
     let height = UIFont.preferredFont(forTextStyle: .body).lineHeight
@@ -689,7 +697,7 @@ func styledText(_ spans: [Span], prefix: String = "", network: String, media: Me
     var run: [Span] = []
     var lead = prefix
     for sp in spans {
-        guard let url = sp.emoji, let i = media.emojiImage(network: network, url: url, height: height) else {
+        guard let url = sp.emoji, let i = media.emojiImage(network: network, url: url, height: height, at: now) else {
             run.append(sp)
             continue
         }
