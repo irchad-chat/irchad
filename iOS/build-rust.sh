@@ -53,6 +53,7 @@ cp "$gen/chad_ffiFFI.h" "$here/Sources/chad_ffiFFI/include/"
 
 # The App Store wants the bundle's version to match the release.
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -1)
-for key in CFBundleShortVersionString CFBundleVersion; do
-    sed -i "/<key>$key<\/key>/{n;s|<string>.*</string>|<string>$version</string>|}" "$here/Info.plist"
-done
+# Each upload needs a higher build number, even between releases: use the commit count.
+build=$(git -C "$root" rev-list --count HEAD)
+sed -i "/<key>CFBundleShortVersionString<\/key>/{n;s|<string>.*</string>|<string>$version</string>|}" "$here/Info.plist"
+sed -i "/<key>CFBundleVersion<\/key>/{n;s|<string>.*</string>|<string>$build</string>|}" "$here/Info.plist"
