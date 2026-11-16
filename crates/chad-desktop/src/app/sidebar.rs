@@ -774,14 +774,14 @@ impl App {
     }
 }
 
-const ROW_H: f32 = 40.0;
+const ROW_H: f32 = 48.0;
 /// A section header ("ONLINE — 4"): its small text, bottom-aligned.
 const HEAD_H: f32 = 20.0;
 /// Above every header but the first.
 const SECTION_GAP: f32 = 12.0;
 /// Between a member's name and its crown or ghost.
 const BADGE_GAP: f32 = 4.0;
-const ROW_AVATAR: f32 = 32.0;
+const ROW_AVATAR: f32 = 40.0;
 /// Where a member row's text starts: past the padding, avatar and a gap.
 const ROW_TEXT_X: f32 = 6.0 + ROW_AVATAR + 10.0;
 

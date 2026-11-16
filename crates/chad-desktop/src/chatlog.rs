@@ -1130,7 +1130,7 @@ pub fn profile_card(
 ) -> bool {
     ui.set_min_width(240.0);
     ui.horizontal(|ui| {
-        let (at, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
+        let (at, _) = ui.allocate_exact_size(vec2(80.0, 80.0), Sense::hover());
         if present {
             avatar_with_status(ui, media, auto, at, name, profile, m.away);
         } else {

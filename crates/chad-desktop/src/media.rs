@@ -508,7 +508,8 @@ pub fn paint_avatar(ui: &egui::Ui, rect: egui::Rect, id: egui::TextureId, uv: eg
 }
 
 fn frame_at<'a>(f: &'a Frames, ctx: &egui::Context) -> &'a TextureHandle {
-    if f.frames.len() == 1 || f.period <= 0.0 {
+    // Unfocused: hold the first frame and ask for no repaints, so nothing animates.
+    if f.frames.len() == 1 || f.period <= 0.0 || !ctx.input(|i| i.focused) {
         return &f.frames[0].0;
     }
     let t = (ctx.input(|i| i.time) as f32) % f.period;
