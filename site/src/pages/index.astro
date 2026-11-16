@@ -6,10 +6,12 @@ const icon = (name: string) => icons[`/node_modules/@phosphor-icons/core/assets/
 // Same release roots and asset names as chadd's landing page (crates/chadd/src/routes.rs, D44).
 const repo = "https://git.gentoo.party/sam/irchad-ng";
 const releases = "https://downloads.gentoo.party/irchad";
+const testflight = "https://testflight.apple.com/join/BxPAUTfd";
 const builds = [
   { os: "Linux", icon: "linux-logo", asset: "irchad-linux-x86_64.tar.gz", cmd: "curl -fsSL https://irchad.chat/install.sh | sh", note: "x86_64. Paste that into a terminal. It installs for your user, without root, and the app updates itself. Or download the tarball and run irchad/install.sh.", nightly: true },
   { os: "Windows", icon: "windows-logo", asset: "irchad-windows-x86_64-setup.exe", note: "x86_64 installer. It installs for your user, with no admin prompt, and the app updates itself.", nightly: true },
   { os: "Android", icon: "android-logo", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
+  { os: "iOS", icon: "apple-logo", href: testflight, note: "Public beta through TestFlight. Needs iOS 18 or newer.", nightly: false },
 ];
 // Obtainium can't detect a self-hosted Gitea, so preset its Forgejo source ("Codeberg" class) or it scrapes HTML and makes up versions.
 const obtainium = "obtainium://app/" + encodeURIComponent(JSON.stringify({
@@ -26,10 +28,10 @@ const features = [
 ];
 const site = "https://irchad.chat/";
 const title = "IrChad: a free, open-source, self-hosted Discord alternative";
-const description = "IrChad is a free, open-source Discord alternative you host yourself. Text chat, voice channels, screen share and encrypted DMs, built on IRC. For Linux, Windows and Android.";
+const description = "IrChad is a free, open-source Discord alternative you host yourself. Text chat, voice channels, screen share and encrypted DMs, built on IRC. For Linux, Windows, Android and iOS.";
 const jsonld = {
   "@context": "https://schema.org", "@type": "SoftwareApplication", name: "IrChad", url: site,
-  description, applicationCategory: "CommunicationApplication", operatingSystem: "Linux, Windows, Android",
+  description, applicationCategory: "CommunicationApplication", operatingSystem: "Linux, Windows, Android, iOS",
   license: "https://www.gnu.org/licenses/gpl-3.0.html", image: `${site}screenshot.webp`,
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
@@ -136,7 +138,9 @@ const table = [
             <h3>{b.os}</h3>
             {b.cmd && <pre><code>{b.cmd}</code></pre>}
             <p>{b.note} {b.nightly && <a href={`${releases}/nightly/${b.asset}`} download>Nightly build</a>}</p>
-            <a class="btn primary" href={`${releases}/latest/${b.asset}`} download><Fragment set:html={icon(b.icon)} />Download for {b.os}</a>
+            {b.href
+              ? <a class="btn primary" href={b.href}><Fragment set:html={icon(b.icon)} />Join the Beta</a>
+              : <a class="btn primary" href={`${releases}/latest/${b.asset}`} download><Fragment set:html={icon(b.icon)} />Download for {b.os}</a>}
             {b.os === "Android" && <a class="btn secondary" href={obtainium}><Fragment set:html={icon("package")} />Add to Obtainium</a>}
             {b.os === "Android" && <a class="btn secondary" href="/beta"><Fragment set:html={icon("google-play-logo")} />Join the Play Store beta</a>}
           </li>

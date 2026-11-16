@@ -31,7 +31,11 @@ A push for an encrypted DM says "🔒 Encrypted message, open IrChad to read". T
 
 ## iOS and iPadOS
 
-Not released yet. The app exists and is being tested. Until push support is built, it will notify only during a call or just after you leave the app.
+**Install:** [Join the Beta](https://testflight.apple.com/join/BxPAUTfd) on TestFlight. Needs iOS 18 or newer.
+
+**Join:** tap **Open in IrChad** on an invite page, or paste the link in the app.
+
+Until push support is built, it notifies only during a call or just after you leave the app.
 
 ## What phones don't do
 

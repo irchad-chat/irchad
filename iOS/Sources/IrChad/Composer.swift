@@ -305,7 +305,12 @@ private struct MessageField: UIViewRepresentable {
         context.coordinator.parent = self
         v.onReturn = onReturn
         v.accessibilityLabel = placeholder
-        if v.text != text { v.text = text }
+        if v.text != text {
+            // Commit marked text (an inline prediction, an input method's word) first, or the
+            // keyboard puts it back after we clear the field on send.
+            if v.markedTextRange != nil { v.unmarkText() }
+            v.text = text
+        }
         if focused != v.isFirstResponder {
             // Not during the update: the delegate writes `focused` back.
             DispatchQueue.main.async {

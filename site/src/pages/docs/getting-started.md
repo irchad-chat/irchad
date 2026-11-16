@@ -48,7 +48,7 @@ Download the installer from the [home page](/#download) and run it. It installs 
 ### Phones and tablets
 
 On Android, install the APK from the [home page](/#download), or add it to Obtainium to get updates. See [Phones and tablets](/docs/mobile).
-iOS isn't released yet.
+On iPhone and iPad, [Join the Beta](https://testflight.apple.com/join/BxPAUTfd) on TestFlight.
 
 The desktop app tells you when a new version is out. If you installed it from the Linux tarball or the Windows installer, it downloads the new version in the background, checks that we signed it, and then offers **Restart to update**. Nothing changes until you click that.
 If your package manager installed IrChad, or the app can't replace its own file for some other reason, it only shows the notice, and you update it the usual way. You can turn either one off in **Settings → General → Updates**.
