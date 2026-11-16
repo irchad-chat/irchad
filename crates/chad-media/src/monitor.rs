@@ -3,14 +3,19 @@
 //! less than what fed it gets a log line naming the stage. A stutter someone
 //! reports can then be placed from their exported log: capture, convert,
 //! encoder, pacer or network. If none is named, it happened past our upload.
+//!
+//! The viewer's side, [`StreamStats`], is shown on request over the video.
 
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use livekit::prelude::Room;
+use livekit::track::RemoteVideoTrack;
 use livekit::webrtc::stats::{QualityLimitationReason, RtcStats};
+
+use crate::engine::{Shared, lock};
 
 /// What the capture side did since the monitor last looked. Written by the
 /// frame sink on the capture thread.
@@ -278,9 +283,241 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
     });
 }
 
+/// How the video we watch arrives and decodes, over the last second. For
+/// "it's blurry for me but not for them": the frame size and QP say what the
+/// sender encoded, the loss, PLI and freezes what the network did to it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StreamStats {
+    /// The codec's name, e.g. "AV1".
+    pub codec: String,
+    pub decoder: String,
+    /// libwebrtc counts the decoder as power-efficient (hardware).
+    pub hardware: bool,
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub kbps: f64,
+    /// The average quantizer of the frames decoded: higher is blurrier. Its
+    /// scale depends on the codec (H.264 0–51, AV1 and VP9 0–255).
+    pub qp: Option<f64>,
+    /// Of the packets that should have arrived.
+    pub lost_pct: f64,
+    pub dropped: u32,
+    pub decode_ms: f64,
+    /// How long frames waited in the jitter buffer.
+    pub buffer_ms: f64,
+    pub jitter_ms: f64,
+    /// Since we started watching.
+    pub keyframes: u32,
+    pub plis: u32,
+    pub nacks: u32,
+    pub freezes: u32,
+    pub rtt_ms: Option<f64>,
+}
+
+/// The longest decoder or codec name kept: they come from libwebrtc and the
+/// SDP, which the SFU writes (D14).
+const MAX_NAME: usize = 48;
+
+/// libwebrtc's running totals for the watched video, at one moment.
+#[derive(Default)]
+struct Inbound {
+    codec: String,
+    decoder: String,
+    hardware: bool,
+    size: (u32, u32),
+    fps: f64,
+    bytes: u64,
+    packets: u64,
+    lost: i64,
+    decoded: u32,
+    keyframes: u32,
+    dropped: u32,
+    qp_sum: u64,
+    decode_s: f64,
+    buffer_s: f64,
+    buffered: u64,
+    jitter_s: f64,
+    plis: u32,
+    nacks: u32,
+    freezes: u32,
+    rtt_s: Option<f64>,
+}
+
+impl Inbound {
+    /// From a receiver's stats: its one video inbound-rtp, its codec, and the
+    /// transport's round trip.
+    fn read(stats: &[RtcStats]) -> Option<Self> {
+        let i = stats.iter().find_map(|s| match s {
+            RtcStats::InboundRtp(i) if i.stream.kind == "video" => Some(i),
+            _ => None,
+        })?;
+        let codec = stats.iter().find_map(|s| match s {
+            RtcStats::Codec(c) if c.rtc.id == i.stream.codec_id => Some(&c.codec.mime_type),
+            _ => None,
+        });
+        let codec = codec.map_or("", |m| m.strip_prefix("video/").unwrap_or(m));
+        let rtt_s = stats.iter().find_map(|s| match s {
+            RtcStats::CandidatePair(c)
+                if c.candidate_pair.nominated && c.candidate_pair.responses_received > 0 =>
+            {
+                Some(c.candidate_pair.current_round_trip_time)
+            }
+            _ => None,
+        });
+        let v = &i.inbound;
+        Some(Self {
+            codec: codec.chars().take(MAX_NAME).collect(),
+            decoder: v.decoder_implementation.chars().take(MAX_NAME).collect(),
+            hardware: v.power_efficient_decoder,
+            size: (v.frame_width, v.frame_height),
+            fps: v.frames_per_second,
+            bytes: v.bytes_received,
+            packets: i.received.packets_received,
+            lost: i.received.packets_lost,
+            decoded: v.frames_decoded,
+            keyframes: v.key_frames_decoded,
+            dropped: v.frames_dropped,
+            qp_sum: v.qp_sum,
+            decode_s: v.total_decode_time,
+            buffer_s: v.jitter_buffer_delay,
+            buffered: v.jitter_buffer_emitted_count,
+            jitter_s: i.received.jitter,
+            plis: v.pli_count,
+            nacks: v.nack_count,
+            freezes: v.freeze_count,
+            rtt_s,
+        })
+    }
+
+    /// The second from `then` to `self`, `secs` long.
+    fn since(&self, then: &Self, secs: f64) -> StreamStats {
+        let decoded = self.decoded.saturating_sub(then.decoded);
+        let per_frame = |total: f64| {
+            if decoded == 0 {
+                0.0
+            } else {
+                total.max(0.0) * 1000.0 / f64::from(decoded)
+            }
+        };
+        let received = self.packets.saturating_sub(then.packets);
+        let lost = u64::try_from(self.lost.saturating_sub(then.lost)).unwrap_or(0);
+        let expected = received.saturating_add(lost);
+        let buffered = self.buffered.saturating_sub(then.buffered);
+        StreamStats {
+            codec: self.codec.clone(),
+            decoder: self.decoder.clone(),
+            hardware: self.hardware,
+            width: self.size.0,
+            height: self.size.1,
+            fps: self.fps,
+            kbps: self.bytes.saturating_sub(then.bytes) as f64 * 8.0 / 1000.0 / secs.max(0.1),
+            qp: (decoded > 0 && self.qp_sum > 0)
+                .then(|| self.qp_sum.saturating_sub(then.qp_sum) as f64 / f64::from(decoded)),
+            lost_pct: if expected == 0 {
+                0.0
+            } else {
+                lost as f64 * 100.0 / expected as f64
+            },
+            dropped: self.dropped.saturating_sub(then.dropped),
+            decode_ms: per_frame(self.decode_s - then.decode_s),
+            buffer_ms: if buffered == 0 {
+                0.0
+            } else {
+                (self.buffer_s - then.buffer_s).max(0.0) * 1000.0 / buffered as f64
+            },
+            jitter_ms: self.jitter_s * 1000.0,
+            keyframes: self.keyframes,
+            plis: self.plis,
+            nacks: self.nacks,
+            freezes: self.freezes,
+            rtt_ms: self.rtt_s.map(|s| s * 1000.0),
+        }
+    }
+}
+
+/// Aborts the task when dropped, so the stats poller ends with its viewer.
+pub(crate) struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Once a second while the stats are shown, puts `track`'s receive stats in
+/// `shared.stream_stats`, if `target` is still what we watch.
+pub(crate) async fn inbound(track: RemoteVideoTrack, target: (String, bool), shared: Arc<Shared>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last: Option<(Instant, Inbound)> = None;
+    loop {
+        tick.tick().await;
+        let watched = lock(&shared.watching).as_ref() == Some(&target);
+        if !watched || !shared.stats_wanted.load(Relaxed) {
+            last = None;
+            continue;
+        }
+        let Ok(stats) = track.get_stats().await else {
+            continue;
+        };
+        let Some(now) = Inbound::read(&stats) else {
+            continue;
+        };
+        let at = Instant::now();
+        if let Some((then_at, then)) = &last {
+            let s = now.since(then, at.duration_since(*then_at).as_secs_f64());
+            let mut slot = lock(&shared.stream_stats);
+            // Checked again under the lock, like `room::watch` clears it.
+            if lock(&shared.watching).as_ref() != Some(&target) {
+                continue;
+            }
+            *slot = Some((target.clone(), s));
+            drop(slot);
+            (shared.notify)();
+        }
+        last = Some((at, now));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inbound_second() {
+        let then = Inbound {
+            bytes: 0,
+            packets: 1000,
+            lost: 10,
+            decoded: 100,
+            qp_sum: 3000,
+            decode_s: 0.2,
+            buffer_s: 1.0,
+            buffered: 100,
+            ..Inbound::default()
+        };
+        let now = Inbound {
+            bytes: 1_000_000,
+            packets: 1990,
+            lost: 20,
+            decoded: 160,
+            qp_sum: 4800,
+            decode_s: 0.32,
+            buffer_s: 4.0,
+            buffered: 160,
+            ..Inbound::default()
+        };
+        let s = now.since(&then, 1.0);
+        assert_eq!(s.kbps, 8000.0);
+        assert_eq!(s.qp, Some(30.0));
+        assert!((s.lost_pct - 1.0).abs() < 1e-9);
+        assert!((s.decode_ms - 2.0).abs() < 1e-9);
+        assert!((s.buffer_ms - 50.0).abs() < 1e-9);
+        // Counters that went backwards (a new stream) don't underflow.
+        let s = then.since(&now, 1.0);
+        assert_eq!((s.kbps, s.lost_pct, s.decode_ms), (0.0, 0.0, 0.0));
+    }
 
     /// A healthy second of a 60 fps share at 8 Mbps.
     fn smooth() -> Second {

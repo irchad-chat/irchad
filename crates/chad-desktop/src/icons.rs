@@ -7,6 +7,7 @@ pub const ARROW_BEND_UP_LEFT: &str = "\u{E024}";
 pub const ARROW_DOWN: &str = "\u{E03E}";
 pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 pub const BROADCAST: &str = "\u{E0F2}";
+pub const CHART_LINE_UP: &str = "\u{E156}";
 pub const COPY: &str = "\u{E1CA}";
 pub const DISCORD_LOGO: &str = "\u{E61A}";
 pub const CORNERS_IN: &str = "\u{E1CE}";

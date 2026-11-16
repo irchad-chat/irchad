@@ -217,6 +217,11 @@ pub struct Shared {
     /// Identity whose video we watch, and whether it's their camera.
     pub watching: Mutex<Option<(String, bool)>>,
     pub screen: Mutex<Option<Arc<ScreenFrame>>>,
+    /// The viewer asked for the watched video's stats ([`monitor::StreamStats`]).
+    pub stats_wanted: AtomicBool,
+    /// The watched video's stats, refreshed every second while wanted: the
+    /// target it belongs to, so a stale one is never shown for a new target.
+    pub stream_stats: Mutex<Option<((String, bool), crate::monitor::StreamStats)>>,
     /// We watch our own share or camera ([`PREVIEW_SCREEN`],
     /// [`PREVIEW_CAMERA`]; 0 for neither): its encoder puts what it sends in `screen`.
     pub preview: AtomicU8,
@@ -260,6 +265,8 @@ impl Shared {
             camera_starting: AtomicBool::new(false),
             watching: Mutex::default(),
             screen: Mutex::default(),
+            stats_wanted: AtomicBool::new(false),
+            stream_stats: Mutex::default(),
             preview: AtomicU8::new(0),
             call_mix: Mutex::default(),
             viewer: Mutex::default(),

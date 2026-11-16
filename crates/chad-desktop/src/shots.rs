@@ -302,6 +302,68 @@ fn overlay() {
     }
 }
 
+/// The stream stats overlay, over a stand-in for the video.
+#[test]
+fn stream_stats() {
+    let s = chad_media::StreamStats {
+        codec: "VP9".into(),
+        decoder: "AMD VCN".into(),
+        hardware: true,
+        width: 1920,
+        height: 1080,
+        fps: 24.0,
+        kbps: 1834.0,
+        qp: Some(168.0),
+        lost_pct: 2.1,
+        dropped: 3,
+        decode_ms: 4.2,
+        buffer_ms: 92.0,
+        jitter_ms: 15.3,
+        keyframes: 3,
+        plis: 5,
+        nacks: 42,
+        freezes: 2,
+        rtt_ms: Some(121.0),
+    };
+    // The App installs the icon font; here it lands a frame later.
+    let mut fonts = false;
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(640.0, 360.0))
+        .wgpu()
+        .build_ui(|ui| {
+            if !std::mem::replace(&mut fonts, true) {
+                crate::icons::install(ui.ctx());
+                ui.ctx().request_repaint();
+                return;
+            }
+            // Something video-ish behind the overlay.
+            let r = ui.max_rect();
+            ui.painter()
+                .rect_filled(r, 0.0, egui::Color32::from_rgb(22, 24, 29));
+            for i in 0..8 {
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::pos2(r.left() + 40.0 + i as f32 * 72.0, r.top() + 60.0),
+                        egui::vec2(56.0, 200.0),
+                    ),
+                    4.0,
+                    egui::Color32::from_rgb(46 + i * 8, 50 + i * 8, 60 + i * 8),
+                );
+            }
+            crate::screen::stats(ui, r.left_top() + egui::vec2(8.0, 8.0), Some(&s));
+        });
+    harness.run();
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/shots");
+    std::fs::create_dir_all(&dir).expect("shots dir");
+    let path = dir.join("stream_stats.png");
+    harness
+        .render()
+        .expect("render")
+        .save(&path)
+        .expect("save png");
+    println!("shot: {}", path.display());
+}
+
 impl Shots {
     /// Clicks the first widget named `label` and lets the UI react. First,
     /// because a pane's title repeats its sidebar entry, which comes before it.

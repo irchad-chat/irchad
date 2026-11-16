@@ -6,7 +6,9 @@
 
 #include <windows.h>
 
-#include <d3d10.h>
+// d3d10_1.h, not d3d10.h: it includes d3d10.h itself, and the SDK errors out
+// when d3d10.h comes first and something later pulls in d3d10_1.h.
+#include <d3d10_1.h>
 #include <d3d11.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>

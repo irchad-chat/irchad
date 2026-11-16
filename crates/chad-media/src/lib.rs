@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+pub use monitor::StreamStats;
 pub use room::{Call, wait_closed};
 pub use screen::{
     AudioApp, ContentHint, Encoder, Preset, Public, ScreenFrame, ScreenSettings, ShareSource,
@@ -435,6 +436,30 @@ impl Voice {
     /// The latest frame of the video being watched.
     pub fn screen(&self) -> Option<Arc<ScreenFrame>> {
         engine::lock(&self.shared.screen).clone()
+    }
+
+    /// Shows the stats of the video we watch over it, or hides them.
+    pub fn set_stream_stats(&self, on: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.shared.stats_wanted.store(on, Relaxed);
+        (self.shared.notify)();
+    }
+
+    /// Whether [`Voice::set_stream_stats`] is on.
+    pub fn stream_stats_wanted(&self) -> bool {
+        self.shared
+            .stats_wanted
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The watched video's stats while they're wanted and it's still the one
+    /// watched: a new target's stats take a second to arrive.
+    pub fn stream_stats(&self) -> Option<StreamStats> {
+        let w = engine::lock(&self.shared.watching);
+        engine::lock(&self.shared.stream_stats)
+            .as_ref()
+            .filter(|(t, _)| Some(t) == w.as_ref())
+            .map(|(_, s)| s.clone())
     }
 
     fn running(&self) -> bool {

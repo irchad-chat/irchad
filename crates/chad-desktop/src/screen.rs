@@ -4,8 +4,8 @@
 use std::sync::{Arc, mpsc};
 
 use chad_media::{
-    AudioApp, ContentHint, Preset, Public, ScreenFrame, ScreenSettings, SourceId, Target, Targets,
-    Voice,
+    AudioApp, ContentHint, Preset, Public, ScreenFrame, ScreenSettings, SourceId, StreamStats,
+    Target, Targets, Voice,
 };
 use eframe::egui_wgpu::{self, wgpu};
 use egui::{RichText, vec2};
@@ -291,8 +291,8 @@ impl egui_wgpu::CallbackTrait for Video {
     }
 }
 
-/// Paints the frame letterboxed into the space left in `ui`.
-fn video(ui: &mut egui::Ui, frame: Arc<ScreenFrame>) {
+/// Paints the frame letterboxed into the space left in `ui`: where it landed.
+fn video(ui: &mut egui::Ui, frame: Arc<ScreenFrame>) -> egui::Rect {
     let avail = ui.available_rect_before_wrap();
     ui.painter().rect_filled(avail, 0.0, egui::Color32::BLACK);
     let k = (avail.width() / frame.width as f32).min(avail.height() / frame.height as f32);
@@ -303,6 +303,83 @@ fn video(ui: &mut egui::Ui, frame: Arc<ScreenFrame>) {
     ui.painter()
         .add(egui_wgpu::Callback::new_paint_callback(rect, Video(frame)));
     ui.allocate_rect(avail, egui::Sense::hover());
+    rect
+}
+
+/// One stats line: the parts that are there, " · "-separated.
+fn line(parts: impl IntoIterator<Item = Option<String>>) -> String {
+    parts.into_iter().flatten().collect::<Vec<_>>().join(" · ")
+}
+
+/// The stream stats (`None`: they haven't arrived yet) over the video's
+/// top-left corner, for "it's blurry for me but not for them": what arrived,
+/// and how it decodes.
+pub(crate) fn stats(ui: &mut egui::Ui, at: egui::Pos2, s: Option<&StreamStats>) {
+    let (text, weak) = (ui.visuals().text_color(), ui.visuals().weak_text_color());
+    let font = egui::FontId::monospace(12.5);
+    let lines: Vec<(String, egui::Color32)> = match s {
+        Some(s) => {
+            let kind = if s.hardware { "hardware" } else { "software" };
+            let decoder = if s.decoder.is_empty() {
+                kind.to_owned()
+            } else {
+                format!("{} {kind}", s.decoder)
+            };
+            let ms = |v: f64| format!("{v:.0} ms");
+            vec![
+                (
+                    line([
+                        (!s.codec.is_empty()).then(|| s.codec.clone()),
+                        Some(format!("{}×{}", s.width, s.height)),
+                        Some(format!("{:.0} fps", s.fps)),
+                        Some(format!("{:.0} kbps", s.kbps)),
+                    ]),
+                    text,
+                ),
+                (format!("Decoder {decoder}"), text),
+                (
+                    line([
+                        s.qp.map(|q| format!("QP {q:.0}")),
+                        Some(format!("decode {}", ms(s.decode_ms))),
+                        Some(format!("buffer {}", ms(s.buffer_ms))),
+                    ]),
+                    weak,
+                ),
+                (
+                    line([
+                        Some(format!("loss {:.1}%", s.lost_pct)),
+                        Some(format!("jitter {}", ms(s.jitter_ms))),
+                        s.rtt_ms.map(|r| format!("RTT {}", ms(r))),
+                    ]),
+                    weak,
+                ),
+                (
+                    line([
+                        Some(format!("keyframes {}", s.keyframes)),
+                        Some(format!("PLI {}", s.plis)),
+                        Some(format!("NACK {}", s.nacks)),
+                        Some(format!("freezes {}", s.freezes)),
+                        Some(format!("dropped {}", s.dropped)),
+                    ]),
+                    weak,
+                ),
+            ]
+        }
+        None => vec![("Waiting for stats…".into(), weak)],
+    };
+    let mut job = egui::text::LayoutJob::default();
+    for (i, (l, c)) in lines.iter().enumerate() {
+        if i > 0 {
+            job.append("\n", 0.0, egui::TextFormat::simple(font.clone(), weak));
+        }
+        job.append(l, 0.0, egui::TextFormat::simple(font.clone(), *c));
+    }
+    let galley = ui.painter().layout_job(job);
+    let pad = vec2(8.0, 6.0);
+    let rect = egui::Rect::from_min_size(at, galley.size() + 2.0 * pad);
+    ui.painter()
+        .rect_filled(rect, 4.0, egui::Color32::from_black_alpha(192));
+    ui.painter().galley(rect.left_top() + pad, galley, text);
 }
 
 pub enum StageAction {
@@ -375,6 +452,17 @@ pub fn stage(
             if ui.button(icon).tip(tip).clicked() {
                 action = Some(StageAction::Fullscreen(!fullscreen));
             }
+            // Our own preview has no receiver; there are no stats to show.
+            if !own {
+                let wanted = voice.stream_stats_wanted();
+                if ui
+                    .selectable_label(wanted, icons::CHART_LINE_UP)
+                    .tip("Stream stats")
+                    .clicked()
+                {
+                    voice.set_stream_stats(!wanted);
+                }
+            }
             // Our own share's sound never plays here; cameras have none.
             if !own && !camera {
                 ui.menu_button(icons::SPEAKER_HIGH, |ui| {
@@ -433,7 +521,16 @@ pub fn stage(
         action = Some(StageAction::Fullscreen(false));
     }
     match voice.screen() {
-        Some(f) => video(ui, f),
+        Some(f) => {
+            let rect = video(ui, f);
+            if !own && voice.stream_stats_wanted() {
+                stats(
+                    ui,
+                    rect.left_top() + vec2(8.0, 8.0),
+                    voice.stream_stats().as_ref(),
+                );
+            }
+        }
         None => {
             ui.centered_and_justified(|ui| {
                 ui.horizontal(|ui| {

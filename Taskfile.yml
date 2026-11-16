@@ -9,7 +9,13 @@ tasks:
     # cargo targets the host triple by default, so this yields a Windows
     # build on Windows and a Linux build on Linux.
     cmds:
-      - cargo build --release --locked -p chad-desktop
+      - cmd: cargo build --release --locked -p chad-desktop
+        platforms: [linux, darwin]
+      # CUDA_HOME makes webrtc-sys compile NVENC in (D89). The script fetches
+      # cuda.h into target/cuda on first use and prints the directory. Done in
+      # one PowerShell so the path never passes through sh (CRLF, backslashes).
+      - cmd: powershell -NoProfile -ExecutionPolicy Bypass -Command '$env:CUDA_HOME = & scripts\cuda-headers.ps1; cargo build --release --locked -p chad-desktop; exit $LASTEXITCODE'
+        platforms: [windows]
       - cmd: echo "built target/release/irchad{{.EXE}}"
         silent: true
 

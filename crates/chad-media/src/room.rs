@@ -512,6 +512,8 @@ pub fn watch(shared: &Shared, target: Option<(String, bool)>) {
     // Off before clearing, so the encoder can't put a frame of ours back.
     shared.preview.store(0, Relaxed);
     *lock(&shared.screen) = None;
+    // The new target's poller fills it in again when the stats are wanted.
+    *lock(&shared.stream_stats) = None;
     let Some(room) = lock(&shared.room).clone() else {
         return;
     };
@@ -674,6 +676,13 @@ pub async fn watch_stream(
 /// Decodes the watched share or camera, `target` (identity, camera), into
 /// [`ScreenFrame`]s for the UI while it's still the one watched.
 async fn view(track: RemoteVideoTrack, target: (String, bool), shared: Arc<Shared>) {
+    // Its stats poller ends with this task: the viewer switched away, or the
+    // track went.
+    let _stats = crate::monitor::AbortOnDrop(tokio::spawn(crate::monitor::inbound(
+        track.clone(),
+        target.clone(),
+        shared.clone(),
+    )));
     let mut stream = NativeVideoStream::new(track.rtc_track());
     let mut seq = 0;
     while let Some(frame) = stream.next().await {
