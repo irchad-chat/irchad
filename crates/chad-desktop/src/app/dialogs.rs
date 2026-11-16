@@ -1052,7 +1052,10 @@ impl App {
         let Some(p) = &mut self.picker else { return };
         let gif_net = gif_net.filter(|_| p.react.is_none());
         let nets = &mut self.view.nets;
-        let (mut picked, mut gif) = (None, None);
+        // Stickers post a message, so they're the composer's too.
+        let stickers =
+            emoji_net.filter(|&i| p.react.is_none() && nets[i].emoji.iter().any(|e| e.sticker));
+        let (mut picked, mut gif, mut sticker) = (None, None, None);
         let area = egui::Area::new(egui::Id::unique("emoji-picker"))
             .fixed_pos(p.at)
             .pivot(Align2::RIGHT_BOTTOM)
@@ -1061,19 +1064,26 @@ impl App {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(emoji::PICKER_WIDTH);
-                    match &gif_net {
-                        Some((ni, provider)) => {
-                            ui.horizontal(|ui| {
-                                ui.selectable_value(&mut p.gif_tab, false, "Emoji");
-                                ui.selectable_value(&mut p.gif_tab, true, "GIFs");
-                            });
-                            if p.gif_tab {
-                                gif = p.gifs.ui(ui, &mut nets[*ni].ui.media, provider);
-                            } else {
-                                picked = emoji_picker(ui, &mut p.query, nets, emoji_net);
+                    if gif_net.is_some() || stickers.is_some() {
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut p.tab, PickerTab::Emoji, "Emoji");
+                            if stickers.is_some() {
+                                ui.selectable_value(&mut p.tab, PickerTab::Stickers, "Stickers");
                             }
+                            if gif_net.is_some() {
+                                ui.selectable_value(&mut p.tab, PickerTab::Gifs, "GIFs");
+                            }
+                        });
+                    }
+                    match (p.tab, &gif_net, stickers) {
+                        (PickerTab::Gifs, Some((ni, provider)), _) => {
+                            gif = p.gifs.ui(ui, &mut nets[*ni].ui.media, provider);
                         }
-                        None => picked = emoji_picker(ui, &mut p.query, nets, emoji_net),
+                        (PickerTab::Stickers, _, Some(i)) => {
+                            let n = &mut nets[i];
+                            sticker = emoji::stickers(ui, &n.emoji, &mut n.ui.media);
+                        }
+                        _ => picked = emoji_picker(ui, &mut p.query, nets, emoji_net),
                     }
                 });
             });
@@ -1081,31 +1091,35 @@ impl App {
             || ctx.input(|i| i.key_pressed(Key::Escape));
         p.shown = true;
         let react = p.react.clone();
-        match (gif, here) {
-            (Some(gifs::Action::Fetch { query, pos }), Some((network, _))) => {
-                self.send(&network, NetCommand::Gifs { query, pos });
-            }
-            // Posted as a plain link: every client can open it, and IrChad
-            // shows it inline.
-            (Some(gifs::Action::Pick(g)), Some((network, target))) => {
-                if let Some(b) = self.view.buf_mut(&network, &target) {
-                    let reply_to = b.ui.reply.take().map(|(id, _)| id);
-                    b.ui.log.scroll_to_bottom();
-                    self.send(
-                        &network,
-                        NetCommand::Send {
-                            target,
-                            text: g.url.into(),
-                            reply_to,
-                            mentions: Vec::new(),
-                        },
-                    );
+        // A GIF is posted as a plain link: every client can open it, and
+        // IrChad shows it inline. A sticker is its `:name:` (D103).
+        let post = match gif {
+            Some(gifs::Action::Fetch { query, pos }) => {
+                if let Some((network, _)) = &here {
+                    self.send(network, NetCommand::Gifs { query, pos });
                 }
-                self.picker = None;
-                self.refocus_composer();
-                return;
+                None
             }
-            _ => {}
+            Some(gifs::Action::Pick(g)) => Some(String::from(g.url)),
+            None => sticker,
+        };
+        if let (Some(text), Some((network, target))) = (post, here) {
+            if let Some(b) = self.view.buf_mut(&network, &target) {
+                let reply_to = b.ui.reply.take().map(|(id, _)| id);
+                b.ui.log.scroll_to_bottom();
+                self.send(
+                    &network,
+                    NetCommand::Send {
+                        target,
+                        text,
+                        reply_to,
+                        mentions: Vec::new(),
+                    },
+                );
+            }
+            self.picker = None;
+            self.refocus_composer();
+            return;
         }
         if let Some(e) = picked {
             match react {

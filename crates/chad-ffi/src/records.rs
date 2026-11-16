@@ -199,6 +199,8 @@ pub struct CustomEmoji {
     pub name: String,
     /// Its image, for `Client::media`.
     pub url: String,
+    /// A sticker (D103): in its own picker tab, posted as a message of its own.
+    pub sticker: bool,
 }
 
 /// Someone in the `@` list.
@@ -254,6 +256,9 @@ pub struct Message {
     pub text: String,
     /// `text` with its formatting and links.
     pub spans: Vec<Span>,
+    /// The message is nothing but a sticker (D103): its image, for
+    /// `Client::media`, to draw big in place of the text once it's there.
+    pub sticker: Option<String>,
     pub action: bool,
     pub notice: bool,
     pub reply_to: Option<String>,

@@ -171,6 +171,7 @@ pub struct Sounds {
 /// Custom emoji: every `<name>.png`, `.jpg`, `.gif` or `.webp` in `dir` is
 /// `:name:` (`chad_proto::chadd::emoji_name`). Admins add and remove files by
 /// hand; no restart needed. Everything in `dir` is served to anyone.
+/// The images in `dir/stickers` are stickers (D103).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Emoji {

@@ -77,7 +77,10 @@ function remove() {
           <i v-if="m.redacted" class="dim">deleted</i>
           <template v-else>
             <span v-if="m.action">* {{ m.shown }} </span>
-            <Spans :spans="spans" />
+            <MediaImg v-if="m.sticker" class="sticker" :url="m.sticker" :alt="m.text" :title="m.text">
+              <Spans :spans="spans" />
+            </MediaImg>
+            <Spans v-else :spans="spans" />
             <span v-if="m.edited" class="dim small"> (edited)</span>
           </template>
           <span v-if="m.failed" class="err small"> {{ m.failed }}</span>
@@ -198,6 +201,12 @@ function remove() {
 .reaction.own {
   border-color: var(--accent);
   background: #89b4fa22;
+}
+.sticker {
+  display: block;
+  max-width: 160px;
+  max-height: 160px;
+  object-fit: contain;
 }
 .reaction .emoji {
   width: 18px;

@@ -180,15 +180,23 @@ pub struct App {
     new_version: Option<update::Status>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum PickerTab {
+    Emoji,
+    Stickers,
+    Gifs,
+}
+
 /// The emoji picker, for the composer or a reaction. The composer's has a
-/// GIF tab too, when the network searches GIFs.
+/// sticker tab too when the network has stickers, and a GIF tab when it
+/// searches GIFs.
 struct Picker {
     react: Option<(String, String, String)>,
     at: egui::Pos2,
     query: String,
     /// Shown for a frame already: the click that opened it is no "click elsewhere".
     shown: bool,
-    gif_tab: bool,
+    tab: PickerTab,
     gifs: gifs::Gifs,
 }
 

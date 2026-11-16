@@ -45,8 +45,11 @@ pub fn picker(
             })
             .collect()
     });
-    let custom: Vec<&chad_core::CustomEmoji> =
-        custom.iter().filter(|e| e.name.contains(&q)).collect();
+    // Stickers have their own tab.
+    let custom: Vec<&chad_core::CustomEmoji> = custom
+        .iter()
+        .filter(|e| !e.sticker && e.name.contains(&q))
+        .collect();
     let mut picked = None;
     if search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         // A search that names a custom one means it.
@@ -114,5 +117,41 @@ pub fn picker(
     if list.is_empty() && !any_custom {
         ui.label(RichText::new("No emoji found.").weak());
     }
+    picked
+}
+
+const STICKERS_PER_ROW: usize = 3;
+
+/// The picker's sticker tab: the network's stickers in a grid. Returns the
+/// `:name:` of the one clicked.
+pub fn stickers(
+    ui: &mut egui::Ui,
+    custom: &[chad_core::CustomEmoji],
+    media: &mut Media,
+) -> Option<String> {
+    let mut picked = None;
+    egui::ScrollArea::vertical()
+        .max_height(300.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+                let cell = ui.available_width() / STICKERS_PER_ROW as f32;
+                for e in custom.iter().filter(|e| e.sticker) {
+                    let code = format!(":{}:", e.name);
+                    let b = match media.sticker_image(ui, e, cell - 12.0) {
+                        Some(img) => egui::Button::image(img),
+                        None => egui::Button::new(RichText::new(&e.name).small()).truncate(),
+                    };
+                    let r = ui
+                        .add_sized([cell, cell], b.frame(false))
+                        .on_hover_text(&code);
+                    r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &code));
+                    if r.clicked() {
+                        picked = Some(code);
+                    }
+                }
+            });
+        });
     picked
 }

@@ -109,6 +109,10 @@ struct Composer: View {
                 // Posted as a plain link: every client can open it, and IrChad shows it inline.
                 model.client.send(network: net.network, target: buf.target, text: url, replyTo: nil, mentions: [])
                 picker = false
+            }, onSticker: { code in
+                // Its `:name:`, a message of its own.
+                model.client.send(network: net.network, target: buf.target, text: code, replyTo: nil, mentions: [])
+                picker = false
             })
         }
         .photosPicker(isPresented: $photoPicker, selection: $photos, maxSelectionCount: 10,

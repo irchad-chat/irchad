@@ -13,6 +13,8 @@ pub struct CustomEmoji {
     pub name: String,
     /// On the network's own origin.
     pub url: Url,
+    /// A sticker: drawn big when a message is nothing else ([`sticker`]).
+    pub sticker: bool,
 }
 
 /// chadd's list as a set, sorted by name. The list is server input (D14):
@@ -25,16 +27,19 @@ pub fn custom(list: Vec<chad_proto::chadd::Emoji>, network: &str) -> Vec<CustomE
     };
     let mut set: Vec<CustomEmoji> = list
         .into_iter()
-        .take(chad_proto::chadd::MAX_EMOJI)
+        .take(chad_proto::chadd::MAX_EMOJI + chad_proto::chadd::MAX_STICKERS)
         .filter(|e| chad_proto::chadd::emoji_name(&e.file) == Some(e.name.as_str()))
         .filter_map(|e| {
+            let dir = if e.sticker { "emoji/stickers" } else { "emoji" };
             Some(CustomEmoji {
-                url: origin.join(&format!("/emoji/{}", e.file)).ok()?,
+                url: origin.join(&format!("/{dir}/{}", e.file)).ok()?,
                 name: e.name,
+                sticker: e.sticker,
             })
         })
         .collect();
-    set.sort_by(|a, b| a.name.cmp(&b.name));
+    // An emoji before a sticker of its name, so it's the one kept.
+    set.sort_by(|a, b| (&a.name, a.sticker).cmp(&(&b.name, b.sticker)));
     set.dedup_by(|b, a| a.name == b.name);
     set
 }
@@ -44,6 +49,11 @@ pub fn lookup<'a>(code: &str, set: &'a [CustomEmoji]) -> Option<&'a CustomEmoji>
     let name = code.strip_prefix(':')?.strip_suffix(':')?;
     let i = set.binary_search_by(|e| e.name.as_str().cmp(name)).ok()?;
     set.get(i)
+}
+
+/// The sticker `text` is, when it's nothing but one's `:name:`.
+pub fn sticker<'a>(text: &str, set: &'a [CustomEmoji]) -> Option<&'a CustomEmoji> {
+    lookup(text.trim(), set).filter(|e| e.sticker)
 }
 
 /// `text` in pieces, each `:name:` from `set` its own piece with its emoji.
@@ -205,6 +215,7 @@ mod tests {
         let e = |name: &str, file: &str| chad_proto::chadd::Emoji {
             name: name.into(),
             file: file.into(),
+            sticker: false,
         };
         custom(
             vec![
@@ -234,6 +245,25 @@ mod tests {
         assert!(custom(Vec::new(), "not a url").is_empty());
         assert!(lookup(":blob_cat:", &set).is_some());
         assert!(lookup("blob_cat", &set).is_none() && lookup(":", &set).is_none());
+    }
+
+    #[test]
+    fn stickers_are_lone_names() {
+        let e = |name: &str, sticker| chad_proto::chadd::Emoji {
+            name: name.into(),
+            file: format!("{name}.png"),
+            sticker,
+        };
+        let list = vec![e("wave", true), e("chad", true), e("chad", false)];
+        let set = custom(list, "https://chat.example");
+        // The emoji of a name wins over the sticker.
+        assert_eq!(set.len(), 2);
+        assert!(!set[0].sticker);
+        let url = "https://chat.example/emoji/stickers/wave.png";
+        assert_eq!(sticker(" :wave: ", &set).unwrap().url.as_str(), url);
+        for t in [":chad:", ":wave: hi", ":wave::wave:", "wave", ""] {
+            assert!(sticker(t, &set).is_none(), "{t}");
+        }
     }
 
     #[test]

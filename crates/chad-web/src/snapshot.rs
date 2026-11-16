@@ -56,6 +56,9 @@ export type Msg = {
   account: string | null; avatar: string | null;
   /** Without formatting, for copying and editing. */
   text: string; spans: Span[];
+  /** The message is nothing but a sticker (D103): its image, to draw big in
+      place of the text once it's there. */
+  sticker: string | null;
   action: boolean; notice: boolean; replyTo: string | null; own: boolean; mention: boolean;
   pending: boolean; failed: string | null; redacted: boolean; edited: boolean;
   reactions: Reaction[]; links: Link[];
@@ -72,7 +75,8 @@ export type Member = {
   music: { start: number; length: number; url: string | null } | null;
 };
 export type Nick = { nick: string; shown: string };
-export type CustomEmoji = { name: string; url: string };
+/** `sticker` (D103): in its own picker tab, posted as a message of its own. */
+export type CustomEmoji = { name: string; url: string; sticker: boolean };
 export type Emoji = { emoji: string; name: string };
 export type Shortcoded = { text: string; cursor: number };
 export type LinkPreview = { title: string | null; description: string | null; site: string | null; image: string | null };
@@ -175,6 +179,7 @@ struct Msg<'a> {
     avatar: Option<String>,
     text: String,
     spans: Vec<Span>,
+    sticker: Option<&'a str>,
     action: bool,
     notice: bool,
     reply_to: Option<&'a str>,
@@ -219,6 +224,7 @@ struct Named<'a> {
 struct Custom<'a> {
     name: &'a str,
     url: &'a str,
+    sticker: bool,
 }
 
 #[derive(Serialize)]
@@ -312,7 +318,11 @@ impl Client {
                 let spans = spans(&m.text, &m.mentions, &n.emoji, |x| {
                     view::mention_name(&n.profiles, b.members.as_deref(), x).to_owned()
                 });
+                let text = format::strip(&m.text);
                 Msg {
+                    sticker: chad_core::emoji::sticker(&text, &n.emoji)
+                        .filter(|_| m.kind != MessageKind::Action)
+                        .map(|e| e.url.as_str()),
                     key: m
                         .msgid
                         .clone()
@@ -328,7 +338,7 @@ impl Client {
                         .and_then(|p| p.avatar.as_ref())
                         .map(ToString::to_string),
                     links: links(&spans, network),
-                    text: format::strip(&m.text),
+                    text,
                     spans,
                     action: m.kind == MessageKind::Action,
                     notice: m.kind == MessageKind::Notice,
@@ -423,6 +433,7 @@ impl Client {
             .map(|e| Custom {
                 name: &e.name,
                 url: e.url.as_str(),
+                sticker: e.sticker,
             })
             .collect();
         to_js(&list)

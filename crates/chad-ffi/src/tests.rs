@@ -215,6 +215,7 @@ fn custom_emoji_spans() {
     let set = [chad_core::CustomEmoji {
         name: "bigint".into(),
         url: "https://chat.example/emoji/bigint.png".parse().unwrap(),
+        sticker: false,
     }];
     // Not in code or links, and the text stays what plain clients see.
     let got = spans("\x02a :bigint:\x02 \x11:bigint:\x11", &[], &set, |_| {

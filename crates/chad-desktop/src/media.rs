@@ -209,6 +209,21 @@ impl Media {
         )))
     }
 
+    /// A sticker's image fitted in a `side` square, once it's loaded.
+    pub fn sticker_image(
+        &mut self,
+        ui: &egui::Ui,
+        e: &chad_core::CustomEmoji,
+        side: f32,
+    ) -> Option<egui::Image<'static>> {
+        self.want_image(e.url.as_str());
+        let Some(Img::Ready(f)) = self.images.get(e.url.as_str()) else {
+            return None;
+        };
+        let size = f.size * (side / f.size.max_elem().max(1.0));
+        Some(egui::Image::new((frame_at(f, ui.ctx()).id(), size)))
+    }
+
     /// A custom emoji in a line of text; its `:name:` until the image is there.
     pub fn emoji(&mut self, ui: &mut egui::Ui, e: &chad_core::CustomEmoji) {
         let code = format!(":{}:", e.name);

@@ -753,7 +753,11 @@ impl Client {
                 let spans = spans(&m.text, &m.mentions, &n.emoji, |x| {
                     chad_core::view::mention_name(&n.profiles, b.members.as_deref(), x).to_owned()
                 });
+                let text: String = spans.iter().map(|s| s.text.as_str()).collect();
                 Message {
+                    sticker: chad_core::emoji::sticker(&text, &n.emoji)
+                        .filter(|_| m.kind != MessageKind::Action)
+                        .map(|e| e.url.to_string()),
                     key: m
                         .msgid
                         .clone()
@@ -767,7 +771,7 @@ impl Client {
                         .and_then(|p| p.avatar.as_ref())
                         .map(std::string::ToString::to_string),
                     links: links(&spans, &network),
-                    text: spans.iter().map(|s| s.text.as_str()).collect(),
+                    text,
                     spans,
                     action: m.kind == MessageKind::Action,
                     notice: m.kind == MessageKind::Notice,
@@ -825,6 +829,7 @@ impl Client {
             .map(|e| CustomEmoji {
                 name: e.name.clone(),
                 url: e.url.to_string(),
+                sticker: e.sticker,
             })
             .collect()
     }

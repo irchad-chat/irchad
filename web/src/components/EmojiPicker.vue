@@ -1,13 +1,14 @@
 <!-- Standard and the network's custom emoji, as the desktop's picker. Picks
-     the character, or a custom one's `:name:`. -->
+     the character, or a custom one's `:name:`. With `stickers`, the network's
+     stickers have a tab of their own (D103). -->
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { emojis } from '../wasm/chad_web'
 import { useClient } from '../stores/client'
 import MediaImg from './MediaImg.vue'
 
-defineProps<{ below?: boolean }>()
-const emit = defineEmits<{ pick: [emoji: string]; close: [] }>()
+const props = defineProps<{ below?: boolean; stickers?: boolean }>()
+const emit = defineEmits<{ pick: [emoji: string]; sticker: [code: string]; close: [] }>()
 const client = useClient()
 const query = ref('')
 const search = ref<HTMLInputElement>()
@@ -22,8 +23,12 @@ const all = emojis('')
 const standard = computed(() => (query.value.trim() ? emojis(query.value) : all))
 const custom = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return client.emoji.filter((e) => e.name.includes(q))
+  return client.emoji.filter((e) => !e.sticker && e.name.includes(q))
 })
+const stickerSet = computed(() => (props.stickers ? client.emoji.filter((e) => e.sticker) : []))
+const tab = ref<'emoji' | 'stickers'>('emoji')
+// The emoji grid is mounted anew: measure it again.
+watch(tab, (t) => t === 'emoji' && scrolled(), { flush: 'post' })
 
 // Only the rows in view are drawn: ~1900 color glyphs at once garble some
 // GPU glyph caches, and it's slow anyway.
@@ -59,6 +64,18 @@ onMounted(() => {
 <template>
   <div class="backdrop" @click="emit('close')" />
   <div class="picker" :class="{ below }" role="dialog" aria-label="Emoji" @keydown.esc="emit('close')">
+    <div v-if="stickerSet.length" class="tabs" role="tablist">
+      <button role="tab" :aria-selected="tab === 'emoji'" :class="{ on: tab === 'emoji' }" @click="tab = 'emoji'">Emoji</button>
+      <button role="tab" :aria-selected="tab === 'stickers'" :class="{ on: tab === 'stickers' }" @click="tab = 'stickers'">
+        Stickers
+      </button>
+    </div>
+    <div v-if="tab === 'stickers'" class="scroll stickers">
+      <button v-for="e in stickerSet" :key="e.name" :title="`:${e.name}:`" :aria-label="`:${e.name}:`" @click="emit('sticker', `:${e.name}:`)">
+        <MediaImg :url="e.url" :alt="e.name"><span class="small ellipsis">{{ e.name }}</span></MediaImg>
+      </button>
+    </div>
+    <template v-else>
     <input
       ref="search"
       v-model="query"
@@ -84,6 +101,7 @@ onMounted(() => {
       </div>
       <p v-if="!standard.length && !custom.length" class="dim">No emoji found.</p>
     </div>
+    </template>
   </div>
 </template>
 
@@ -138,6 +156,41 @@ onMounted(() => {
 .grid .emoji {
   width: 26px;
   height: 26px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tabs button {
+  padding: 2px 10px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+}
+.tabs .on {
+  background: var(--surface);
+}
+.stickers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 104px;
+  align-content: start;
+}
+.stickers button {
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  background: none;
+  border: none;
+  overflow: hidden;
+}
+.stickers button:hover {
+  background: var(--surface);
+}
+.stickers img {
+  max-width: 100%;
+  max-height: 92px;
+  object-fit: contain;
 }
 hr {
   width: 100%;

@@ -129,6 +129,7 @@ chad-desktop (egui) ──commands──▶ chad-core ──▶ chad-irc  ──
 | Images and link previews | Plain URLs in the message. The client shows images and video/file cards inline, and previews the first other link through chadd (D25). |
 | GIFs | The picker's GIF tab searches through chadd (D30) and sends the GIF's URL as a plain message, so it shows inline like any other image. |
 | Custom emoji | Plain `:name:` in the text or in `+draft/react`. The client draws the image when the name is in the set chadd lists (D73). |
+| Stickers | A message that is nothing but the `:name:` of an image in `[emoji] dir`'s `stickers` subdirectory, drawn big (D103). |
 | Typing | `+typing` |
 | Replies / reactions | `+draft/reply`, `+draft/react` |
 | Mentions | The nick in the text, plus `+chad/mentions=<nick> <account>,...` for nicks picked from completion. IrChad shows them with the account's current name, and highlights on its own account, nick or display name (D66). |

@@ -323,15 +323,24 @@ fun RemoteImage(
  * It's fetched whatever the media settings say: it comes from the network itself.
  */
 @Composable
-fun EmojiImage(app: IrChad, network: String, url: String, name: String, modifier: Modifier = Modifier) {
+fun EmojiImage(
+    app: IrChad,
+    network: String,
+    url: String,
+    name: String,
+    modifier: Modifier = Modifier,
+    // What to decode for: a sticker is drawn bigger, and from its box's start.
+    side: androidx.compose.ui.unit.Dp = 48.dp,
+    scale: ImageView.ScaleType = ImageView.ScaleType.FIT_CENTER,
+) {
     val tick by app.media.tick.collectAsState()
     val img = remember(tick, network, url) { app.media.image(network, url, true) }
     val ready = img as? Media.Img.Ready ?: return
     // They're drawn at about text height.
-    val side = with(LocalDensity.current) { 48.dp.roundToPx() }
-    val d = remember(ready, side) { ready.forView(side) }
+    val px = with(LocalDensity.current) { side.roundToPx() }
+    val d = remember(ready, px) { ready.forView(px) }
     AndroidView(
-        factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+        factory = { ImageView(it).apply { scaleType = scale } },
         update = {
             if (it.drawable !== d) {
                 it.setImageDrawable(d)
@@ -489,7 +498,8 @@ private fun LinkPreviewCard(app: IrChad, network: String, url: String) {
 
 /**
  * Emoji, and GIFs when `provider` is set (the network has search). Emoji
- * stay open for more; a GIF closes it. `gifQuery` opens on the GIFs, already
+ * stay open for more; a GIF closes it. With `onSticker`, the network's
+ * stickers have a tab too (D103), and one is posted like a GIF. `gifQuery` opens on the GIFs, already
  * searching (desktop's `/gif`).
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -502,17 +512,31 @@ fun Picker(
     onGif: (String) -> Unit,
     onDismiss: () -> Unit,
     gifQuery: String? = null,
+    onSticker: ((String) -> Unit)? = null,
 ) {
+    // 0 emoji, 1 GIFs, 2 stickers.
     var tab by rememberSaveable { mutableStateOf(if (gifQuery != null) 1 else 0) }
+    val version by app.version.collectAsState()
+    val stickers = remember(version, network, onSticker == null) {
+        if (onSticker == null) emptyList() else app.client.customEmoji(network).filter { it.sticker }
+    }
+    val tabs = listOfNotNull(
+        0 to "Emoji",
+        (2 to "Stickers").takeIf { stickers.isNotEmpty() },
+        (1 to "GIFs").takeIf { provider != null },
+    )
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.navigationBarsPadding().fillMaxWidth().height(480.dp)) {
-            if (provider != null) {
-                PrimaryTabRow(selectedTabIndex = tab) {
-                    Tab(tab == 0, { tab = 0 }, text = { Text("Emoji") })
-                    Tab(tab == 1, { tab = 1 }, text = { Text("GIFs") })
+            if (tabs.size > 1) {
+                PrimaryTabRow(selectedTabIndex = tabs.indexOfFirst { it.first == tab }.coerceAtLeast(0)) {
+                    for ((i, label) in tabs) Tab(tab == i, { tab = i }, text = { Text(label) })
                 }
             }
-            if (tab == 1 && provider != null) GifTab(app, network, provider, gifQuery.orEmpty(), onGif) else EmojiTab(app, network, onEmoji)
+            when {
+                tab == 1 && provider != null -> GifTab(app, network, provider, gifQuery.orEmpty(), onGif)
+                tab == 2 && onSticker != null && stickers.isNotEmpty() -> StickerTab(app, network, stickers, onSticker)
+                else -> EmojiTab(app, network, onEmoji)
+            }
         }
     }
 }
@@ -526,7 +550,8 @@ private fun ColumnScope.EmojiTab(app: IrChad, network: String, onEmoji: (String)
     val version by app.version.collectAsState()
     val custom = remember(version, network, query) {
         val q = query.trim().lowercase()
-        app.client.customEmoji(network).filter { q in it.name }
+        // Stickers have their own tab.
+        app.client.customEmoji(network).filter { !it.sticker && q in it.name }
     }
     OutlinedTextField(
         query, { query = it }, singleLine = true, placeholder = { Text("Find an emoji") },
@@ -550,6 +575,32 @@ private fun ColumnScope.EmojiTab(app: IrChad, network: String, onEmoji: (String)
                 Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)).clickable { onEmoji(e) },
                 contentAlignment = androidx.compose.ui.Alignment.Center,
             ) { Text(e, style = MaterialTheme.typography.headlineSmall) }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.StickerTab(
+    app: IrChad,
+    network: String,
+    stickers: List<party.gentoo.irchad.core.CustomEmoji>,
+    onSticker: (String) -> Unit,
+) {
+    LazyVerticalGrid(GridCells.Adaptive(104.dp), Modifier.weight(1f).padding(8.dp)) {
+        items(stickers, key = { it.name }) { e ->
+            val code = ":${e.name}:"
+            Box(
+                Modifier.size(104.dp).clip(RoundedCornerShape(8.dp))
+                    .clickable(onClickLabel = code) { onSticker(code) },
+                contentAlignment = androidx.compose.ui.Alignment.Center,
+            ) {
+                // Under the image until it loads.
+                Text(e.name, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                EmojiImage(
+                    app, network, e.url, code,
+                    Modifier.size(92.dp).background(MaterialTheme.colorScheme.surfaceContainerLow), side = 92.dp,
+                )
+            }
         }
     }
 }

@@ -32,6 +32,7 @@ The member list shows who's online and away, and each person's role in the chann
 | Mention someone | Type `@` and pick them, or type the start of a name and press <kbd>Tab</kbd> |
 | Emoji | The emoji button, or a shortcode like `:smile:` |
 | [Custom emoji](#custom-emoji) | The top of the emoji picker, or its name like `:chad:` |
+| [Sticker](#stickers) | The **Stickers** tab of the emoji picker |
 | GIF | The **GIFs** tab of the emoji picker, or `/gif happy cat` |
 | Invite someone to the channel | `/invite nick` (several nicks work too) |
 | Bold, italic, code | `**bold**`, `*italic*`, `` `code` ``, and ```` ``` ```` around a code block |
@@ -57,6 +58,14 @@ A network can have its own emoji. They're listed first in the emoji picker, in m
 People on ordinary IRC clients see the name, like `:chad:`, and so do you until the picture has loaded.
 
 > **Server setting:** `chadd.toml` → `[emoji]` with a `dir` of images. A file named `chad.png` is `:chad:`. Names are 2 to 32 lowercase letters, digits and `_`, the file a png, jpg, gif or webp of at most 1 MiB. Add or remove files at any time; people get the change when they next connect or open the picker. Everything in that directory is public.
+
+### Stickers
+
+A sticker is a big picture sent as a message of its own. On a network that has them, the emoji picker has a **Stickers** tab: click one and it's posted. Typing a sticker's name between colons as the whole message does the same.
+
+People on ordinary IRC clients see the name, like `:chad_sticker:`, and so do you until the picture has loaded.
+
+> **Server setting:** put the images in a `stickers` directory inside the `[emoji]` `dir`. The rules are the same as for emoji, with at most 200 stickers. A sticker can't have the name of an emoji.
 
 ## Replies, reactions, edits, deletes
 

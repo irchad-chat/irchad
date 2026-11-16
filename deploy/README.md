@@ -34,7 +34,7 @@ Caddy's internal CA root is in the `caddy-data` volume (`/data/caddy/pki/authori
 - `Caddyfile`: routing per `docs/ARCHITECTURE.md`.
 - Uploads go to the `chadd-uploads` volume (`chadd2-uploads` for the second network). ergo advertises them to plain IRC clients as ISUPPORT `draft/FILEHOST` (the `ERGO__SERVER__ADDITIONAL_ISUPPORT` env in `compose.yaml`).
 - Soundboard clips are the files in `sounds/`, mounted read-only into both chadds (`[sounds]` in their configs). Add or remove files at will; clients list them each time the soundboard opens (D37).
-- Custom emoji are the images in `emoji/`, mounted the same way (`[emoji]`): `chad.png` is `:chad:`. Clients list them when they connect and when the emoji picker opens (D73).
+- Custom emoji are the images in `emoji/`, mounted the same way (`[emoji]`): `chad.png` is `:chad:`. The ones in `emoji/stickers/` are stickers (D103). Clients list them when they connect and when the emoji picker opens (D73).
 - `jwt-dev.pem` / `jwt-dev.pub.pem`: **dev-only** Ed25519 key for "Sign in with Discord" (D96). chadd signs with the private half and ergo checks with the public one. To try it against Discord, run compose with `DISCORD_SECRET_FILE=<file holding the app's client secret>`; the app's redirect must include `https://<IRCHAD_HOST>:8443/api/oauth/discord/callback`. Without it, chadd uses `discord-secret.example` and Discord refuses the sign-in.
 - `chadd.toml`: chadd config. compose sets `CHADD_ORIGIN` to match the published host and port. `[ergo]` holds the API URL and bearer token (must match `ergo.yaml`), and `[livekit]` holds the key and secret (must match `livekit.yaml`).
 - `tools/ergo-probe.py`: the Phase 0 capability probe (see `docs/notes/ergo-caps.md`).

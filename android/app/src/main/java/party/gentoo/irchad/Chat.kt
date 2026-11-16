@@ -1340,6 +1340,11 @@ private fun MessageRow(
                         fontStyle = FontStyle.Italic,
                         inlineContent = inline,
                     )
+                    // A sticker (D103): the image alone, once it has loaded.
+                    m.sticker != null && m.sticker in inline -> EmojiImage(
+                        app, network, m.sticker!!, m.text, Modifier.size(160.dp),
+                        side = 160.dp, scale = android.widget.ImageView.ScaleType.FIT_START,
+                    )
                     // Nothing but shown images: no empty line above them.
                     spans.isEmpty() && m.spans.isNotEmpty() -> {}
                     else -> Text(
@@ -1580,6 +1585,11 @@ private fun Composer(
             },
             onDismiss = { picker = false },
             gifQuery = gifQuery,
+            // Its `:name:`, a message of its own.
+            onSticker = {
+                c.send(net.network, buf.target, it, null, emptyList())
+                picker = false
+            },
         )
     }
 

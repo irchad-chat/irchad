@@ -23,6 +23,8 @@ const GUTTER: f32 = 8.0;
 const GROUP_GAP_MS: i64 = 5 * 60 * 1000;
 pub const QUICK_REACTIONS: [&str; 4] = ["👍", "❤", "😂", "😮"];
 const AVATAR: f32 = 40.0;
+/// A sticker's longer side in a message, as Discord has it.
+const STICKER: f32 = 160.0;
 /// Inline images per message.
 const MAX_IMAGES: usize = 3;
 
@@ -923,6 +925,16 @@ fn body_ui(
     let weak = m.status == SendStatus::Pending || m.kind == MessageKind::Notice;
     let mut first = true;
     let text: String = lines.iter().flatten().map(|s| s.text.as_str()).collect();
+    // A sticker: the image alone. Its `:name:` below until it has loaded.
+    if m.kind != MessageKind::Action
+        && let Some(e) = chad_core::emoji::sticker(&text, extras.emoji)
+        && let Some(img) = extras.media.sticker_image(ui, e, STICKER)
+    {
+        let code = format!(":{}:", e.name);
+        let r = ui.add(img).on_hover_text(&code);
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Image, true, &code));
+        return;
+    }
     if m.kind != MessageKind::Action && chad_core::emoji::only_emoji(&text, extras.emoji) {
         // Custom emoji size off Body too, so they grow with it.
         if let Some(f) = ui.style_mut().text_styles.get_mut(&egui::TextStyle::Body) {

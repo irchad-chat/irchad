@@ -464,8 +464,13 @@ fn live_emoji() {
     s.click("Emoji");
     s.settle(1);
     s.shot("emoji_picker");
-    s.harness.key_press(egui::Key::Escape);
-    s.settle(1);
+    // A sticker from `deploy/emoji/stickers` is posted from its tab (D103).
+    s.click("Stickers");
+    s.settle(2);
+    s.shot("sticker_picker");
+    s.click(":chad_sticker:");
+    s.settle(4);
+    s.shot("sticker_message");
     // React with it: searching for its name and Enter picks the custom one.
     s.harness
         .get_all_by_label("custom ")

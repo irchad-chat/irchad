@@ -506,6 +506,17 @@ struct MessageRow: View {
             EmojiTicks(network: network, urls: spans.compactMap(\.emoji)) { now in
                 styledText(spans, prefix: "* \(m.shown) ", network: network, media: model.media, at: now).italic()
             }
+        } else if let sticker = m.sticker {
+            // A sticker (D103): the image alone, its `:name:` until it has loaded.
+            EmojiTicks(network: network, urls: [sticker]) { now in
+                if let i = model.media.emojiImage(network: network, url: sticker, height: 160, at: now) {
+                    Image(uiImage: i).resizable().scaledToFit()
+                        .frame(maxWidth: 160, maxHeight: 160, alignment: .leading)
+                        .accessibilityLabel(m.text)
+                } else {
+                    styledText(spans, network: network, media: model.media, at: now)
+                }
+            }
         } else if spans.isEmpty && !m.spans.isEmpty {
             // Nothing but shown images: no empty line above them.
             EmptyView()

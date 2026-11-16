@@ -163,7 +163,7 @@ impl App {
                 at,
                 query: String::new(),
                 shown: false,
-                gif_tab: false,
+                tab: PickerTab::Emoji,
                 gifs: Default::default(),
             });
         }
@@ -173,7 +173,11 @@ impl App {
                 at,
                 query: String::new(),
                 shown: false,
-                gif_tab,
+                tab: if gif_tab {
+                    PickerTab::Gifs
+                } else {
+                    PickerTab::Emoji
+                },
                 gifs: gifs::Gifs::searching(c.gif_query),
             });
         }

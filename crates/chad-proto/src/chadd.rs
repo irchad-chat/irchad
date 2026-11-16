@@ -42,10 +42,13 @@ pub const SOUNDS: &str = "sounds";
 pub const SOUND: &str = "sound";
 /// `POST <api>/emoji`, no auth: the network's custom emoji, a list of
 /// [`Emoji`]s. A message shows one as `:name:`, which is all plain IRC clients
-/// see. The images are at `<origin>/emoji/<file>`.
+/// see. The images are at `<origin>/emoji/<file>`, a sticker's at
+/// `<origin>/emoji/stickers/<file>`.
 pub const EMOJI: &str = "emoji";
 /// Most custom emoji a network has.
 pub const MAX_EMOJI: usize = 500;
+/// Most stickers a network has, in the same list.
+pub const MAX_STICKERS: usize = 200;
 /// `POST <api>/games` with a Bearer session token: Discord's detectable games
 /// as [`Game`]s, which chadd downloads itself so clients never tell Discord
 /// what they play. `404` when the server doesn't offer it.
@@ -250,8 +253,12 @@ pub struct Sound {
 pub struct Emoji {
     /// Written `:name:` in a message.
     pub name: String,
-    /// Under `<origin>/emoji/`; see [`emoji_name`].
+    /// Under `<origin>/emoji/` (`<origin>/emoji/stickers/` for a sticker);
+    /// see [`emoji_name`].
     pub file: String,
+    /// A sticker: drawn big when a message is nothing but its `:name:`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sticker: bool,
 }
 
 /// A Discord application: Rich Presence names the game only by `id`.

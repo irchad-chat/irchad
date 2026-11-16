@@ -176,6 +176,7 @@ function drop(e: DragEvent) {
   upload(e.dataTransfer.files)
 }
 
+// A sticker is posted as its `:name:`, a message of its own (D103).
 function gif(url: string) {
   picker.value = null
   client.send(url, client.replying?.msgid ?? null, [])
@@ -233,7 +234,7 @@ function gif(url: string) {
         <button title="Emoji" aria-label="Emoji" :disabled="!enabled" @click="picker = picker === 'emoji' ? null : 'emoji'">
           <i class="ph ph-smiley" />
         </button>
-        <EmojiPicker v-if="picker === 'emoji'" @pick="insert" @close="picker = null" />
+        <EmojiPicker v-if="picker === 'emoji'" stickers @pick="insert" @sticker="gif" @close="picker = null" />
         <GifPicker v-if="picker === 'gif'" @pick="gif" @close="picker = null" />
       </div>
     </div>

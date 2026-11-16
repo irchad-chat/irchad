@@ -490,27 +490,36 @@ struct Zoomable<Content: View>: View {
 }
 
 /// Emoji, and GIFs when `gifs` (the provider) is set. Emoji stay open for
-/// more; a GIF closes it.
+/// more; a GIF closes it. With `onSticker`, the network's stickers have a tab
+/// too (D103), and one is posted like a GIF.
 struct EmojiGifPicker: View {
+    @Environment(AppModel.self) private var model
     let network: String
     let gifs: String?
     let onEmoji: (String) -> Void
     let onGif: (String) -> Void
+    var onSticker: ((String) -> Void)? = nil
+    /// 0 emoji, 1 GIFs, 2 stickers.
     @State private var tab = 0
 
     var body: some View {
+        let _ = model.tick
+        let stickers = onSticker == nil ? [] : model.client.customEmoji(network: network).filter(\.sticker)
         NavigationStack {
             VStack(spacing: 0) {
-                if gifs != nil {
+                if gifs != nil || !stickers.isEmpty {
                     Picker("Kind", selection: $tab) {
                         Text("Emoji").tag(0)
-                        Text("GIFs").tag(1)
+                        if !stickers.isEmpty { Text("Stickers").tag(2) }
+                        if gifs != nil { Text("GIFs").tag(1) }
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
                 }
                 if tab == 1, let gifs {
                     GifTab(network: network, provider: gifs, onGif: onGif)
+                } else if tab == 2, let onSticker, !stickers.isEmpty {
+                    StickerTab(network: network, stickers: stickers, onSticker: onSticker)
                 } else {
                     EmojiTab(network: network, onEmoji: onEmoji)
                 }
@@ -532,7 +541,8 @@ private struct EmojiTab: View {
         // The network's own come first.
         let _ = (model.tick, model.media.tick)
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let custom = model.client.customEmoji(network: network).filter { q.isEmpty || $0.name.contains(q) }
+        // Stickers have their own tab.
+        let custom = model.client.customEmoji(network: network).filter { !$0.sticker && (q.isEmpty || $0.name.contains(q)) }
         VStack(spacing: 0) {
             TextField("Find an emoji", text: $query)
                 .textFieldStyle(.roundedBorder)
@@ -566,6 +576,36 @@ private struct EmojiTab: View {
         }
         // The set may have changed since we connected.
         .task { model.client.refreshEmoji(network: network) }
+    }
+}
+
+private struct StickerTab: View {
+    @Environment(AppModel.self) private var model
+    let network: String
+    let stickers: [CustomEmoji]
+    let onSticker: (String) -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 4) {
+                ForEach(stickers, id: \.name) { e in
+                    let code = ":\(e.name):"
+                    Button { onSticker(code) } label: {
+                        EmojiTicks(network: network, urls: [e.url]) { now in
+                            if let i = model.media.emojiImage(network: network, url: e.url, height: 92, at: now) {
+                                Image(uiImage: i).resizable().scaledToFit()
+                            } else {
+                                Text(e.name).font(.caption2).lineLimit(1)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 100, height: 100)
+                    .accessibilityLabel(code)
+                }
+            }
+            .padding(8)
+        }
     }
 }
 
