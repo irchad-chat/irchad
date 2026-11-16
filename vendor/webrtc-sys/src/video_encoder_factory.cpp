@@ -64,6 +64,11 @@
 #include "jetson/jetson_encoder_factory.h"
 #endif
 
+// irchad: AMD AMF on Windows.
+#if defined(USE_AMF_VIDEO_CODEC)
+#include "amf/amf_encoder_factory.h"
+#endif
+
 namespace livekit_ffi {
 
 namespace {
@@ -288,6 +293,21 @@ void AddVaapiFactory(
 #endif
 }
 
+// irchad: AMD AMF on Windows, as the generic hardware backend. Added after
+// NVENC, so a machine with both encodes on the Nvidia card.
+void AddAmfFactory(std::vector<VideoEncoderBackendFactory>& factories) {
+#if defined(USE_AMF_VIDEO_CODEC)
+  if (webrtc::AmfVideoEncoderFactory::IsSupported()) {
+    AddBackendFactory(
+        factories,
+        VideoEncoderBackend::Hardware,
+        std::make_unique<webrtc::AmfVideoEncoderFactory>());
+  }
+#else
+  (void)factories;
+#endif
+}
+
 }  // namespace
 
 using Factory = webrtc::VideoEncoderFactoryTemplate<
@@ -305,6 +325,24 @@ bool nvenc_av1_supported() {
 #if defined(USE_NVIDIA_VIDEO_CODEC)
   return webrtc::NvidiaVideoEncoderFactory::IsSupported() &&
          webrtc::NvidiaVideoEncoderFactory::IsAv1Supported();
+#else
+  return false;
+#endif
+}
+
+// irchad: see webrtc.rs.
+bool amf_supported() {
+#if defined(USE_AMF_VIDEO_CODEC)
+  return webrtc::AmfVideoEncoderFactory::IsSupported();
+#else
+  return false;
+#endif
+}
+
+// irchad: see webrtc.rs.
+bool amf_av1_supported() {
+#if defined(USE_AMF_VIDEO_CODEC)
+  return webrtc::AmfVideoEncoderFactory::IsAv1Supported();
 #else
   return false;
 #endif
@@ -350,6 +388,13 @@ rust::Vec<VideoEncoderBackend> video_encoder_backend_list() {
   }
 #endif
 
+#if defined(USE_AMF_VIDEO_CODEC)
+  // irchad
+  if (webrtc::AmfVideoEncoderFactory::IsSupported()) {
+    has_hardware_backend = true;
+  }
+#endif
+
   if (has_hardware_backend && !hardware_backend_listed) {
     backends.push_back(VideoEncoderBackend::Hardware);
   }
@@ -388,6 +433,7 @@ VideoEncoderFactory::InternalFactory::InternalFactory() {
     AddNvencFactory(factories_, preferred_hw_encoder.explicitly_set);
     AddVaapiFactory(factories_, false);
   }
+  AddAmfFactory(factories_);
 }
 
 std::vector<webrtc::SdpVideoFormat>

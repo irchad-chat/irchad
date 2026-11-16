@@ -118,5 +118,8 @@ rust::String create_random_uuid();
 rust::Vec<VideoEncoderBackend> video_encoder_backend_list();
 // irchad: see webrtc.rs.
 bool nvenc_av1_supported();
+// irchad: see webrtc.rs.
+bool amf_supported();
+bool amf_av1_supported();
 
 }  // namespace livekit_ffi

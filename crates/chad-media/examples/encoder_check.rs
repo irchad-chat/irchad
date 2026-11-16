@@ -8,7 +8,7 @@
 //! ```
 //!
 //! Env: CODEC (av1 | h264 | h265 | vp9, default av1), BACKEND (nvenc | vaapi |
-//! software | auto, default nvenc), CHECK_SECS (5). On Windows, NVENC is only
+//! amf | software | auto, default nvenc), CHECK_SECS (5). On Windows, NVENC is only
 //! compiled in when the build saw cuda.h (`scripts/cuda-headers.ps1`).
 
 use std::sync::Arc;
@@ -47,6 +47,8 @@ async fn main() -> anyhow::Result<()> {
     };
     let backend = match std::env::var("BACKEND").as_deref() {
         Ok("vaapi") => VideoEncoderBackend::Vaapi,
+        // AMD AMF (Windows) is the generic hardware backend.
+        Ok("amf") => VideoEncoderBackend::Hardware,
         Ok("software") => VideoEncoderBackend::Software,
         Ok("auto") => VideoEncoderBackend::Auto,
         _ => VideoEncoderBackend::Nvenc,

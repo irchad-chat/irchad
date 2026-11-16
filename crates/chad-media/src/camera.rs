@@ -40,6 +40,7 @@ pub(crate) async fn start(voice: &Voice) -> Result<(), String> {
         Preset::P720p30,
         shared.clone(),
         PREVIEW_CAMERA,
+        None,
     );
     let v = voice.clone();
     let on_end: OnEnd = Box::new(move || v.end_share(id, true));

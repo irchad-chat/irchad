@@ -7,6 +7,7 @@
 
 mod camera;
 mod engine;
+mod monitor;
 mod platform;
 mod room;
 mod screen;

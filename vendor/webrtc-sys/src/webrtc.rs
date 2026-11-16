@@ -76,6 +76,11 @@ pub mod ffi {
         // irchad: whether NVENC encodes AV1 (Ada and later), which the merged
         // codec list can't tell apart from libaom.
         fn nvenc_av1_supported() -> bool;
+        // irchad: whether a Radeon's AMF encoder is there (Windows only; it
+        // is the `Hardware` backend, which other encoders answer to as well),
+        // and whether it encodes AV1 at any size.
+        fn amf_supported() -> bool;
+        fn amf_av1_supported() -> bool;
         fn new_log_sink(fnc: fn(String, LoggingSeverity)) -> UniquePtr<LogSink>;
     }
 }

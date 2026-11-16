@@ -133,6 +133,8 @@ jobs:
           Get-ChildItem "${env:CARGO_TARGET_DIR}\release\build\scratch-*\out\livekit_webrtc\livekit\*\*\LICENSE.md" |
             Sort-Object LastWriteTime | Select-Object -Last 1 | Copy-Item -Destination "$lic\LIBWEBRTC_LICENSES.md"
           if (-not (Test-Path "$lic\LIBWEBRTC_LICENSES.md")) { "libwebrtc LICENSE.md not found"; exit 1 }
+          # AMD's AMF headers are compiled into webrtc-sys (vendor/README.md).
+          Copy-Item vendor\webrtc-sys\src\amf\AMF\LICENSE.txt "$lic\AMF_LICENSE.txt"
           if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
             choco install nsis -y --no-progress
             $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"

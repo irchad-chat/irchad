@@ -187,6 +187,17 @@ fn main() {
                 println!("cargo:warning=cuda.h not found (set CUDA_HOME or CUDA_PATH); building without NVENC");
             }
 
+            // irchad: AMD AMF (H.264 and AV1 encode). The SDK headers are
+            // vendored and the runtime is amfrt64.dll from the AMD driver,
+            // loaded on first use, so there is nothing to find or link.
+            builder
+                .include("src/amf")
+                .include("src/amf/AMF/include")
+                .file("src/amf/amf_runtime.cpp")
+                .file("src/amf/amf_encoder.cpp")
+                .file("src/amf/amf_encoder_factory.cpp")
+                .define("USE_AMF_VIDEO_CODEC", "1");
+
             builder
                 //.include("./vaapi-windows/DirectX-Headers-1.0/include")
                 //.include(path::PathBuf::from("./vaapi-windows/x64/include"))

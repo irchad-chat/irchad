@@ -34,6 +34,16 @@ Our changes (each is marked `irchad:` in the source):
   a new `nvenc_av1_supported()` FFI call. The merged codec list can't tell
   NVENC's AV1 from libaom's, and pre-Ada cards have NVENC without AV1, so
   screen share asks for H.264 over NVENC there (D92).
+- `src/amf/` (new) and `build.rs`: an AMD AMF encoder for Windows (D104),
+  H.264 and AV1. `AMF/` holds AMD's SDK headers (v1.5.3, MIT, `core/` and the
+  six `components/` headers the encoders need, unmodified). `amf_runtime.cpp`
+  loads `amfrt64.dll` from the driver and makes a context on the AMD adapter,
+  `amf_encoder.cpp` is the encoder, and `amf_encoder_factory.cpp` the factory
+  and its probe. `build.rs` always compiles them on Windows and defines
+  `USE_AMF_VIDEO_CODEC`.
+- `src/video_encoder_factory.cpp`, `src/webrtc.rs`, `include/livekit/webrtc.h`:
+  the AMF factory is registered as the `Hardware` backend after NVENC and
+  VAAPI, and `amf_supported()` / `amf_av1_supported()` are new FFI calls.
 - `src/nvidia/NvCodec/include/Utils/Logger.h`: `winsock2.h` instead of
   `winsock.h`, which clashes with webrtc's.
 
@@ -44,4 +54,6 @@ Bumping `livekit` means re-vendoring the new webrtc-sys and reapplying these
 changes, or dropping the patch once upstream builds NVENC on Windows.
 Check with `cargo run -p chad-media --example encoder_check`. On an Nvidia box
 it should print `NVIDIA AV1 Encoder (hardware: true)`. With `CODEC=h264` it
-should print `NVIDIA H264 Encoder (hardware: true)` at 1920x1080.
+should print `NVIDIA H264 Encoder (hardware: true)` at 1920x1080. On a Radeon
+under Windows, `BACKEND=amf` should print `AMD AMF AV1 Encoder` (or, with
+`CODEC=h264` or on a card that pads AV1, `AMD AMF H264 Encoder`).

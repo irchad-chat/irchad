@@ -19,7 +19,6 @@ use livekit::webrtc::audio_source::{
     AudioSourceOptions, RtcAudioSource, native::NativeAudioSource,
 };
 use livekit::webrtc::native::yuv_helper;
-use livekit::webrtc::stats::RtcStats;
 use livekit::webrtc::video_frame::{I420Buffer, VideoBuffer, VideoFrame, VideoRotation};
 use livekit::webrtc::video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource};
 use serde::{Deserialize, Serialize};
@@ -57,8 +56,8 @@ impl Default for ScreenSettings {
 /// Which video encoder a share asks for (D92).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Encoder {
-    /// The GPU's best: AV1 on NVENC that has it, H.264 on any other GPU
-    /// encoder, else H.264 in software.
+    /// The GPU's best: AV1 on NVENC or a Radeon (Windows) that has it, H.264
+    /// on any other GPU encoder, else H.264 in software.
     #[default]
     Auto,
     /// H.264 on whatever encodes it, GPU first. Every browser plays it, and
@@ -320,11 +319,13 @@ pub(crate) async fn start(
         },
         true,
     );
+    let watched = Arc::new(crate::monitor::Capture::default());
     let sink = encoder(
         source.clone(),
         settings.preset,
         shared.clone(),
         PREVIEW_SCREEN,
+        Some(watched.clone()),
     );
     let v = voice.clone();
     let on_end: OnEnd = Box::new(move || v.end_share(id, false));
@@ -368,6 +369,7 @@ pub(crate) async fn start(
 
     let (codec, backend) = codec(settings.encoder);
     let track = LocalVideoTrack::create_video_track("screen", RtcVideoSource::Native(source));
+    let track_id = track.rtc_track().id();
     let publication = room
         .local_participant()
         .publish_track(
@@ -399,7 +401,9 @@ pub(crate) async fn start(
     };
     let mut tracks = vec![publication.sid()];
     tracing::info!("screen share: {codec:?}, asked for the {backend:?} encoder");
-    log_encoder(room.clone());
+    // The sink holds the only strong reference, so this ends with the capture.
+    crate::monitor::watch(room.clone(), Arc::downgrade(&watched), track_id, fps);
+    drop(watched);
 
     if let Some(app) = app {
         let source = NativeAudioSource::new(
@@ -578,14 +582,17 @@ fn pattern(fps: u32, mut sink: FrameSink) -> Box<dyn ScreenSource> {
 
 /// Captured frames → I420 at the preset's size and rate → the video source,
 /// and to our own preview while it's open. `kind`: which preview that is.
+/// `watched`: a share's counters for [`crate::monitor`].
 pub(crate) fn encoder(
     source: NativeVideoSource,
     preset: Preset,
     shared: Arc<Shared>,
     kind: u8,
+    watched: Option<Arc<crate::monitor::Capture>>,
 ) -> FrameSink {
     let interval = Duration::from_micros(1_000_000 / u64::from(preset.fps()));
     let mut next = Instant::now();
+    let mut last = Instant::now();
     let mut seq = 0;
     Box::new(move |f: Frame<'_>| {
         let now = Instant::now();
@@ -594,6 +601,8 @@ pub(crate) fn encoder(
             return;
         }
         next = next.max(now) + interval;
+        let gap = now - last;
+        last = now;
         let mut i420 = I420Buffer::new(f.width, f.height);
         let (sy, su, sv) = i420.strides();
         let (y, u, v) = i420.data_mut();
@@ -625,6 +634,9 @@ pub(crate) fn encoder(
             frame_metadata: None,
             buffer: i420,
         });
+        if let Some(watched) = &watched {
+            watched.frame(gap, now.elapsed());
+        }
     })
 }
 
@@ -744,9 +756,10 @@ fn app_sink(source: NativeAudioSource) -> AppSink {
 }
 
 /// The GPU encoder [`Encoder::Auto`] uses, by what libwebrtc's probes find
-/// (D92): NVENC (AV1 on Ada and later, H.264 before), then VAAPI (Linux only;
-/// the Windows build has none). Probed once, on first use: NVENC's probe
-/// wakes the GPU, which shouldn't happen just because IrChad started.
+/// (D92, D104): NVENC (AV1 on Ada and later, H.264 before), then VAAPI (Linux
+/// only), then AMD's AMF (Windows only, where it is the generic `Hardware`
+/// backend). Probed once, on first use: NVENC's probe wakes the GPU, which
+/// shouldn't happen just because IrChad started.
 fn hardware() -> Option<(VideoCodec, VideoEncoderBackend)> {
     static HW: OnceLock<Option<(VideoCodec, VideoEncoderBackend)>> = OnceLock::new();
     *HW.get_or_init(|| {
@@ -762,6 +775,15 @@ fn hardware() -> Option<(VideoCodec, VideoEncoderBackend)> {
             Some((codec, VideoEncoderBackend::Nvenc))
         } else if have.contains(&VideoEncoderBackend::Vaapi) {
             Some((VideoCodec::H264, VideoEncoderBackend::Vaapi))
+        } else if webrtc_sys::webrtc::ffi::amf_supported() {
+            // Older Radeons pad AV1 to sizes a viewer can't crop, so they
+            // (and the ones without AV1) get H.264.
+            let codec = if webrtc_sys::webrtc::ffi::amf_av1_supported() {
+                VideoCodec::AV1
+            } else {
+                VideoCodec::H264
+            };
+            Some((codec, VideoEncoderBackend::Hardware))
         } else {
             None
         }
@@ -772,16 +794,18 @@ fn hardware() -> Option<(VideoCodec, VideoEncoderBackend)> {
 /// on the first call while the GPU is probed.
 pub fn hardware_encoder() -> Option<&'static str> {
     hardware().map(|hw| match hw {
-        (VideoCodec::AV1, _) => "NVIDIA NVENC, AV1",
+        (VideoCodec::AV1, VideoEncoderBackend::Nvenc) => "NVIDIA NVENC, AV1",
         (_, VideoEncoderBackend::Nvenc) => "NVIDIA NVENC, H.264",
+        (VideoCodec::AV1, _) => "AMD AMF, AV1",
+        (_, VideoEncoderBackend::Hardware) => "AMD AMF, H.264",
         _ => "VAAPI, H.264",
     })
 }
 
 /// The codec and encoder a share asks for. The SDK falls back to software if
-/// it can't open that encoder after all; [`log_encoder`] says which ran.
+/// it can't open that encoder after all; [`crate::monitor`] logs which ran.
 ///
-/// For debugging, `IRCHAD_SCREEN_ENCODER=software|vaapi|nvenc` overrides the
+/// For debugging, `IRCHAD_SCREEN_ENCODER=software|vaapi|nvenc|amf` overrides the
 /// backend (keeping the codec).
 fn codec(choice: Encoder) -> (VideoCodec, VideoEncoderBackend) {
     let software = (VideoCodec::H264, VideoEncoderBackend::Software);
@@ -794,33 +818,10 @@ fn codec(choice: Encoder) -> (VideoCodec, VideoEncoderBackend) {
         Ok("software") => VideoEncoderBackend::Software,
         Ok("nvenc") => VideoEncoderBackend::Nvenc,
         Ok("vaapi") => VideoEncoderBackend::Vaapi,
+        Ok("amf") => VideoEncoderBackend::Hardware,
         _ => backend,
     };
     (codec, backend)
-}
-
-/// Logs which encoder libwebrtc actually picked, once it's running.
-fn log_encoder(room: Arc<Room>) {
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        let Ok(stats) = room.get_stats().await else {
-            return;
-        };
-        for s in &stats.publisher_stats {
-            if let RtcStats::OutboundRtp(o) = s
-                && o.stream.kind == "video"
-            {
-                tracing::info!(
-                    "screen share encoder: {} (hardware: {}), {}x{} at {:.0} fps",
-                    o.outbound.encoder_implementation,
-                    o.outbound.power_efficient_encoder,
-                    o.outbound.frame_width,
-                    o.outbound.frame_height,
-                    o.outbound.frames_per_second,
-                );
-            }
-        }
-    });
 }
 
 #[cfg(test)]
