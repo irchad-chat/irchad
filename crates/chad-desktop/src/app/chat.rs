@@ -102,6 +102,7 @@ impl App {
         let (b, profiles, media, devices) =
             (&mut n.buffers[bi], &n.profiles, &mut n.ui.media, &n.devices);
         let (emoji, has_emoji) = (&n.emoji[..], n.info.emoji);
+        let oper = n.info.oper;
         let target = b.info.target.clone();
         let cx = Pane {
             network: &network,
@@ -141,6 +142,7 @@ impl App {
             seen: b
                 .seen()
                 .and_then(|i| Some((b.msgs[i].msgid.clone()?, b.info.seen?.at))),
+            oper,
         };
         let l = egui::CentralPanel::default()
             .show(ui, |ui| messages(ui, &cx, b, extras))

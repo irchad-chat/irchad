@@ -48,6 +48,8 @@ pub struct Extras<'a> {
     pub dm: bool,
     /// The message to put "Seen" under, and when they read it (D68).
     pub seen: Option<(String, i64)>,
+    /// We're an IRC operator, so we can delete anyone's message.
+    pub oper: bool,
 }
 
 pub enum Action {
@@ -484,7 +486,16 @@ impl ChatLog {
                 if m.redacted {
                     return None;
                 }
-                let bar = toolbar(ui.ctx(), ui.layer_id(), i, m, r, own_nick, &mut out.actions);
+                let bar = toolbar(
+                    ui.ctx(),
+                    ui.layer_id(),
+                    i,
+                    m,
+                    r,
+                    own_nick,
+                    extras.oper,
+                    &mut out.actions,
+                );
                 m.msgid.clone().map(|id| (id, bar))
             });
             viewport
@@ -798,6 +809,7 @@ fn toolbar_layer(log: egui::LayerId) -> egui::LayerId {
 
 /// Replies, quick reactions, delete; floats over the row's top-right corner
 /// so it never changes a row's height. Returns its rect.
+#[allow(clippy::too_many_arguments)]
 fn toolbar(
     ctx: &egui::Context,
     log: egui::LayerId,
@@ -805,6 +817,7 @@ fn toolbar(
     m: &ChatMessage,
     row: Rect,
     own_nick: &str,
+    oper: bool,
     actions: &mut Vec<Action>,
 ) -> Rect {
     let Some(id) = &m.msgid else {
@@ -858,7 +871,8 @@ fn toolbar(
                         {
                             actions.push(Action::Edit(index));
                         }
-                        if m.own && ui.small_button(icons::TRASH).tip("Delete").clicked() {
+                        if (m.own || oper) && ui.small_button(icons::TRASH).tip("Delete").clicked()
+                        {
                             actions.push(Action::Delete { msgid: id.clone() });
                         }
                     });
