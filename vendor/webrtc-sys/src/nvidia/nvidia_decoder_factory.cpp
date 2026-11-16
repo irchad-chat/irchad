@@ -3,9 +3,16 @@
 #include <modules/video_coding/codecs/h264/include/h264.h>
 
 #include <cstdlib>
-#include <dlfcn.h>
 #include <memory>
 #include <mutex>
+
+// irchad: dlopen on Linux, LoadLibrary on Windows (nvcuvid.dll ships with
+// the driver; the entry points resolve from cuvid_loader_win.cpp).
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include "cuda_context.h"
 #include "h264_decoder_impl.h"
@@ -34,19 +41,33 @@ void LogNvdecDisabledByEnv() {
 
 constexpr char kSdpKeyNameCodecImpl[] = "implementation_name";
 constexpr char kCodecName[] = "NvCodec";
+// irchad: the NVDEC runtime library per platform.
+#if defined(_WIN32)
+constexpr wchar_t kNvdecRuntimeLibrary[] = L"nvcuvid.dll";
+#else
 constexpr char kNvdecRuntimeLibrary[] = "libnvcuvid.so.1";
+#endif
 
 namespace {
 
 bool IsNvdecRuntimeAvailable() {
+#if defined(_WIN32)
+  HMODULE hModule =
+      LoadLibraryExW(kNvdecRuntimeLibrary, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+#else
   void* hModule = dlopen(kNvdecRuntimeLibrary, RTLD_LAZY | RTLD_LOCAL);
+#endif
   if (!hModule) {
-    RTC_LOG(LS_WARNING) << "NVDEC runtime library (" << kNvdecRuntimeLibrary
-                        << ") not found, hardware decoding unavailable.";
+    RTC_LOG(LS_WARNING) << "NVDEC runtime library not found, hardware "
+                           "decoding unavailable.";
     return false;
   }
 
+#if defined(_WIN32)
+  FreeLibrary(hModule);
+#else
   dlclose(hModule);
+#endif
   return true;
 }
 

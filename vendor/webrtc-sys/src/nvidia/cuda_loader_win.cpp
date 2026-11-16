@@ -90,6 +90,9 @@ CU_FORWARD(cuMemAllocPitch,
             size_t Height,
             unsigned int ElementSizeBytes),
            (dptr, pPitch, WidthInBytes, Height, ElementSizeBytes))
+// irchad: cuMemAlloc and the stream calls are NVDEC's (NvDecoder.cpp), not
+// the encoder's.
+CU_FORWARD(cuMemAlloc, (CUdeviceptr* dptr, size_t bytesize), (dptr, bytesize))
 CU_FORWARD(cuMemFree, (CUdeviceptr dptr), (dptr))
 CU_FORWARD(cuArrayDestroy, (CUarray hArray), (hArray))
 CU_FORWARD(cuMemcpy2D, (const CUDA_MEMCPY2D* pCopy), (pCopy))
@@ -97,5 +100,9 @@ CU_FORWARD(cuMemcpy2DUnaligned, (const CUDA_MEMCPY2D* pCopy), (pCopy))
 CU_FORWARD(cuMemcpy2DAsync,
            (const CUDA_MEMCPY2D* pCopy, CUstream hStream),
            (pCopy, hStream))
+CU_FORWARD(cuStreamCreate, (CUstream* phStream, unsigned int Flags),
+           (phStream, Flags))
+CU_FORWARD(cuStreamSynchronize, (CUstream hStream), (hStream))
+CU_FORWARD(cuStreamDestroy, (CUstream hStream), (hStream))
 
 }  // extern "C"

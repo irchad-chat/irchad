@@ -157,11 +157,12 @@ fn main() {
             //println!("cargo:rustc-link-lib=dylib=va");
             //println!("cargo:rustc-link-lib=dylib=va_win32");
 
-            // irchad: NVENC on Windows (encode only; NVDEC would need the
-            // Video Codec SDK's nvcuvid.lib). Building needs nothing but
+            // irchad: NVENC and NVDEC on Windows. Building needs nothing but
             // cuda.h: the cu* driver calls resolve from nvcuda.dll at runtime
             // (src/nvidia/cuda_loader_win.cpp), the NVENC entry points from
-            // nvEncodeAPI64.dll, so the binary still runs without Nvidia.
+            // nvEncodeAPI64.dll and the NVDEC ones from nvcuvid.dll
+            // (src/nvidia/cuvid_loader_win.cpp), so the binary still runs
+            // without Nvidia.
             println!("cargo:rerun-if-env-changed=CUDA_HOME");
             println!("cargo:rerun-if-env-changed=CUDA_PATH");
             let cuda_include_dir = ["CUDA_HOME", "CUDA_PATH"]
@@ -176,26 +177,35 @@ fn main() {
                     .include("src/nvidia/NvCodec/NvCodec")
                     .file("src/nvidia/NvCodec/NvCodec/NvEncoder/NvEncoder.cpp")
                     .file("src/nvidia/NvCodec/NvCodec/NvEncoder/NvEncoderCuda.cpp")
+                    .file("src/nvidia/NvCodec/NvCodec/NvDecoder/NvDecoder.cpp")
                     .file("src/nvidia/h264_encoder_impl.cpp")
                     .file("src/nvidia/h265_encoder_impl.cpp")
                     .file("src/nvidia/av1_encoder_impl.cpp")
                     .file("src/nvidia/nvidia_encoder_factory.cpp")
+                    .file("src/nvidia/h264_decoder_impl.cpp")
+                    .file("src/nvidia/h265_decoder_impl.cpp")
+                    .file("src/nvidia/nvidia_decoder_factory.cpp")
                     .file("src/nvidia/cuda_context.cpp")
                     .file("src/nvidia/cuda_loader_win.cpp")
-                    .define("USE_NVIDIA_VIDEO_CODEC", "1");
+                    .file("src/nvidia/cuvid_loader_win.cpp")
+                    .define("USE_NVIDIA_VIDEO_CODEC", "1")
+                    .define("USE_NVIDIA_VIDEO_DECODER", "1");
             } else {
-                println!("cargo:warning=cuda.h not found (set CUDA_HOME or CUDA_PATH); building without NVENC");
+                println!("cargo:warning=cuda.h not found (set CUDA_HOME or CUDA_PATH); building without NVENC/NVDEC");
             }
 
-            // irchad: AMD AMF (H.264 and AV1 encode). The SDK headers are
-            // vendored and the runtime is amfrt64.dll from the AMD driver,
-            // loaded on first use, so there is nothing to find or link.
+            // irchad: AMD AMF (H.264 and AV1 encode and decode). The SDK
+            // headers are vendored and the runtime is amfrt64.dll from the
+            // AMD driver, loaded on first use, so there is nothing to find
+            // or link.
             builder
                 .include("src/amf")
                 .include("src/amf/AMF/include")
                 .file("src/amf/amf_runtime.cpp")
                 .file("src/amf/amf_encoder.cpp")
                 .file("src/amf/amf_encoder_factory.cpp")
+                .file("src/amf/amf_decoder.cpp")
+                .file("src/amf/amf_decoder_factory.cpp")
                 .define("USE_AMF_VIDEO_CODEC", "1");
 
             builder

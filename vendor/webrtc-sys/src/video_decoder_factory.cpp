@@ -39,6 +39,11 @@
 #include "nvidia/nvidia_decoder_factory.h"
 #endif
 
+#if defined(USE_AMF_VIDEO_CODEC)
+// irchad: the Radeon's decoder, after NVDEC and before the built-ins.
+#include "amf/amf_decoder_factory.h"
+#endif
+
 namespace livekit_ffi {
 
 namespace {
@@ -82,6 +87,13 @@ VideoDecoderFactory::VideoDecoderFactory()
 #if defined(USE_NVIDIA_VIDEO_DECODER)
   if (webrtc::NvidiaVideoDecoderFactory::IsSupported()) {
     factories_.push_back(std::make_unique<webrtc::NvidiaVideoDecoderFactory>());
+  }
+#endif
+
+#if defined(USE_AMF_VIDEO_CODEC)
+  // irchad: after NVDEC, so a hybrid box decodes on the Nvidia half.
+  if (webrtc::AmfVideoDecoderFactory::IsSupported()) {
+    factories_.push_back(std::make_unique<webrtc::AmfVideoDecoderFactory>());
   }
 #endif
 
@@ -131,6 +143,15 @@ VideoDecoderFactory::CodecSupport VideoDecoderFactory::QueryCodecSupport(
 
   CodecSupport codec_support;
   codec_support.is_supported = format.IsCodecInList(GetSupportedFormats());
+  // irchad: a hardware factory's format is the power-efficient one; the
+  // receive stats' powerEfficientDecoder comes from here.
+  for (const auto& factory : factories_) {
+    for (const auto& supported : factory->GetSupportedFormats()) {
+      if (supported.IsSameCodec(format)) {
+        codec_support.is_power_efficient = true;
+      }
+    }
+  }
   return codec_support;
 }
 
@@ -182,6 +203,33 @@ std::unique_ptr<webrtc::VideoDecoder> VideoDecoderFactory::Create(
 
   RTC_LOG(LS_ERROR) << "No VideoDecoder found for " << format.name;
   return nullptr;
+}
+
+// irchad: see webrtc.rs.
+bool nvdec_supported() {
+#if defined(USE_NVIDIA_VIDEO_DECODER)
+  return webrtc::NvidiaVideoDecoderFactory::IsSupported();
+#else
+  return false;
+#endif
+}
+
+// irchad: see webrtc.rs.
+bool amf_decoder_supported() {
+#if defined(USE_AMF_VIDEO_CODEC)
+  return webrtc::AmfVideoDecoderFactory::IsSupported();
+#else
+  return false;
+#endif
+}
+
+// irchad: see webrtc.rs.
+bool amf_decoder_av1_supported() {
+#if defined(USE_AMF_VIDEO_CODEC)
+  return webrtc::AmfVideoDecoderFactory::IsAv1Supported();
+#else
+  return false;
+#endif
 }
 
 }  // namespace livekit_ffi

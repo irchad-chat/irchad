@@ -81,6 +81,11 @@ pub mod ffi {
         // and whether it encodes AV1 at any size.
         fn amf_supported() -> bool;
         fn amf_av1_supported() -> bool;
+        // irchad: the decoder side: whether received video decodes on the
+        // GPU (NVDEC on Nvidia, AMF on a Radeon).
+        fn nvdec_supported() -> bool;
+        fn amf_decoder_supported() -> bool;
+        fn amf_decoder_av1_supported() -> bool;
         fn new_log_sink(fnc: fn(String, LoggingSeverity)) -> UniquePtr<LogSink>;
     }
 }

@@ -121,5 +121,9 @@ bool nvenc_av1_supported();
 // irchad: see webrtc.rs.
 bool amf_supported();
 bool amf_av1_supported();
+// irchad: the decoder side of the above.
+bool nvdec_supported();
+bool amf_decoder_supported();
+bool amf_decoder_av1_supported();
 
 }  // namespace livekit_ffi

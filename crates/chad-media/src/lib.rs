@@ -21,7 +21,7 @@ pub use monitor::StreamStats;
 pub use room::{Call, wait_closed};
 pub use screen::{
     AudioApp, ContentHint, Encoder, Preset, Public, ScreenFrame, ScreenSettings, ShareSource,
-    SourceId, Target, Targets, hardware_encoder,
+    SourceId, Target, Targets, hardware_decoder, hardware_encoder,
 };
 pub use sound::{MAX_SECS as MAX_SOUND_SECS, load as load_sound};
 

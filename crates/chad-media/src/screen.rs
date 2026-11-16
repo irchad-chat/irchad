@@ -802,6 +802,27 @@ pub fn hardware_encoder() -> Option<&'static str> {
     })
 }
 
+/// What received video decodes with here: NVDEC on an Nvidia driver, then
+/// AMD's AMF decoder (Windows only), in the merged decoder factory's order.
+/// Probed once, on first use, like [`hardware_encoder`].
+pub fn hardware_decoder() -> Option<&'static str> {
+    static HW: OnceLock<Option<&'static str>> = OnceLock::new();
+    *HW.get_or_init(|| {
+        let (nvdec, amf) = (
+            webrtc_sys::webrtc::ffi::nvdec_supported(),
+            webrtc_sys::webrtc::ffi::amf_decoder_supported(),
+        );
+        tracing::debug!("video decoders available: nvdec {nvdec}, amf {amf}");
+        if nvdec {
+            Some("NVIDIA NVDEC")
+        } else if amf {
+            Some("AMD AMF")
+        } else {
+            None
+        }
+    })
+}
+
 /// The codec and encoder a share asks for. The SDK falls back to software if
 /// it can't open that encoder after all; [`crate::monitor`] logs which ran.
 ///
