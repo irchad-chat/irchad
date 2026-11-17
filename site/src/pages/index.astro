@@ -13,10 +13,10 @@ const builds = [
   { os: "Android", icon: "android-logo", asset: "irchad-android-arm64.apk", note: "arm64 APK, sideloaded. No nightly builds.", nightly: false },
   { os: "iOS", icon: "apple-logo", href: testflight, note: "Public beta through TestFlight. Needs iOS 18 or newer.", nightly: false },
 ];
-// Obtainium can't detect a self-hosted Gitea, so preset its Forgejo source ("Codeberg" class) or it scrapes HTML and makes up versions.
+// Obtainium tracks the GitHub mirror's releases; it detects GitHub on its own.
 const obtainium = "obtainium://app/" + encodeURIComponent(JSON.stringify({
-  id: "party.gentoo.irchad", url: repo, author: "sam", name: "IrChad",
-  overrideSource: "Codeberg", additionalSettings: JSON.stringify({ includePrereleases: false }),
+  id: "party.gentoo.irchad", url: "https://github.com/irchad-chat/irchad", author: "irchad-chat", name: "IrChad",
+  additionalSettings: JSON.stringify({ includePrereleases: false }),
 }));
 const features = [
   ["Paste a link, start chatting", "An invite URL carries the whole network config. Log in and you're in your channels, with no server lists or nickserv."],
