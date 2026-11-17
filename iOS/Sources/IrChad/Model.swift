@@ -76,7 +76,7 @@ final class AppModel {
     @ObservationIgnored private var awaySent = Set<String>()
 
     private init() {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let version = Bundle.main.infoDictionary?["ChadVersion"] as? String ?? "?"
         bridge = Bridge()
         voice = VoiceBridge()
         client = Client(

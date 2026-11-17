@@ -51,9 +51,11 @@ mkdir -p "$here/Sources/IrChad/Generated" "$here/Sources/chad_ffiFFI/include"
 cp "$gen/chad_ffi.swift" "$here/Sources/IrChad/Generated/"
 cp "$gen/chad_ffiFFI.h" "$here/Sources/chad_ffiFFI/include/"
 
-# The App Store wants the bundle's version to match the release.
+# The repo version goes in ChadVersion (shown in Settings, sent as the IRC version reply).
+# CFBundleShortVersionString is bumped by hand, only for App Store submissions: each new one
+# sends external TestFlight testers through beta review again.
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml" | head -1)
 # Each upload needs a higher build number, even between releases: use the commit count.
 build=$(git -C "$root" rev-list --count HEAD)
-sed -i "/<key>CFBundleShortVersionString<\/key>/{n;s|<string>.*</string>|<string>$version</string>|}" "$here/Info.plist"
+sed -i "/<key>ChadVersion<\/key>/{n;s|<string>.*</string>|<string>$version</string>|}" "$here/Info.plist"
 sed -i "/<key>CFBundleVersion<\/key>/{n;s|<string>.*</string>|<string>$build</string>|}" "$here/Info.plist"

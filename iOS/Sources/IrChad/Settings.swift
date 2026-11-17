@@ -164,6 +164,6 @@ struct SettingsView: View {
     }
 
     private var version: String {
-        "IrChad \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")"
+        "IrChad \(Bundle.main.infoDictionary?["ChadVersion"] as? String ?? "")"
     }
 }

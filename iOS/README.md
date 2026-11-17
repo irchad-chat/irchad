@@ -12,7 +12,7 @@ You also need clang and `rust-src` (`-Zbuild-std` is used when rustup has no iOS
 
 ```sh
 cd iOS
-./build-rust.sh      # libchad_ffi.a, the Swift bindings, and the version in Info.plist
+./build-rust.sh      # libchad_ffi.a, the Swift bindings, and the version (ChadVersion) and build number in Info.plist; bump CFBundleShortVersionString by hand only when submitting to the App Store
 xtool dev            # build, sign, install and launch on the connected device
 ```
 
