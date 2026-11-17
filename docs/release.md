@@ -22,5 +22,7 @@
    - the image `git.gentoo.party/sam/chadd:<v>` and `:latest`
    - once it's published, `packaging/aur/publish.sh` bumps `irchad-bin` on the AUR (skipped without the `AUR_SSH_KEY` and `AUR_EMAIL` secrets)
 
+The push mirror carries the tag to GitHub, where `.github/workflows/release.yml` builds the same tarball, deb, Windows installer and zip, and APK into a GitHub Release (needs `UPDATE_SIGNING_KEY`, `ANDROID_KEYSTORE` and `ANDROID_KEYSTORE_PASSWORD` secrets there). Everything else (updater, S3, apt, AUR, Play, chadd image) stays on Gitea.
+
 The Flatpak job is disabled for now (`if: false`); re-enabling it needs the Linux act_runner to allow privileged job containers (flatpak-builder).
 Runner prerequisites: the Windows runner needs NSIS (or Chocolatey to install it), the repo needs a `REGISTRY_TOKEN` secret with package write access and an `UPDATE_SIGNING_KEY` secret (D76), and the Linux job container `192.0.2.7:3000/sam/irchad-ci` must exist (`ci-image.yml`, D32).
