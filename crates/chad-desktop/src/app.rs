@@ -1170,6 +1170,10 @@ impl eframe::App for App {
         {
             self.switcher = Some(Switcher::default());
         }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::B)))
+        {
+            self.toggle_rail();
+        }
         let step = ctx.input_mut(|i| {
             let mut alt = |k| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::ALT, k));
             if alt(Key::ArrowUp) {
@@ -1231,10 +1235,17 @@ impl eframe::App for App {
         }
 
         self.update_banner(ui);
-        egui::Panel::left("rail")
-            .exact_size(68.0)
-            .resizable(false)
-            .show(ui, |ui| self.rail(ui));
+        if self.rail_shown() {
+            egui::Panel::left("rail")
+                .exact_size(68.0)
+                .resizable(false)
+                .show(ui, |ui| self.rail(ui));
+        } else if self.view.nets.len() > 1 {
+            egui::Panel::left("rail-strip")
+                .exact_size(10.0)
+                .resizable(false)
+                .show(ui, |ui| self.rail_strip(ui));
+        }
 
         let ni = self.current.as_deref().and_then(|c| self.net_idx(c));
         if let Some(ni) = ni {

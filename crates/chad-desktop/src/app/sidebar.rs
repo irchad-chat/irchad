@@ -3,19 +3,58 @@
 use super::*;
 
 impl App {
+    /// The server bar, as opposed to its strip or nothing. Always with no
+    /// networks: the welcome screen needs its + and gear.
+    pub(super) fn rail_shown(&self) -> bool {
+        let n = self.view.nets.len();
+        let s = &self.settings;
+        n == 0 || !(s.rail_collapsed || s.rail_single_hide && n == 1)
+    }
+
+    /// Ctrl+B. Hidden only for being the one network, it shows by turning
+    /// that setting off, so the settings window agrees with the screen.
+    pub(super) fn toggle_rail(&mut self) {
+        if self.rail_shown() {
+            self.settings.rail_collapsed = true;
+        } else if self.settings.rail_collapsed {
+            self.settings.rail_collapsed = false;
+            // Still hidden? Then it's the one-network rule.
+            if !self.rail_shown() {
+                self.settings.rail_single_hide = false;
+            }
+        } else {
+            self.settings.rail_single_hide = false;
+        }
+    }
+
     pub(super) fn rail(&mut self, ui: &mut egui::Ui) {
         // Settings pinned to the bottom, networks from the top.
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.add_space(8.0);
-            if ui
-                .add_sized(
-                    [48.0, 48.0],
-                    egui::Button::new(RichText::new(icons::GEAR).size(22.0)),
-                )
-                .tip("Settings")
-                .clicked()
+            let listing = self
+                .current
+                .as_deref()
+                .and_then(|c| self.net_idx(c))
+                .is_some();
+            // With a channel list open, the gear is in its user panel instead.
+            if !listing
+                && ui
+                    .add_sized(
+                        [48.0, 48.0],
+                        egui::Button::new(RichText::new(icons::GEAR).size(22.0)),
+                    )
+                    .tip("Settings")
+                    .clicked()
             {
                 self.show_settings = !self.show_settings;
+            }
+            if !self.view.nets.is_empty()
+                && ui
+                    .add_sized([48.0, 24.0], egui::Button::new("«"))
+                    .tip("Hide server bar (Ctrl+B)")
+                    .clicked()
+            {
+                self.settings.rail_collapsed = true;
             }
             ui.separator();
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
@@ -23,6 +62,36 @@ impl App {
                 self.networks(ui);
             });
         });
+    }
+
+    /// The collapsed server bar: click to unfold. A dot says another network
+    /// wants attention, red for mentions.
+    pub(super) fn rail_strip(&mut self, ui: &mut egui::Ui) {
+        let resp = ui
+            .allocate_rect(ui.max_rect(), Sense::click())
+            .tip("Show server bar (Ctrl+B)");
+        let others = self
+            .view
+            .nets
+            .iter()
+            .filter(|n| self.current.as_deref() != Some(&n.info.network));
+        let (mut unread, mut mentions) = (false, false);
+        for n in others {
+            unread |= n.unread();
+            mentions |= n.mentions() > 0;
+        }
+        if unread || mentions {
+            let color = if mentions {
+                ui.visuals().error_fg_color
+            } else {
+                ui.visuals().strong_text_color()
+            };
+            let at = egui::pos2(resp.rect.center().x, resp.rect.top() + 16.0);
+            ui.painter().circle_filled(at, 3.5, color);
+        }
+        if resp.clicked() {
+            self.settings.rail_collapsed = false;
+        }
     }
 
     pub(super) fn networks(&mut self, ui: &mut egui::Ui) {
@@ -96,9 +165,10 @@ impl App {
     }
 
     pub(super) fn channels(&mut self, ui: &mut egui::Ui, ni: usize) {
+        // Outermost first: the user panel sits below the call panel.
+        egui::Panel::bottom("me-panel").show(ui, |ui| self.status_menu(ui, ni));
         self.call_panel(ui);
         self.network_header(ui, ni);
-        self.status_menu(ui, ni);
         self.buffer_list(ui, ni);
     }
 
@@ -214,6 +284,12 @@ impl App {
                     if ui.button("Leave network…").clicked() {
                         self.confirm_remove = Some(network.clone());
                     }
+                    // Here too, for when the server bar is hidden.
+                    ui.separator();
+                    if ui.button("Join a network…").clicked() {
+                        self.welcome_done = true;
+                        self.join = Some(JoinDialog::default());
+                    }
                 })
                 .response
                 .tip("Network options");
@@ -276,11 +352,9 @@ impl App {
     fn status_menu(&mut self, ui: &mut egui::Ui, ni: usize) {
         let network = self.view.nets[ni].info.network.clone();
         let info = self.view.nets[ni].info.clone();
-        if info.oper {
-            ui.label(RichText::new(icons::CROWN).small());
-        }
         let own = info.nick;
         let shown = chatlog::shown(&self.view.nets[ni].profiles, &own).to_owned();
+        ui.add_space(4.0);
         let (dot, color) = if self.away_sent {
             (icons::MOON, voice::AWAY)
         } else {
@@ -296,33 +370,46 @@ impl App {
             RichText::new(dot).color(color).small(),
             egui::AtomExt::atom_shrink(name, true),
         ));
-        // Truncate the name rather than hold the channel list open.
-        ui.scope(|ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-            ui.menu_button(status, |ui| {
-                ui.radio_value(&mut self.settings.away, false, "Online");
-                ui.radio_value(&mut self.settings.away, true, "Away");
-                ui.separator();
-                if ui
-                    .button(format!("{} Edit profile…", icons::USER_CIRCLE))
-                    .clicked()
-                {
-                    let name = self.view.nets[ni]
-                        .profiles
-                        .get(&key(&own))
-                        .and_then(|p| p.display_name.clone())
-                        .unwrap_or_default();
-                    self.profile = Some(ProfileDialog {
-                        network: network.clone(),
-                        name,
-                        receipts: self.view.nets[ni].info.receipts,
-                    });
-                    self.send(&network, NetCommand::Devices { nick: own.clone() });
-                    ui.close();
-                }
-            })
-            .response
-            .tip("Your status and profile");
+        // Gear on the right; the name truncates into whatever's left.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add(egui::Button::new(RichText::new(icons::GEAR).size(18.0)).frame(false))
+                .tip("Settings")
+                .clicked()
+            {
+                self.show_settings = !self.show_settings;
+            }
+            if info.oper {
+                ui.label(RichText::new(icons::CROWN).small())
+                    .tip("IRC operator");
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                ui.menu_button(status, |ui| {
+                    ui.radio_value(&mut self.settings.away, false, "Online");
+                    ui.radio_value(&mut self.settings.away, true, "Away");
+                    ui.separator();
+                    if ui
+                        .button(format!("{} Edit profile…", icons::USER_CIRCLE))
+                        .clicked()
+                    {
+                        let name = self.view.nets[ni]
+                            .profiles
+                            .get(&key(&own))
+                            .and_then(|p| p.display_name.clone())
+                            .unwrap_or_default();
+                        self.profile = Some(ProfileDialog {
+                            network: network.clone(),
+                            name,
+                            receipts: self.view.nets[ni].info.receipts,
+                        });
+                        self.send(&network, NetCommand::Devices { nick: own.clone() });
+                        ui.close();
+                    }
+                })
+                .response
+                .tip("Your status and profile");
+            });
         });
         // What everyone sees as our activity (settings → General → Activity).
         if let Some(a) = self.activity_sent.0.as_deref().filter(|a| !a.is_empty()) {
@@ -330,7 +417,7 @@ impl App {
             ui.add(egui::Label::new(RichText::new(line).small().weak()).truncate())
                 .on_hover_text(a);
         }
-        ui.separator();
+        ui.add_space(4.0);
     }
 
     /// Channels, then DMs.

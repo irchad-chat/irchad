@@ -70,6 +70,10 @@ pub struct Settings {
     pub overlay: OverlaySettings,
     /// A network has been signed in to: the first-launch cards are over.
     pub welcomed: bool,
+    /// No server bar while there's only one network.
+    pub rail_single_hide: bool,
+    /// Server bar folded away (Ctrl+B).
+    pub rail_collapsed: bool,
 }
 
 impl Default for Settings {
@@ -102,6 +106,8 @@ impl Default for Settings {
             music_player_name: false,
             overlay: OverlaySettings::default(),
             welcomed: false,
+            rail_single_hide: true,
+            rail_collapsed: false,
         }
     }
 }
@@ -224,6 +230,13 @@ impl Settings {
                         &mut self.panes,
                         "Open channels side by side (Ctrl+arrows move between them)",
                     );
+                    ui.end_row();
+
+                    ui.label("Server bar");
+                    ui.vertical(|ui| {
+                        ui.checkbox(&mut self.rail_single_hide, "Hide it with only one network");
+                        ui.checkbox(&mut self.rail_collapsed, "Collapsed (Ctrl+B)");
+                    });
                     ui.end_row();
                 }
                 Section::Chat => {
