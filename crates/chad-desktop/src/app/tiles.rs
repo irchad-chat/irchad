@@ -183,10 +183,9 @@ impl App {
                 // Shown or hidden only by the header's toggle; names truncate when it's narrow.
                 let b = &self.view.nets[ni].buffers[bi];
                 if !b.ui.hide_members && b.info.kind == BufferKind::Channel {
-                    let fit = self.members_width(&pane, ni, bi);
                     egui::Panel::right(egui::Id::unique(("members", net, k)))
                         .resizable(true)
-                        .default_size(fit)
+                        .default_size(248.0)
                         .size_range(LIST_MIN_W..=(rect.width() / 2.0).max(LIST_MIN_W))
                         .show(&mut pane, |ui| self.members(ui, ni, bi));
                 }

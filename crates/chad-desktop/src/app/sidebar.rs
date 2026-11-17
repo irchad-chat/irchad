@@ -707,52 +707,6 @@ impl App {
         }
     }
 
-    /// The member list's starting width: its widest name beside an avatar,
-    /// plus the panel's margins, the scroll bar and a little air. Capped,
-    /// since display names can be long; past that they (and activities) truncate.
-    /// Dragging its edge overrides it.
-    pub(super) fn members_width(&self, ui: &egui::Ui, ni: usize, bi: usize) -> f32 {
-        let profiles = &self.view.nets[ni].profiles;
-        let b = &self.view.nets[ni].buffers[bi];
-        let Some(members) = &b.members else {
-            return 100.0;
-        };
-        // shortcut: a changed display name shows at the old width until the
-        // member list or profile count next changes; key on a profile revision if that bites.
-        let key = (members.as_ptr() as usize, profiles.len());
-        if let Some((m, p, w)) = b.ui.members_width.get()
-            && (m, p) == key
-        {
-            return w;
-        }
-        let body = egui::TextStyle::Body.resolve(ui.style());
-        let small = egui::TextStyle::Small.resolve(ui.style());
-        let width = |text: String, font: &FontId| {
-            ui.painter()
-                .layout_no_wrap(text, font.clone(), Color32::WHITE)
-                .size()
-                .x
-        };
-        let away = members.iter().filter(|m| m.away).count();
-        let widest = members
-            .iter()
-            .map(|m| {
-                let name = chatlog::shown(profiles, &m.nick);
-                ROW_TEXT_X + BADGE_GAP + width(format!("{}{name}", badges(m)), &body)
-            })
-            .chain([
-                width(format!("ONLINE — {}", members.len() - away), &small),
-                width(format!("AWAY — {away}"), &small),
-            ])
-            .fold(0.0, f32::max);
-        let s = &ui.style().spacing.scroll;
-        let bar = s.bar_width + s.bar_inner_margin + s.bar_outer_margin;
-        // Never so narrow that an activity line is all ellipsis.
-        let w = (widest + 16.0 + bar + 12.0).clamp(180.0, 360.0);
-        b.ui.members_width.set(Some((key.0, key.1, w)));
-        w
-    }
-
     pub(super) fn members(&mut self, ui: &mut egui::Ui, ni: usize, bi: usize) {
         let auto = self.settings.load_media;
         let n = &mut self.view.nets[ni];

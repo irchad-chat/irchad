@@ -253,9 +253,6 @@ struct BufUi {
     members_asked: bool,
     /// This pane's member list is toggled off.
     hide_members: bool,
-    /// The member panel's width, for the member list (by address) and
-    /// profile count it was measured against.
-    members_width: std::cell::Cell<Option<(usize, usize, f32)>>,
     older_asked: Option<Instant>,
     mark_sent: bool,
     draft: String,
