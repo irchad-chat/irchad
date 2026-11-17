@@ -102,6 +102,7 @@ private const val MAX_SIDE = 8192
 private const val MAX_ANIMATED = 2048L * 2048
 /** What decoded images may hold in memory, all together. */
 private const val CACHE_BYTES = 64 shl 20
+private const val RETRY_FAILED_MS = 30_000L
 
 /**
  * Images and link previews for the chat. The core fetches them (own uploads
@@ -176,7 +177,8 @@ class Media(private val app: IrChad) {
                 drawable
             }
         }
-        data object Failed : Img
+        /** `at`: when, by `SystemClock.elapsedRealtime`; it's fetched again after [RETRY_FAILED_MS]. */
+        class Failed(val at: Long = android.os.SystemClock.elapsedRealtime()) : Img
     }
 
     sealed interface Prev {
@@ -196,9 +198,14 @@ class Media(private val app: IrChad) {
     private val previews = LruCache<String, Prev>(128)
     private val decoder = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    // A failure is fetched again a while later: it may have failed offline.
+    private fun cached(key: String): Img? = images.get(key)?.takeIf {
+        it !is Img.Failed || android.os.SystemClock.elapsedRealtime() - it.at < RETRY_FAILED_MS
+    }
+
     /** `null` when it isn't loaded and `ask` is off. */
     fun image(network: String, url: String, ask: Boolean): Img? = synchronized(images) {
-        images.get("$network $url") ?: if (!ask) null else Img.Loading.also {
+        cached("$network $url") ?: if (!ask) null else Img.Loading.also {
             images.put("$network $url", it)
             app.client.media(network, url)
         }
@@ -206,7 +213,7 @@ class Media(private val app: IrChad) {
 
     /** The network's icon (`Network.icon`), always fetched, like desktop's. */
     fun icon(network: String, url: String): Img = synchronized(images) {
-        images.get("$network $url") ?: Img.Loading.also {
+        cached("$network $url") ?: Img.Loading.also {
             images.put("$network $url", it)
             app.client.icon(network)
         }
@@ -227,7 +234,7 @@ class Media(private val app: IrChad) {
 
     internal fun gotMedia(network: String, url: String, bytes: ByteArray?) {
         decoder.launch {
-            val img = bytes?.let(::decode) ?: Img.Failed
+            val img = bytes?.let(::decode) ?: Img.Failed()
             synchronized(images) { images.put("$network $url", img) }
             tick.value += 1
         }
@@ -289,7 +296,7 @@ fun RemoteImage(
             modifier.size(maxW.coerceAtMost(160.dp), 90.dp).clip(shape)
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         )
-        Media.Img.Failed -> {}
+        is Media.Img.Failed -> {}
         is Media.Img.Ready -> {
             val px = with(LocalDensity.current) { 1.dp.toPx() }
             val (w, h) = img.drawable.intrinsicWidth.coerceAtLeast(1) / px to img.drawable.intrinsicHeight.coerceAtLeast(1) / px

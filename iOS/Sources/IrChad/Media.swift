@@ -10,12 +10,16 @@ private let maxImages = 3
 private let maxSide = 8192
 /// Animated sources decode every frame.
 private let maxAnimated = 2048 * 2048
-/// What one animation's decoded frames may hold; later frames are dropped.
-private let maxAnimationBytes = 48 << 20
+/// What one animation's decoded frames may hold; frames are skipped evenly past it.
+/// Several have to fit in `cacheBytes` with the rest of a screen, or they evict
+/// each other and every view refetches in a loop.
+private let maxAnimationBytes = 12 << 20
 /// An animated custom emoji keeps this many frames at each size it's drawn.
 private let maxEmojiFrames = 120
 /// What decoded images may hold in memory, all together.
 private let cacheBytes = 64 << 20
+/// Seconds before an image that failed is fetched again.
+private let retryFailed: TimeInterval = 30
 
 /// Images and link previews for the chat. The core fetches them (own uploads
 /// directly, the rest through chadd, D25), and decoding is bounded (D14).
@@ -31,6 +35,7 @@ final class Media {
 
     private final class Box {
         let img: Img
+        let at = Date()
         init(_ img: Img) { self.img = img }
     }
 
@@ -75,7 +80,10 @@ final class Media {
     /// `nil` when it isn't loaded and `ask` is off.
     func image(network: String, url: String, ask: Bool) -> Img? {
         let key = "\(network) \(url)" as NSString
-        if let b = images.object(forKey: key) { return b.img }
+        if let b = images.object(forKey: key) {
+            // A failure is fetched again a while later: it may have failed offline.
+            guard case .failed = b.img, b.at.timeIntervalSinceNow < -retryFailed else { return b.img }
+        }
         guard ask else { return nil }
         images.setObject(Box(.loading), forKey: key, cost: 1)
         model.client.media(network: network, url: url)
@@ -190,16 +198,16 @@ final class Media {
             return CGImageSourceCreateThumbnailAtIndex(src, 0, opts).map { UIImage(cgImage: $0) }
         }
         guard w * h <= maxAnimated else { return nil }
-        var frames: [UIImage] = []
-        var duration = 0.0
-        var bytes = 0
-        for i in 0..<count {
+        guard let first = CGImageSourceCreateThumbnailAtIndex(src, 0, opts) else { return nil }
+        // Every `step`th frame keeps the whole loop within budget; time still covers every frame.
+        let frameBytes = max(1, first.width * first.height * 4)
+        let step = max(1, (count * frameBytes + maxAnimationBytes - 1) / maxAnimationBytes)
+        var frames = [UIImage(cgImage: first)]
+        for i in stride(from: step, to: count, by: step) {
             guard let f = CGImageSourceCreateThumbnailAtIndex(src, i, opts) else { break }
-            bytes += f.width * f.height * 4
-            if bytes > maxAnimationBytes { break }
             frames.append(UIImage(cgImage: f))
-            duration += delay(src, i)
         }
+        let duration = (0..<count).reduce(0.0) { $0 + delay(src, $1) }
         if frames.count <= 1 { return frames.first }
         return UIImage.animatedImage(with: frames, duration: duration)
     }

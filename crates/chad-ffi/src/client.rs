@@ -697,6 +697,7 @@ impl Client {
                     needs_code,
                     guest: n.info.guest,
                     discord: n.info.discord,
+                    oper: n.info.oper,
                     gifs: n.info.gifs.clone(),
                     uploads: n.info.uploads,
                     receipts: n.info.receipts,

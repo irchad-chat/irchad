@@ -1089,7 +1089,7 @@ private fun Log(
                     if (phone) {
                         if (menu?.key == m.key) {
                             MessageSheet(
-                                m, canReport = reportTo != null, onDismiss = { menu = null },
+                                m, canReport = reportTo != null, oper = net.oper, onDismiss = { menu = null },
                                 onReact = { e -> m.msgid?.let { c.react(net.network, buf.target, it, e) } },
                                 onPicker = { reactTo = m.msgid },
                                 onReply = { onReply(m) },
@@ -1132,7 +1132,7 @@ private fun Log(
                                     menu = null
                                 })
                             }
-                            if (m.own && m.msgid != null && !m.redacted) {
+                            if ((m.own || net.oper) && m.msgid != null && !m.redacted) {
                                 DropdownMenuItem(text = { Text("Delete") }, onClick = {
                                     c.redact(net.network, buf.target, m.msgid!!)
                                     menu = null
@@ -1186,7 +1186,7 @@ private val QUICK_REACTIONS = listOf("👍", "❤️", "😂", "😮", "😢", "
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MessageSheet(
-    m: Message, canReport: Boolean, onDismiss: () -> Unit,
+    m: Message, canReport: Boolean, oper: Boolean, onDismiss: () -> Unit,
     onReact: (String) -> Unit, onPicker: () -> Unit, onReply: () -> Unit, onCopy: () -> Unit,
     onEdit: () -> Unit, onDelete: () -> Unit, onReport: () -> Unit, onBlock: () -> Unit,
 ) {
@@ -1235,7 +1235,7 @@ private fun MessageSheet(
             if (m.own && sent && !m.undecryptable && !m.notice) Item("Edit", action = onEdit)
             val below = (m.own && sent) || !m.own
             if (below) HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            if (m.own && sent) Item("Delete", danger, onDelete)
+            if ((m.own || oper) && sent) Item("Delete", danger, onDelete)
             if (!m.own) {
                 Item("Block ${m.shown}", danger, onBlock)
                 if (canReport) Item("Report", danger, onReport)

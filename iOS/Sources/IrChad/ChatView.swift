@@ -587,6 +587,7 @@ struct MessageDrawer: View {
     var body: some View {
         let sent = m.msgid != nil && !m.redacted
         let canReport = !m.own && model.client.reportTo(network: network) != nil
+        let oper = model.client.networks().first { $0.network == network }?.oper == true
         VStack(spacing: 0) {
             if sent {
                 // 48pt each, 8pt apart, and the picker's.
@@ -620,7 +621,7 @@ struct MessageDrawer: View {
             }
             if m.own && sent && !m.notice { item("Edit", "pencil", action: onEdit) }
             if (m.own && sent) || !m.own { Divider().padding(.vertical, 8) }
-            if m.own && sent {
+            if (m.own || oper) && sent {
                 item("Delete", "trash", danger: true) {
                     if let id = m.msgid { model.client.redact(network: network, target: target, msgid: id) }
                 }
