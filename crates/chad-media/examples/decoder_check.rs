@@ -63,7 +63,10 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
 
-    println!("hardware decoder probe: {:?}", chad_media::hardware_decoder());
+    println!(
+        "hardware decoder probe: {:?}",
+        chad_media::hardware_decoder()
+    );
     let available: Vec<_> = VideoEncoderBackend::list_available().into_iter().collect();
     println!("encoder backends available: {available:?}");
 
@@ -79,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     let count = decoded.clone();
     rx.on_track(Some(Box::new(move |ev| {
         if let MediaStreamTrack::Video(t) = ev.track {
-            let mut stream = NativeVideoStream::new(t, None);
+            let mut stream = NativeVideoStream::new(t);
             let count = count.clone();
             tokio::spawn(async move {
                 while stream.next().await.is_some() {
@@ -156,7 +159,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut found = false;
     for s in rx.get_stats().await? {
-        if let RtcStats::InboundRtp(i)
+        if let RtcStats::InboundRtp(i) = s
             && i.stream.kind == "video"
         {
             found = true;

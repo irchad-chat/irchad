@@ -137,7 +137,8 @@ async fn main() -> anyhow::Result<()> {
         }
         // The capture stalls: one frame in five.
         let t = start.elapsed();
-        if dip && t >= Duration::from_secs(4) && t < Duration::from_secs(9) && !n.is_multiple_of(5) {
+        if dip && t >= Duration::from_secs(4) && t < Duration::from_secs(9) && !n.is_multiple_of(5)
+        {
             n += 1;
             continue;
         }

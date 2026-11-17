@@ -58,3 +58,41 @@ only), and so is the VAAPI one (no VAAPI encoder here).
   jitter buffer. Line it up with the publisher's log by time. A rough second
   on the viewer with nothing on the publisher's side happened past their
   upload (the SFU or the viewer's network).
+
+## Judder at ~50 fps (2026-11-17)
+
+A one-hour share (publisher RTX 4090, NVENC AV1; viewer RTX 4070 Ti with
+the AMD iGPU decoding) put the viewer at 13 rough seconds: 9 of downlink
+loss that NACK repaired (the publisher saw 0 loss), 4 freezes, all
+downstream of the publisher. None of these explains constant stutter.
+What does: the share asks for 60 fps, and every logged second on both
+sides ran at 46–58, with 25–39 ms gaps. That's a skipped frame every few
+frames, and no single second counts as behind.
+
+First suspect, the 60 Hz polling of Windows capture
+(`platform/desktop.rs`) beating against a 60 Hz screen, was wrong. The
+10 s summary added for it showed 0 empty polls in 25 minutes:
+Windows.Graphics.Capture returns a frame on every poll, and it offered
+58.5–59 fps. Our sink sent only 48–58 of them, and its drops matched the
+33 ms "late" gaps.
+
+The cause was the sink's rate cap: `next = next.max(now) + interval` with
+a quarter-frame slack. A frame that arrived a few ms late (capturing it
+takes longer under GPU load) moved the beat later. The next frame, on
+time, then looked more than 4 ms early and was dropped.
+
+Fix: `screen::Pace` keeps a fixed beat that a late frame doesn't move. It
+admits a frame up to half an interval early and still lets through no more
+than one frame per interval over time. The poll loop also polls on a fixed
+beat now, which recovers the ~1 fps it lost to sleep overshoot (59 polls a
+second instead of 60).
+
+Logging: every 10 s the publisher logs `screen share, last 10 s:` with
+captured (sent by us), offered (by the capturer) and libwebrtc-sent fps,
+frames over 1.5 frame times late, the longest gap, and polls with how many
+were empty. If captured is short of offered, look at the sink. If offered
+is short of the asked rate, look at the capturer or the game.
+
+Confirmed the same night (Gambit, 9 minutes): captured 59.4–60.0 fps
+against 48–58 before, captured equal to offered, 0–13 late frames per 10 s
+against 15–119, and the longest gap 21–35 ms.

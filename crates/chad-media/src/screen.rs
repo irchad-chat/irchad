@@ -336,7 +336,10 @@ pub(crate) async fn start(
         }
         #[cfg(not(target_os = "linux"))]
         Target::Portal { .. } => return Err("Screen sharing isn't available here.".into()),
-        Target::Source(s) => (crate::platform::desktop::start(s, fps, sink, on_end)?, None),
+        Target::Source(s) => (
+            crate::platform::desktop::start(s, fps, sink, on_end, Arc::downgrade(&watched))?,
+            None,
+        ),
         Target::Pattern => (pattern(fps, sink), None),
     };
 
@@ -580,6 +583,38 @@ fn pattern(fps: u32, mut sink: FrameSink) -> Box<dyn ScreenSource> {
     Box::new(Pattern(stop))
 }
 
+/// Caps a source at a frame rate without cutting one that already runs at it.
+///
+/// Frames are due on a fixed beat, one interval apart, and one up to half an
+/// interval early is still let through. A late frame doesn't move the beat:
+/// if it did, the next frame, on time, would look early and be dropped. A
+/// 60 fps capture whose frames arrive a few ms unevenly lost up to one in six
+/// that way, each a 33 ms gap (docs/notes/stream-stutter.md). Over time no
+/// more than one frame per interval gets through, however fast the source.
+struct Pace {
+    interval: Duration,
+    next: Instant,
+}
+
+impl Pace {
+    fn new(interval: Duration, now: Instant) -> Self {
+        Self {
+            interval,
+            next: now,
+        }
+    }
+
+    fn admit(&mut self, now: Instant) -> bool {
+        if now + self.interval / 2 < self.next {
+            return false;
+        }
+        // After a pause (a still screen), the beat restarts from now rather
+        // than letting a fast source through in a burst to catch up.
+        self.next = (self.next + self.interval).max(now + self.interval / 2);
+        true
+    }
+}
+
 /// Captured frames → I420 at the preset's size and rate → the video source,
 /// and to our own preview while it's open. `kind`: which preview that is.
 /// `watched`: a share's counters for [`crate::monitor`].
@@ -591,16 +626,20 @@ pub(crate) fn encoder(
     watched: Option<Arc<crate::monitor::Capture>>,
 ) -> FrameSink {
     let interval = Duration::from_micros(1_000_000 / u64::from(preset.fps()));
-    let mut next = Instant::now();
+    let mut pace = Pace::new(interval, Instant::now());
     let mut last = Instant::now();
     let mut seq = 0;
     Box::new(move |f: Frame<'_>| {
         let now = Instant::now();
-        // A little slack, so a 60 Hz source isn't cut to 30.
-        if now + interval / 4 < next || !f.valid() {
+        if !f.valid() {
             return;
         }
-        next = next.max(now) + interval;
+        if let Some(watched) = &watched {
+            watched.offered();
+        }
+        if !pace.admit(now) {
+            return;
+        }
         let gap = now - last;
         last = now;
         let mut i420 = I420Buffer::new(f.width, f.height);
@@ -635,7 +674,7 @@ pub(crate) fn encoder(
             buffer: i420,
         });
         if let Some(watched) = &watched {
-            watched.frame(gap, now.elapsed());
+            watched.frame(gap, now.elapsed(), gap > interval * 3 / 2);
         }
     })
 }
@@ -848,6 +887,35 @@ fn codec(choice: Encoder) -> (VideoCodec, VideoEncoderBackend) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How many of `at` (ms from the start) a 60 fps [`Pace`] lets through.
+    fn admitted(at: impl IntoIterator<Item = f64>) -> usize {
+        let t0 = Instant::now();
+        let mut pace = Pace::new(Duration::from_micros(16_666), t0);
+        at.into_iter()
+            .filter(|ms| pace.admit(t0 + Duration::from_secs_f64(ms / 1000.0)))
+            .count()
+    }
+
+    #[test]
+    fn pace_keeps_an_uneven_60() {
+        // Frames up to 8 ms late, unevenly, as the capture log showed.
+        let jitter = [0.0, 7.0, 1.0, 6.0, 0.0, 8.0, 2.0, 5.0];
+        let frames = (0..600).map(|i| i as f64 * 16.666 + jitter[i % jitter.len()]);
+        assert_eq!(admitted(frames), 600);
+        // A poller that drifts a little slow.
+        assert_eq!(admitted((0..590).map(|i| i as f64 * 16.95)), 590);
+    }
+
+    #[test]
+    fn pace_caps_a_fast_source() {
+        // 144 Hz for 10 s.
+        let n = admitted((0..1440).map(|i| i as f64 * 6.944));
+        assert!((590..=601).contains(&n), "{n}");
+        // After a still screen, no burst to catch up: 100 ms of 144 Hz.
+        let n = admitted(std::iter::once(0.0).chain((0..15).map(|i| 5000.0 + i as f64 * 6.944)));
+        assert!(n <= 1 + 7, "{n}");
+    }
 
     #[test]
     fn fits_presets() {

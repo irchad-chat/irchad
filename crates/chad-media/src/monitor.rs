@@ -20,7 +20,7 @@ use livekit::webrtc::stats::{QualityLimitationReason, RtcStats};
 use crate::engine::{Shared, lock};
 
 /// What the capture side did since the monitor last looked. Written by the
-/// frame sink on the capture thread.
+/// frame sink, and by a capturer we poll, on the capture thread.
 #[derive(Default)]
 pub(crate) struct Capture {
     /// Frames handed to libwebrtc.
@@ -29,14 +29,105 @@ pub(crate) struct Capture {
     gap_ms: AtomicU32,
     /// The longest one took to convert, scale and hand over, in ms.
     work_ms: AtomicU32,
+    /// Of `frames`, those that came more than 1.5 frame times after the one
+    /// before: a skipped frame, as a viewer sees it.
+    late: AtomicU32,
+    /// Frames the capturer gave the sink, sent or (too soon) not.
+    offered: AtomicU32,
+    /// Times a polled capturer was asked for a frame, and of those, how many
+    /// gave none. Capturers that push frames leave both at 0.
+    polls: AtomicU32,
+    empty: AtomicU32,
+}
+
+/// [`Capture`]'s counts, taken.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct Counts {
+    frames: u32,
+    gap_ms: u32,
+    work_ms: u32,
+    late: u32,
+    offered: u32,
+    polls: u32,
+    empty: u32,
 }
 
 impl Capture {
-    pub(crate) fn frame(&self, gap: Duration, work: Duration) {
+    pub(crate) fn offered(&self) {
+        self.offered.fetch_add(1, Relaxed);
+    }
+
+    pub(crate) fn frame(&self, gap: Duration, work: Duration, late: bool) {
         let ms = |d: Duration| u32::try_from(d.as_millis()).unwrap_or(u32::MAX);
         self.frames.fetch_add(1, Relaxed);
+        self.late.fetch_add(u32::from(late), Relaxed);
         self.gap_ms.fetch_max(ms(gap), Relaxed);
         self.work_ms.fetch_max(ms(work), Relaxed);
+    }
+
+    pub(crate) fn poll(&self, got: bool) {
+        self.polls.fetch_add(1, Relaxed);
+        self.empty.fetch_add(u32::from(!got), Relaxed);
+    }
+
+    fn take(&self) -> Counts {
+        Counts {
+            frames: self.frames.swap(0, Relaxed),
+            gap_ms: self.gap_ms.swap(0, Relaxed),
+            work_ms: self.work_ms.swap(0, Relaxed),
+            late: self.late.swap(0, Relaxed),
+            offered: self.offered.swap(0, Relaxed),
+            polls: self.polls.swap(0, Relaxed),
+            empty: self.empty.swap(0, Relaxed),
+        }
+    }
+}
+
+/// How often [`watch`] logs a [`Window`].
+const WINDOW_SECS: u32 = 10;
+
+/// Some seconds of a share, logged whether or not a stage fell behind. A
+/// cadence steadily short of the asked rate (50 of 60, with two-frame gaps)
+/// is judder to a viewer, but no single second of it is behind.
+#[derive(Debug, Default, PartialEq)]
+struct Window {
+    secs: u32,
+    c: Counts,
+    /// What libwebrtc sent, over the seconds it had stats for.
+    sent: u32,
+}
+
+impl Window {
+    fn add(&mut self, c: Counts, sent: u32) {
+        self.secs += 1;
+        self.sent += sent;
+        let w = &mut self.c;
+        w.frames += c.frames;
+        w.late += c.late;
+        w.offered += c.offered;
+        w.polls += c.polls;
+        w.empty += c.empty;
+        w.gap_ms = w.gap_ms.max(c.gap_ms);
+        w.work_ms = w.work_ms.max(c.work_ms);
+    }
+
+    fn line(&self, fps: u32) -> String {
+        let rate = |n: u32| f64::from(n) / f64::from(self.secs.max(1));
+        let c = &self.c;
+        let mut line = format!(
+            "screen share, last {} s: captured {:.1} of {fps} fps ({} late, longest gap {} ms), \
+             offered {:.1} fps, sent {:.1} fps",
+            self.secs,
+            rate(c.frames),
+            c.late,
+            c.gap_ms,
+            rate(c.offered),
+            rate(self.sent),
+        );
+        if c.polls > 0 {
+            line += &format!(", polled {:.1}/s ({} empty)", rate(c.polls), c.empty);
+        }
+        line
     }
 }
 
@@ -226,22 +317,30 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
         let mut last: Option<Sample> = None;
         let mut samples = 0u32;
         let mut was = 0;
+        let mut window = Window::default();
         loop {
             tick.tick().await;
             let Some(capture) = capture.upgrade() else {
                 return;
             };
-            let captured = (
-                capture.frames.swap(0, Relaxed),
-                capture.gap_ms.swap(0, Relaxed),
-                capture.work_ms.swap(0, Relaxed),
-            );
+            let counts = capture.take();
             drop(capture);
+            let captured = (counts.frames, counts.gap_ms, counts.work_ms);
             let was = std::mem::replace(&mut was, captured.0);
-            let Ok(stats) = room.get_stats().await else {
-                continue;
+            let now = match room.get_stats().await {
+                Ok(stats) => Sample::read(&stats.publisher_stats, &track),
+                Err(_) => None,
             };
-            let Some(now) = Sample::read(&stats.publisher_stats, &track) else {
+            let sent = match (&last, &now) {
+                (Some(then), Some(now)) => now.sent.saturating_sub(then.sent),
+                _ => 0,
+            };
+            window.add(counts, sent);
+            if window.secs >= WINDOW_SECS {
+                tracing::info!("{}", window.line(fps));
+                window = Window::default();
+            }
+            let Some(now) = now else {
                 continue;
             };
             samples += 1;
@@ -599,6 +698,32 @@ mod tests {
             rtt_ms: 20.0,
             ..Second::default()
         }
+    }
+
+    #[test]
+    fn window_line() {
+        let mut w = Window::default();
+        let second = |frames, gap_ms, polls| Counts {
+            frames,
+            gap_ms,
+            late: 60 - frames,
+            offered: frames,
+            polls,
+            empty: polls.saturating_sub(frames),
+            ..Counts::default()
+        };
+        w.add(second(54, 37, 80), 54);
+        w.add(second(50, 120, 70), 0);
+        assert_eq!(w.secs, 2);
+        assert_eq!(
+            w.line(60),
+            "screen share, last 2 s: captured 52.0 of 60 fps (16 late, longest gap 120 ms), \
+             offered 52.0 fps, sent 27.0 fps, polled 75.0/s (46 empty)"
+        );
+        // A capturer that pushes frames isn't polled.
+        let mut w = Window::default();
+        w.add(second(60, 17, 0), 60);
+        assert!(w.line(60).ends_with("sent 60.0 fps"));
     }
 
     #[test]

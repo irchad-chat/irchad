@@ -2,14 +2,15 @@
 //! for screens and XComposite for windows; on Windows, Windows.Graphics.Capture
 //! (D21). Frames come back BGRA on the thread that asks for them.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use livekit::webrtc::desktop_capturer::{
     CaptureError, DesktopCaptureSourceType, DesktopCapturer, DesktopCapturerOptions,
 };
 
+use crate::monitor::Capture;
 use crate::screen::{Frame, FrameSink, OnEnd, PixelFormat, ScreenSource, ShareSource, SourceId};
 
 fn capturer(window: bool) -> Option<DesktopCapturer> {
@@ -53,11 +54,13 @@ impl Drop for Running {
     }
 }
 
+/// `watched`: where to count polls, for [`crate::monitor`].
 pub fn start(
     source: SourceId,
     fps: u32,
     mut sink: FrameSink,
     on_end: OnEnd,
+    watched: Weak<Capture>,
 ) -> Result<Box<dyn ScreenSource>, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready_tx, ready) = std::sync::mpsc::channel();
@@ -79,9 +82,11 @@ pub fn start(
             };
             let _ = ready_tx.send(true);
             let failed = Arc::new(AtomicBool::new(false));
-            let f = failed.clone();
+            let got = Arc::new(AtomicBool::new(false));
+            let (f, g) = (failed.clone(), got.clone());
             c.start_capture(Some(s), move |r| match r {
                 Ok(frame) => {
+                    g.store(true, Relaxed);
                     let (Ok(width), Ok(height)) =
                         (u32::try_from(frame.width()), u32::try_from(frame.height()))
                     else {
@@ -99,15 +104,27 @@ pub fn start(
                 Err(CaptureError::Temporary) => {}
             });
             let interval = Duration::from_micros(1_000_000 / u64::from(fps.max(1)));
+            // Polls are due on a fixed beat: sleeping an interval less the
+            // time taken loses each sleep's overshoot, 59 polls a second
+            // instead of 60.
+            let mut due = Instant::now();
             while !st.load(Relaxed) {
-                let t = Instant::now();
+                // Calls back on this thread before it returns.
                 c.capture_frame();
                 if failed.load(Relaxed) {
                     tracing::info!("screen capture ended");
                     on_end();
                     return;
                 }
-                std::thread::sleep(interval.saturating_sub(t.elapsed()));
+                let got = got.swap(false, Relaxed);
+                if let Some(w) = watched.upgrade() {
+                    w.poll(got);
+                }
+                let now = Instant::now();
+                // Behind (a poll took longer than a frame): carry on from
+                // now rather than catch up in a burst.
+                due = (due + interval).max(now);
+                std::thread::sleep(due - now);
             }
         })
         .map_err(|e| e.to_string())?;
