@@ -151,7 +151,7 @@ jobs:
           Copy-Item LICENSE $lic
           cargo about generate --locked --fail -m crates/chad-desktop/Cargo.toml --target x86_64-pc-windows-msvc about.hbs -o "$lic\THIRD_PARTY_LICENSES.txt"
           if ($LASTEXITCODE) { exit 1 }
-          Get-ChildItem "${env:CARGO_TARGET_DIR}\release\build\scratch-*\out\livekit_webrtc\livekit\*\*\LICENSE.md" |
+          Get-ChildItem "${env:CARGO_TARGET_DIR}\release\build\scratch-*\out\livekit_webrtc\livekit\*\*\LICENSE.md", "${env:CARGO_TARGET_DIR}\release\build\scratch\*\out\livekit_webrtc\livekit\*\*\LICENSE.md" |
             Sort-Object LastWriteTime | Select-Object -Last 1 | Copy-Item -Destination "$lic\LIBWEBRTC_LICENSES.md"
           if (-not (Test-Path "$lic\LIBWEBRTC_LICENSES.md")) { "libwebrtc LICENSE.md not found"; exit 1 }
           # AMD's AMF headers are compiled into webrtc-sys (vendor/README.md).
