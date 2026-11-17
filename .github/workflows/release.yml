@@ -4,8 +4,9 @@ name: Release
 # .gitea/workflows, so this never runs there). The `vX.Y.Z` tag arrives via
 # the push mirror and this publishes a GitHub Release with the same assets:
 # Linux tarball + deb, Windows installer + update zip, signed Android APK.
-# Gitea stays canonical: the updater, downloads.gentoo.party, apt, AUR, Play,
-# the chadd image and the #chad announcement are all left to Gitea's run.
+# The desktop updater reads these releases (D105). Everything else
+# (downloads.gentoo.party, apt, AUR, Play,
+# the chadd image, the #chad announcement) is left to Gitea's run.
 # Secrets needed here too: UPDATE_SIGNING_KEY, ANDROID_KEYSTORE,
 # ANDROID_KEYSTORE_PASSWORD.
 on:

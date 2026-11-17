@@ -1,0 +1,172 @@
+name: Nightly
+
+# GitHub mirror's twin of .gitea/workflows/nightly.yml: a rolling "nightly"
+# prerelease of main's HEAD, rebuilt once a night when main has moved. The
+# desktop updater reads it (D105). Linux tarball + Windows installer + update
+# zip, as on Gitea. Secrets: UPDATE_SIGNING_KEY.
+on:
+  schedule:
+    # 04:00 UTC, midnight US Eastern.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # A scheduled run with nothing new keeps the current nightly. By hand, always rebuild.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.c.outputs.build }}
+    steps:
+      - id: c
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/nightly" --jq .target_commitish 2>/dev/null || true)
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$current" = "$GITHUB_SHA" ]; then
+            echo "nightly is already main@${GITHUB_SHA:0:9}"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Same image as release.yml (deploy/ci.Dockerfile on ghcr.io).
+  image:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    outputs:
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ref
+        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/irchad-ci:latest" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        env:
+          # Its .dockerbuild record artifact breaks publish's download-artifact.
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: deploy
+          file: deploy/ci.Dockerfile
+          push: true
+          tags: ${{ steps.ref.outputs.ref }}
+          cache-from: type=registry,ref=${{ steps.ref.outputs.ref }}
+          cache-to: type=inline
+
+  linux:
+    needs: image
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.image.outputs.ref }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      # Read by the update check (update.rs) and written to the tarball's VERSION.
+      IRCHAD_NIGHTLY: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p chad-desktop
+      - run: packaging/linux/tarball.sh
+      - name: Sign
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: packaging/sign.sh irchad-linux-x86_64.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: irchad-linux-x86_64.tar.gz
+
+  windows:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      # cuda.h, so webrtc-sys builds NVENC in (vendor/README.md).
+      - name: CUDA headers
+        shell: pwsh
+        run: |
+          $h = scripts\cuda-headers.ps1 "$env:RUNNER_TEMP\cuda"
+          "CUDA_HOME=$h" >> $env:GITHUB_ENV
+
+      - run: cargo build --release --locked -p chad-desktop
+        env:
+          # Read by the update check (crates/chad-desktop/src/update.rs).
+          IRCHAD_NIGHTLY: ${{ github.sha }}
+
+      - name: Installer
+        shell: pwsh
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          # License notices for the installer (packaging/licenses.sh's Windows twin).
+          cargo install --locked cargo-about@0.9.3 --features cli
+          $lic = "packaging\windows\licenses"
+          New-Item -ItemType Directory -Force $lic | Out-Null
+          Copy-Item LICENSE $lic
+          cargo about generate --locked --fail -m crates/chad-desktop/Cargo.toml --target x86_64-pc-windows-msvc about.hbs -o "$lic\THIRD_PARTY_LICENSES.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          Get-ChildItem "target\release\build\scratch-*\out\livekit_webrtc\livekit\*\*\LICENSE.md", "target\release\build\scratch\*\out\livekit_webrtc\livekit\*\*\LICENSE.md" |
+            Sort-Object LastWriteTime | Select-Object -Last 1 | Copy-Item -Destination "$lic\LIBWEBRTC_LICENSES.md"
+          if (-not (Test-Path "$lic\LIBWEBRTC_LICENSES.md")) { "libwebrtc LICENSE.md not found"; exit 1 }
+          # AMD's AMF headers are compiled into webrtc-sys (vendor/README.md).
+          Copy-Item vendor\webrtc-sys\src\amf\AMF\LICENSE.txt "$lic\AMF_LICENSE.txt"
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y --no-progress
+            $env:PATH += ";${env:ProgramFiles(x86)}\NSIS"
+          }
+          makensis /DVERSION=nightly "/DEXE=$PWD\target\release\irchad.exe" packaging\windows\irchad.nsi
+          if ($LASTEXITCODE) { exit 1 }
+          # The signed zip the in-app updater installs from (D76).
+          packaging\windows\update-zip.ps1 "target\release\irchad.exe" "nightly ${{ github.sha }}"
+          if ($LASTEXITCODE) { exit 1 }
+          Move-Item packaging\windows\irchad-setup.exe irchad-windows-x86_64-setup.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            irchad-windows-x86_64.zip
+            irchad-windows-x86_64-setup.exe
+
+  # Replaced only once every asset is built, so a failed build keeps the last nightly.
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Replace the nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Old release/tag may not exist yet.
+          gh release delete nightly --cleanup-tag --yes || true
+          # The push mirror may have brought Gitea's nightly tag; update.rs reads
+          # target_commitish, which only follows --target for a new tag.
+          gh api -X DELETE "repos/$GH_REPO/git/refs/tags/nightly" 2>/dev/null || true
+          gh release create nightly --prerelease --target "$GITHUB_SHA" --title Nightly \
+            --notes "Release build of main@${GITHUB_SHA:0:9}. Rebuilt nightly when main has changed." \
+            assets/*

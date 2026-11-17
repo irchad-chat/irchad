@@ -638,3 +638,7 @@ The vendored webrtc-sys gains an AMF encoder (`src/amf`, `vendor/README.md`) for
 - **Everything, not just shares.** As with NVENC, libwebrtc's automatic choice also picks a hardware factory for camera video once one is registered.
 `IRCHAD_SCREEN_ENCODER=amf` and `encoder_check`'s `BACKEND=amf` ask for it by name.
 Not verified on hardware: it was written on Linux, where it can only be syntax-checked. The first Windows CI build and a run of `encoder_check` on a Radeon are the test.
+
+## D105: The desktop update check reads the GitHub mirror (2026-11-17)
+
+Supersedes the "desktop update check (D27) still reads the Gitea API" part of the S3-mirror entry. `update.rs` now asks `api.github.com/repos/irchad-chat/irchad` for the latest (or `nightly`) release and only accepts pages and archives under `github.com/irchad-chat/irchad/releases/`. GitHub's API refuses requests without a User-Agent, so both clients send `irchad/<version>`. The archives are the same zipsign-signed ones (same `UPDATE_SIGNING_KEY`), built by `.github/workflows/release.yml`. Builds from before this still check Gitea, so Gitea keeps publishing releases until they've moved on. `.github/workflows/nightly.yml` publishes the `nightly` prerelease there, created in one go once every asset is built, with `--target` set to the commit it built (update.rs compares `target_commitish` with the archive's `VERSION`). The push mirror also copies Gitea's `nightly` tag over, so the workflow deletes that tag before creating its release.

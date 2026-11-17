@@ -19,11 +19,11 @@ use std::time::Duration;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 
-const REPO: &str = "https://git.gentoo.party/api/v1/repos/sam/irchad-ng";
+const REPO: &str = "https://api.github.com/repos/irchad-chat/irchad";
 /// Release pages we link to; anything else from the server is dropped.
-const PAGES: &str = "https://git.gentoo.party/sam/irchad-ng/releases/";
+const PAGES: &str = "https://github.com/irchad-chat/irchad/releases/";
 /// Where update archives may come from; any other URL is refused.
-const DOWNLOADS: &str = "https://git.gentoo.party/sam/irchad-ng/releases/download/";
+const DOWNLOADS: &str = "https://github.com/irchad-chat/irchad/releases/download/";
 
 /// The zipsign key CI signs update archives with (D76).
 const KEY: self_update::VerifyingKey = *include_bytes!("../../../packaging/update.pub");
@@ -55,12 +55,11 @@ pub fn version() -> String {
     }
 }
 
-/// The nightly asset for this platform. The workflow recreates the release
-/// before building, so its commit is new before the downloads are there.
+/// The nightly asset for this platform: a nightly without it isn't
+/// finished (or, on Gitea, not uploaded yet) and isn't offered.
 const ASSET: Option<&str> = if cfg!(target_os = "linux") {
     Some("irchad-linux-x86_64.tar.gz")
 } else if cfg!(target_os = "windows") {
-    // Uploaded last by the Windows job.
     Some("irchad-windows-x86_64-setup.exe")
 } else {
     None
@@ -179,6 +178,7 @@ pub async fn run(
 /// `Some` if there is something newer than this build.
 async fn check() -> Option<Available> {
     let client = reqwest::Client::builder()
+        .user_agent(concat!("irchad/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(15))
         .https_only(true)
         .build()
@@ -332,6 +332,7 @@ async fn stage(url: &str, expected: &str, dir: &Path) -> Result<PathBuf, String>
 
 async fn download(url: &str, to: &Path) -> Result<(), String> {
     let client = reqwest::Client::builder()
+        .user_agent(concat!("irchad/", env!("CARGO_PKG_VERSION")))
         .https_only(true)
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(60))
