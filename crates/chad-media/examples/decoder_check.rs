@@ -80,11 +80,13 @@ async fn main() -> anyhow::Result<()> {
     // own view of a share: count the frames that come out of one.
     let decoded = Arc::new(AtomicU32::new(0));
     let count = decoded.clone();
+    // Called on a libwebrtc thread, outside the runtime.
+    let rt = tokio::runtime::Handle::current();
     rx.on_track(Some(Box::new(move |ev| {
         if let MediaStreamTrack::Video(t) = ev.track {
             let mut stream = NativeVideoStream::new(t);
             let count = count.clone();
-            tokio::spawn(async move {
+            rt.spawn(async move {
                 while stream.next().await.is_some() {
                     count.fetch_add(1, Relaxed);
                 }

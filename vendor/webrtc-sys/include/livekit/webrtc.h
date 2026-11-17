@@ -98,7 +98,9 @@ class RtcRuntime : public std::enable_shared_from_this<RtcRuntime> {
 
 class LogSink : public webrtc::LogSink {
  public:
-  LogSink(rust::Fn<void(rust::String message, LoggingSeverity severity)> fnc);
+  // irchad: `min`, see new_log_sink_at.
+  LogSink(rust::Fn<void(rust::String message, LoggingSeverity severity)> fnc,
+          webrtc::LoggingSeverity min = webrtc::LS_VERBOSE);
   ~LogSink();
 
   void OnLogMessage(const std::string& message,
@@ -112,6 +114,10 @@ class LogSink : public webrtc::LogSink {
 
 std::unique_ptr<LogSink> new_log_sink(
     rust::Fn<void(rust::String, LoggingSeverity)> fnc);
+// irchad: see webrtc.rs.
+std::unique_ptr<LogSink> new_log_sink_at(
+    rust::Fn<void(rust::String, LoggingSeverity)> fnc,
+    LoggingSeverity min);
 
 rust::String create_random_uuid();
 

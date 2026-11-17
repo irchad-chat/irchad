@@ -150,7 +150,8 @@ std::shared_ptr<VideoTrack> RtcRuntime::get_or_create_video_track(
 }
 
 LogSink::LogSink(
-    rust::Fn<void(rust::String message, LoggingSeverity severity)> fnc)
+    rust::Fn<void(rust::String message, LoggingSeverity severity)> fnc,
+    webrtc::LoggingSeverity min)
     : fnc_(fnc) {
   // m150 replaced the old "release builds don't log" default with LoggingConfig,
   // which defaults to log_to_stderr=true / debug_severity=LS_INFO and installs
@@ -160,7 +161,7 @@ LogSink::LogSink(
   webrtc::LogMessage::SetLogToStderr(false);
   webrtc::LogMessage::LogToDebug(webrtc::LoggingSeverity::LS_NONE);
 
-  webrtc::LogMessage::AddLogToStream(this, webrtc::LoggingSeverity::LS_VERBOSE);
+  webrtc::LogMessage::AddLogToStream(this, min);  // irchad: was LS_VERBOSE
 }
 
 LogSink::~LogSink() {
@@ -175,6 +176,15 @@ void LogSink::OnLogMessage(const std::string& message,
 std::unique_ptr<LogSink> new_log_sink(
     rust::Fn<void(rust::String, LoggingSeverity)> fnc) {
   return std::make_unique<LogSink>(fnc);
+}
+
+// irchad: see webrtc.rs. The two enums list the same severities in the same
+// order, as OnLogMessage relies on too.
+std::unique_ptr<LogSink> new_log_sink_at(
+    rust::Fn<void(rust::String, LoggingSeverity)> fnc,
+    LoggingSeverity min) {
+  return std::make_unique<LogSink>(fnc,
+                                   static_cast<webrtc::LoggingSeverity>(min));
 }
 
 rust::String create_random_uuid() {

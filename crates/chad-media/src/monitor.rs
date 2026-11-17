@@ -8,16 +8,91 @@
 //! and a second of it that went wrong is logged the same way (see `rough`),
 //! so a report can be matched up with the sender's log by time.
 
-use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicU32, AtomicU64};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use livekit::prelude::Room;
 use livekit::track::RemoteVideoTrack;
-use livekit::webrtc::stats::{QualityLimitationReason, RtcStats};
+use livekit::webrtc::stats::{IceCandidateType, QualityLimitationReason, RtcStats};
 
 use crate::engine::{Shared, lock};
+
+/// Puts libwebrtc's own warnings and errors in our log, at warn. The
+/// `libwebrtc` crate forwards all of libwebrtc's log at debug, so the app's
+/// info filter dropped them, and with them why a hardware decoder failed (an
+/// error there makes the viewer ask for a key frame and freeze until it
+/// comes). Once per process.
+pub(crate) fn libwebrtc_warnings() {
+    use webrtc_sys::webrtc::ffi::{LogSink, LoggingSeverity, new_log_sink_at};
+    static SINK: OnceLock<cxx::UniquePtr<LogSink>> = OnceLock::new();
+    SINK.get_or_init(|| new_log_sink_at(forward, LoggingSeverity::Warning));
+}
+
+/// The most of libwebrtc's lines kept per second, so one repeated every
+/// packet can't flood the log.
+const MAX_LIBWEBRTC_LINES: u64 = 20;
+/// Of a line, the most kept. Some quote what peers or the SFU sent (D14).
+const MAX_LIBWEBRTC_LINE: usize = 400;
+
+/// libwebrtc lines that say nothing about a call: ICE pinging out of
+/// adapters that can't reach the server (VirtualBox, Hyper-V, a VPN), the
+/// codec list's duplicates at startup, the SDK's own SDP edits.
+const NOISE: &[&str] = &[
+    "Failed to send STUN ping",
+    "Binding request timed out",
+    "Factory produced duplicate codecs",
+    "SDP munging",
+];
+/// Lines one event repeats once per frame (a lost frame drops every one
+/// after it): only the first each second is kept.
+const BURSTS: &[&str] = &["has no GoP"];
+
+#[derive(Debug, PartialEq)]
+enum Keep {
+    No,
+    /// The first of `BURSTS[i]` this second.
+    Burst(usize),
+    Yes,
+}
+
+fn keep(msg: &str) -> Keep {
+    if NOISE.iter().any(|n| msg.contains(n)) {
+        Keep::No
+    } else if let Some(i) = BURSTS.iter().position(|b| msg.contains(b)) {
+        Keep::Burst(i)
+    } else {
+        Keep::Yes
+    }
+}
+
+fn forward(msg: String, severity: webrtc_sys::webrtc::ffi::LoggingSeverity) {
+    use webrtc_sys::webrtc::ffi::LoggingSeverity;
+    static SECOND: AtomicU64 = AtomicU64::new(0);
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    static BURST: [AtomicU64; BURSTS.len()] = [const { AtomicU64::new(0) }; BURSTS.len()];
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    match keep(&msg) {
+        Keep::No => return,
+        Keep::Burst(i) if BURST[i].swap(now, Relaxed) == now => return,
+        _ => {}
+    }
+    if SECOND.swap(now, Relaxed) != now {
+        COUNT.store(0, Relaxed);
+    }
+    if COUNT.fetch_add(1, Relaxed) >= MAX_LIBWEBRTC_LINES {
+        return;
+    }
+    let msg: String = msg.trim_end().chars().take(MAX_LIBWEBRTC_LINE).collect();
+    if severity == LoggingSeverity::Error {
+        tracing::error!(target: "libwebrtc", "{msg}");
+    } else {
+        tracing::warn!(target: "libwebrtc", "{msg}");
+    }
+}
 
 /// What the capture side did since the monitor last looked. Written by the
 /// frame sink, and by a capturer we poll, on the capture thread.
@@ -143,6 +218,8 @@ struct Sample {
     queue_s: f64,
     packets: u64,
     bytes: u64,
+    /// Packets sent again on a NACK.
+    rtx: u64,
     nack: u32,
     pli: u32,
     target_bps: f64,
@@ -178,6 +255,7 @@ impl Sample {
             queue_s: o.outbound.total_packet_send_delay,
             packets: o.sent.packets_sent,
             bytes: o.sent.bytes_sent,
+            rtx: o.outbound.retransmitted_packets_sent,
             nack: o.outbound.nack_count,
             pli: o.outbound.pli_count,
             target_bps: o.outbound.target_bitrate,
@@ -204,6 +282,48 @@ impl Sample {
     }
 }
 
+/// How the transport's chosen candidate pair runs, without addresses: "host
+/// udp over wifi to host udp". Logged when it changes: loss in a burst a
+/// minute is likelier on Wi-Fi, and a relayed or TCP path loses and recovers
+/// differently.
+fn path(stats: &[RtcStats]) -> Option<String> {
+    let pair = stats.iter().find_map(|s| match s {
+        RtcStats::CandidatePair(c) if c.candidate_pair.nominated => Some(&c.candidate_pair),
+        _ => None,
+    })?;
+    let local = stats.iter().find_map(|s| match s {
+        RtcStats::LocalCandidate(c) if c.rtc.id == pair.local_candidate_id => {
+            Some(&c.local_candidate)
+        }
+        _ => None,
+    })?;
+    let remote = stats.iter().find_map(|s| match s {
+        RtcStats::RemoteCandidate(c) if c.rtc.id == pair.remote_candidate_id => {
+            Some(&c.remote_candidate)
+        }
+        _ => None,
+    })?;
+    let kind = |t: Option<IceCandidateType>| {
+        t.map_or("unknown".to_owned(), |t| format!("{t:?}").to_lowercase())
+    };
+    // The remote's comes from the SFU (D14).
+    let short = |s: &str| s.chars().take(16).collect::<String>();
+    let mut out = format!("{} {}", kind(local.candidate_type), short(&local.protocol));
+    if let Some(relay) = local.relay_protocol {
+        out += &format!(" relayed over {}", format!("{relay:?}").to_lowercase());
+    }
+    out += &format!(
+        " over {} to {} {}",
+        local
+            .network_type
+            .as_deref()
+            .map_or("unknown".into(), short),
+        kind(remote.candidate_type),
+        short(&remote.protocol),
+    );
+    Some(out)
+}
+
 /// One second of a share: what each stage took in and put out.
 #[derive(Debug, Default, PartialEq)]
 struct Second {
@@ -223,6 +343,8 @@ struct Second {
     kbps: f64,
     target_kbps: f64,
     available_kbps: f64,
+    /// Packets sent again, against the `nack` requests for them.
+    rtx: u64,
     nack: u32,
     pli: u32,
     lost: f64,
@@ -255,6 +377,7 @@ impl Second {
             kbps: now.bytes.saturating_sub(then.bytes) as f64 * 8.0 / 1000.0,
             target_kbps: now.target_bps / 1000.0,
             available_kbps: now.available_bps / 1000.0,
+            rtx: now.rtx.saturating_sub(then.rtx),
             nack: now.nack.saturating_sub(then.nack),
             pli: now.pli.saturating_sub(then.pli),
             lost: now.lost,
@@ -318,6 +441,7 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
         let mut samples = 0u32;
         let mut was = 0;
         let mut window = Window::default();
+        let mut route: Option<String> = None;
         loop {
             tick.tick().await;
             let Some(capture) = capture.upgrade() else {
@@ -328,7 +452,14 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
             let captured = (counts.frames, counts.gap_ms, counts.work_ms);
             let was = std::mem::replace(&mut was, captured.0);
             let now = match room.get_stats().await {
-                Ok(stats) => Sample::read(&stats.publisher_stats, &track),
+                Ok(stats) => {
+                    let p = path(&stats.publisher_stats);
+                    if p.is_some() && p != route {
+                        tracing::info!("screen share path: {}", p.as_deref().unwrap_or(""));
+                        route = p;
+                    }
+                    Sample::read(&stats.publisher_stats, &track)
+                }
                 Err(_) => None,
             };
             let sent = match (&last, &now) {
@@ -361,7 +492,7 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
                     tracing::info!(
                         "screen share behind at {stage}: captured {} (gap {} ms, convert {} ms), \
                          encoder {} in {} out {} key at {:.1} ms, sent {} ({} huge) at {:.0} of \
-                         {:.0} kbps, queued {:.0} ms, {} nack {} pli {:.1}% lost, rtt {:.0} ms, \
+                         {:.0} kbps, queued {:.0} ms, {} nack {} resent {} pli {:.1}% lost, rtt {:.0} ms, \
                          {:.0} kbps available, limited by {:?}",
                         s.captured,
                         s.gap_ms,
@@ -376,6 +507,7 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
                         s.target_kbps,
                         s.queue_ms,
                         s.nack,
+                        s.rtx,
                         s.pli,
                         s.lost * 100.0,
                         s.rtt_ms,
@@ -446,7 +578,11 @@ struct Inbound {
     jitter_s: f64,
     plis: u32,
     nacks: u32,
+    /// Packets that came as retransmissions, answering `nacks`.
+    rtx: u64,
     freezes: u32,
+    /// How long they lasted, all told.
+    frozen_s: f64,
     rtt_s: Option<f64>,
 }
 
@@ -491,7 +627,9 @@ impl Inbound {
             jitter_s: i.received.jitter,
             plis: v.pli_count,
             nacks: v.nack_count,
+            rtx: v.retransmitted_packets_received,
             freezes: v.freeze_count,
+            frozen_s: v.total_freeze_duration,
             rtt_s,
         })
     }
@@ -542,6 +680,68 @@ impl Inbound {
     }
 }
 
+/// Some seconds of watching, logged whatever they were like: a stream that's
+/// a little off all along (short of its rate, a freeze a minute) has no
+/// second bad enough for [`rough`]. The publisher's [`Window`] covers the
+/// same time.
+#[derive(Debug, Default, PartialEq)]
+struct Watched {
+    secs: f64,
+    decoded: u32,
+    decode_s: f64,
+    received: u64,
+    lost: u64,
+    nacks: u32,
+    rtx: u64,
+    plis: u32,
+    freezes: u32,
+    /// libwebrtc adds a freeze's length when it ends.
+    frozen_s: f64,
+    dropped: u32,
+}
+
+impl Watched {
+    fn add(&mut self, then: &Inbound, now: &Inbound, secs: f64) {
+        self.secs += secs;
+        self.decoded += now.decoded.saturating_sub(then.decoded);
+        self.decode_s += (now.decode_s - then.decode_s).max(0.0);
+        self.received += now.packets.saturating_sub(then.packets);
+        self.lost += u64::try_from(now.lost.saturating_sub(then.lost)).unwrap_or(0);
+        self.nacks += now.nacks.saturating_sub(then.nacks);
+        self.rtx += now.rtx.saturating_sub(then.rtx);
+        self.plis += now.plis.saturating_sub(then.plis);
+        self.freezes += now.freezes.saturating_sub(then.freezes);
+        self.frozen_s += (now.frozen_s - then.frozen_s).max(0.0);
+        self.dropped += now.dropped.saturating_sub(then.dropped);
+    }
+
+    fn line(&self, what: &str) -> String {
+        let expected = self.received.saturating_add(self.lost);
+        let lost_pct = if expected == 0 {
+            0.0
+        } else {
+            self.lost as f64 * 100.0 / expected as f64
+        };
+        let decode_ms = if self.decoded == 0 {
+            0.0
+        } else {
+            self.decode_s * 1000.0 / f64::from(self.decoded)
+        };
+        format!(
+            "watched {what}, last {:.0} s: {:.1} fps, frozen {:.0} ms ({} freezes, {} pli), \
+             lost {lost_pct:.1}% ({} nack {} resent), {} dropped, decode {decode_ms:.1} ms",
+            self.secs,
+            f64::from(self.decoded) / self.secs.max(0.1),
+            self.frozen_s * 1000.0,
+            self.freezes,
+            self.plis,
+            self.nacks,
+            self.rtx,
+            self.dropped,
+        )
+    }
+}
+
 /// What went wrong in a second of watching, if anything: what a viewer saw
 /// as a stutter. `freezes` and `plis`: new this second. The sender's log,
 /// [`watch`], says whether it started there.
@@ -581,31 +781,54 @@ pub(crate) async fn inbound(track: RemoteVideoTrack, target: (String, bool), sha
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last: Option<(Instant, Inbound)> = None;
+    let mut window = Watched::default();
+    let mut route: Option<String> = None;
+    let what = if target.1 { "camera" } else { "stream" };
     loop {
         tick.tick().await;
         if lock(&shared.watching).as_ref() != Some(&target) {
             last = None;
+            window = Watched::default();
             continue;
         }
         let Ok(stats) = track.get_stats().await else {
             continue;
         };
+        let p = path(&stats);
+        if p.is_some() && p != route {
+            tracing::info!("watched {what} path: {}", p.as_deref().unwrap_or(""));
+            route = p;
+        }
         let Some(now) = Inbound::read(&stats) else {
             continue;
         };
         let at = Instant::now();
         if let Some((then_at, then)) = &last {
-            let s = now.since(then, at.duration_since(*then_at).as_secs_f64());
+            let secs = at.duration_since(*then_at).as_secs_f64();
+            window.add(then, &now, secs);
+            if window.secs >= f64::from(WINDOW_SECS) - 0.5 {
+                tracing::info!("{}", window.line(what));
+                window = Watched::default();
+            }
+            let s = now.since(then, secs);
             let (freezes, plis) = (
                 now.freezes.saturating_sub(then.freezes),
                 now.plis.saturating_sub(then.plis),
             );
+            // Asked for again, and what came: loss these don't cover is
+            // what freezes the picture until a key frame.
+            let (nacks, rtx) = (
+                now.nacks.saturating_sub(then.nacks),
+                now.rtx.saturating_sub(then.rtx),
+            );
+            // Counted when a freeze ends: a 3 s one shows here in full.
+            let frozen_ms = (now.frozen_s - then.frozen_s).max(0.0) * 1000.0;
             if let Some(why) = rough(&s, freezes, plis) {
                 tracing::info!(
-                    "watched {} rough ({why}): {:?} {}x{} at {:.0} fps, {:.0} kbps, lost {:.1}%, \
-                     {} dropped, decode {:.1} ms, buffered {:.0} ms, jitter {:.0} ms, \
-                     {freezes} freeze {plis} pli, rtt {:.0} ms, decoder {:?} {}",
-                    if target.1 { "camera" } else { "stream" },
+                    "watched {what} rough ({why}): {:?} {}x{} at {:.0} fps, {:.0} kbps, \
+                     lost {:.1}%, {nacks} nack {rtx} resent, {} dropped, decode {:.1} ms, \
+                     buffered {:.0} ms, jitter {:.0} ms, {freezes} freeze ({frozen_ms:.0} ms) \
+                     {plis} pli, rtt {:.0} ms, decoder {:?} {}",
                     s.codec,
                     s.width,
                     s.height,
@@ -698,6 +921,91 @@ mod tests {
             rtt_ms: 20.0,
             ..Second::default()
         }
+    }
+
+    #[test]
+    fn libwebrtc_noise() {
+        let ping =
+            "(connection.cc:468): Conn[..Net[VirtualBox..]: Failed to send STUN ping  err=-1";
+        assert_eq!(keep(ping), Keep::No);
+        let gop = "(rtp_seq_num_only_ref_finder.cc:72): Generic frame with packet range \
+                   [62923, 62935] has no GoP, dropping frame.";
+        assert_eq!(keep(gop), Keep::Burst(0));
+        let stall =
+            "(video_receive_stream2.cc:906): No decodable frame in 3 s requesting keyframe.";
+        assert_eq!(keep(stall), Keep::Yes);
+    }
+
+    #[test]
+    fn nominated_path() {
+        use livekit::webrtc::stats::dictionaries as d;
+        use livekit::webrtc::stats::{
+            CandidatePairStats, IceServerTransportProtocol, LocalCandidateStats,
+            RemoteCandidateStats,
+        };
+        let id = |s: &str| d::RtcStats {
+            id: s.into(),
+            ..Default::default()
+        };
+        let stats = vec![
+            RtcStats::CandidatePair(CandidatePairStats {
+                rtc: id("pair"),
+                candidate_pair: d::CandidatePairStats {
+                    local_candidate_id: "l".into(),
+                    remote_candidate_id: "r".into(),
+                    nominated: true,
+                    ..Default::default()
+                },
+            }),
+            RtcStats::LocalCandidate(LocalCandidateStats {
+                rtc: id("l"),
+                local_candidate: d::IceCandidateStats {
+                    address: "192.168.1.2".into(),
+                    protocol: "udp".into(),
+                    candidate_type: Some(IceCandidateType::Relay),
+                    relay_protocol: Some(IceServerTransportProtocol::Tls),
+                    network_type: Some("wifi".into()),
+                    ..Default::default()
+                },
+            }),
+            RtcStats::RemoteCandidate(RemoteCandidateStats {
+                rtc: id("r"),
+                remote_candidate: d::IceCandidateStats {
+                    protocol: "udp".into(),
+                    candidate_type: Some(IceCandidateType::Host),
+                    ..Default::default()
+                },
+            }),
+        ];
+        assert_eq!(
+            path(&stats).as_deref(),
+            Some("relay udp relayed over tls over wifi to host udp")
+        );
+        assert_eq!(path(&stats[1..]), None);
+    }
+
+    #[test]
+    fn watched_line() {
+        let then = Inbound::default();
+        let now = Inbound {
+            decoded: 590,
+            decode_s: 590.0 * 0.006,
+            packets: 7000,
+            lost: 70,
+            nacks: 70,
+            rtx: 60,
+            plis: 1,
+            freezes: 1,
+            frozen_s: 3.0,
+            ..Inbound::default()
+        };
+        let mut w = Watched::default();
+        w.add(&then, &now, 10.0);
+        assert_eq!(
+            w.line("stream"),
+            "watched stream, last 10 s: 59.0 fps, frozen 3000 ms (1 freezes, 1 pli), \
+             lost 1.0% (70 nack 60 resent), 0 dropped, decode 6.0 ms"
+        );
     }
 
     #[test]

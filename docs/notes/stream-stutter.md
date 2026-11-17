@@ -96,3 +96,42 @@ is short of the asked rate, look at the capturer or the game.
 Confirmed the same night (Gambit, 9 minutes): captured 59.4–60.0 fps
 against 48–58 before, captured equal to offered, 0–13 late frames per 10 s
 against 15–119, and the longest gap 21–35 ms.
+
+## Viewer freezes on AMF AV1 (2026-11-17)
+
+The viewer of that run (RTX 4070 Ti plus an AMD iGPU) still froze about
+every 5–40 s. Each freeze came with a keyframe request that reached the
+publisher a second later, mostly in a second with no loss, and some
+seconds decoded nothing at all (`0 fps, decode 0.0 ms`). libwebrtc asks for
+a key frame and drops frames until one comes when `Decode` returns an
+error, which points at the decoder. AV1 decodes on the iGPU through AMF
+because webrtc-sys's NVDEC factory has no AV1.
+
+Its errors never reached the log: the `libwebrtc` crate forwards all of
+libwebrtc's log at debug. Now:
+
+- `monitor::libwebrtc_warnings` adds a second sink (`new_log_sink_at` in
+  the vendored webrtc-sys) for warnings and errors, at warn, at most 20
+  lines a second.
+- `amf_decoder.cpp` stops failing the decode on two `SubmitInput` results
+  that aren't errors: `AMF_DECODER_NO_FREE_SURFACES` (drain, then retry, as
+  for `AMF_INPUT_FULL`) and `AMF_RESOLUTION_UPDATED` (accepted). Unconfirmed
+  as the cause. The next viewer log names the failing call either way.
+
+With the libwebrtc log visible, the next viewer log showed no decoder
+errors at all. Each freeze was a burst of upload loss on the publisher
+(1–2%, about once a minute), then `No decodable frame in 3 s requesting
+keyframe` on the viewer 3 s later. Retransmission doesn't repair the loss
+for that viewer, and libwebrtc waits 3 s before asking for a key frame.
+Logged since, to see where the repair fails and what the path is:
+
+- Both sides: retransmit requests and the packets resent for them (`N nack
+  M resent`), the publisher's per "behind" second, the viewer's per rough
+  second.
+- Both sides: the chosen candidate pair, without addresses (`host udp over
+  wifi to host udp`), when it changes.
+- Viewer: freeze length on rough lines, and a 10 s summary like the
+  publisher's (fps, frozen ms, loss, retransmissions, keyframe requests).
+- The libwebrtc sink drops ICE pings on unreachable adapters, startup codec
+  duplicates and the SDK's SDP edits, and keeps one `has no GoP` line a
+  second.

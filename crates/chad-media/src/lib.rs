@@ -157,6 +157,7 @@ pub struct Voice {
 impl Voice {
     /// `notify` is called when something the UI shows changes (devices, call state).
     pub fn new(notify: Arc<dyn Fn() + Send + Sync>) -> Self {
+        monitor::libwebrtc_warnings();
         let shared = Arc::new(engine::Shared::new(notify));
         let backend = platform::backend(shared.clone());
         Self {

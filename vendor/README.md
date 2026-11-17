@@ -71,6 +71,16 @@ Our changes (each is marked `irchad:` in the source):
   measured rate) the frames that follow overshot the bitrate 2–3× and sat
   in the pacer for up to 0.7 s. `DIP=1 encoder_check` reproduces it
   (`docs/notes/stream-stutter.md`).
+- `src/amf/amf_decoder.cpp`: `SubmitInput` returning
+  `AMF_DECODER_NO_FREE_SURFACES` is handled like `AMF_INPUT_FULL` (drain,
+  then retry), and `AMF_RESOLUTION_UPDATED` counts as accepted. Both used to
+  fail the decode, so WebRTC asked for a key frame and the picture froze
+  until it came.
+- `src/webrtc.rs`, `include/livekit/webrtc.h`, `src/webrtc.cpp`: a new
+  `new_log_sink_at(fnc, min)` FFI call, a log sink for `min` and above only.
+  The `libwebrtc` crate forwards all of libwebrtc's log at `debug`, which the
+  app's `info` filter drops, decoder errors included. chad-media adds a
+  second sink for warnings and errors (`monitor::libwebrtc_warnings`).
 
 To see the full diff, compare with the registry copy:
 `diff -r ~/.cargo/registry/src/index.crates.io-*/webrtc-sys-0.3.51 vendor/webrtc-sys`.

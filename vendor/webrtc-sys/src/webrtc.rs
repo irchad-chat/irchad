@@ -87,6 +87,12 @@ pub mod ffi {
         fn amf_decoder_supported() -> bool;
         fn amf_decoder_av1_supported() -> bool;
         fn new_log_sink(fnc: fn(String, LoggingSeverity)) -> UniquePtr<LogSink>;
+        // irchad: a sink for messages at `min` and above only, so a second
+        // sink for warnings doesn't pay for every verbose line.
+        fn new_log_sink_at(
+            fnc: fn(String, LoggingSeverity),
+            min: LoggingSeverity,
+        ) -> UniquePtr<LogSink>;
     }
 }
 

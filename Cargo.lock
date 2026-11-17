@@ -1214,6 +1214,7 @@ dependencies = [
  "anyhow",
  "ashpd",
  "cpal",
+ "cxx",
  "futures-util",
  "libc",
  "livekit",

@@ -151,17 +151,26 @@ int32_t AmfVideoDecoder::Decode(const EncodedImage& input_image,
   const int64_t pts = next_pts_++;
   buffer->SetPts(pts);
   AMF_RESULT res = decoder_->SubmitInput(buffer);
-  if (res == AMF_INPUT_FULL) {
+  // Both say: take some output, then submit again. Any other error makes
+  // WebRTC ask the sender for a key frame and drop every frame until it
+  // comes, which a viewer sees as a freeze.
+  const auto backed_up = [](AMF_RESULT r) {
+    return r == AMF_INPUT_FULL || r == AMF_DECODER_NO_FREE_SURFACES;
+  };
+  if (backed_up(res)) {
     Drain(-1, kDecodeWaitMs);
     res = decoder_->SubmitInput(buffer);
   }
-  if (res == AMF_INPUT_FULL) {
+  if (backed_up(res)) {
     // Dropped. The frames after this one may not decode; WebRTC asks the
     // sender for a key frame when they don't.
-    RTC_LOG(LS_WARNING) << "AMF: decoder is backed up; dropping a frame.";
+    RTC_LOG(LS_WARNING) << "AMF: decoder is backed up (" << res
+                        << "); dropping a frame.";
     return WEBRTC_VIDEO_CODEC_OK;
   }
-  if (res != AMF_OK && res != AMF_NEED_MORE_INPUT) {
+  // RESOLUTION_UPDATED: taken, in adaptive mode; the output has the new size.
+  if (res != AMF_OK && res != AMF_NEED_MORE_INPUT &&
+      res != AMF_RESOLUTION_UPDATED) {
     RTC_LOG(LS_ERROR) << "AMF: SubmitInput failed (" << res << ").";
     return WEBRTC_VIDEO_CODEC_ERROR;
   }
