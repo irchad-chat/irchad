@@ -634,10 +634,6 @@ void AmfVideoEncoder::SetRates(const RateControlParameters& parameters) {
   if (!encoder_) {
     return;
   }
-  if (!std::isfinite(parameters.framerate_fps) ||
-      parameters.framerate_fps < 1.0) {
-    return;
-  }
   const uint32_t bitrate_bps = parameters.bitrate.get_sum_bps();
   if (bitrate_bps == 0) {
     sending_ = false;
@@ -649,36 +645,23 @@ void AmfVideoEncoder::SetRates(const RateControlParameters& parameters) {
     key_frame_request_ = true;
   }
   bitrate_bps_ = bitrate_bps;
-  const uint32_t fps = static_cast<uint32_t>(
-      std::clamp(std::round(parameters.framerate_fps), 1.0, 240.0));
-  // WebRTC reports the measured rate, which wanders by a frame or two. Only
-  // a real change is worth reconfiguring the encoder's rate control for.
-  const bool fps_changed =
-      std::abs(static_cast<int>(fps) - static_cast<int>(fps_)) * 5 >=
-      static_cast<int>(fps_);
-  if (fps_changed) {
-    fps_ = fps;
-  }
-  ApplyRates(fps_changed);
+  // The frame rate stays the one InitEncode set. Rate control budgets each
+  // frame as bitrate / frame rate, and framerate_fps is the input rate over
+  // the last second: after a capture stall it's low, and the frames that
+  // follow overshoot the bitrate several times over until it catches up.
+  ApplyRates();
 }
 
-void AmfVideoEncoder::ApplyRates(bool with_fps) {
+void AmfVideoEncoder::ApplyRates() {
   const amf_int64 bitrate = bitrate_bps_;
   if (codec_ == AmfCodec::kAv1) {
     Set(encoder_, AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
     Set(encoder_, AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
     Set(encoder_, AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
-    if (with_fps) {
-      Set(encoder_, AMF_VIDEO_ENCODER_AV1_FRAMERATE,
-          AMFConstructRate(fps_, 1));
-    }
   } else {
     Set(encoder_, AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
     Set(encoder_, AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
     Set(encoder_, AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
-    if (with_fps) {
-      Set(encoder_, AMF_VIDEO_ENCODER_FRAMERATE, AMFConstructRate(fps_, 1));
-    }
   }
 }
 

@@ -82,7 +82,7 @@ class AmfVideoEncoder : public VideoEncoder {
   // with `until_pts`.
   int32_t Drain(int64_t until_pts, int wait_ms);
   void Deliver(amf::AMFBuffer* buffer, const Pending& frame);
-  void ApplyRates(bool with_fps);
+  void ApplyRates();
 
   const AmfCodec codec_;
   H264Profile h264_profile_ = H264Profile::kProfileConstrainedBaseline;

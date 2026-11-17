@@ -4,7 +4,9 @@
 //! reports can then be placed from their exported log: capture, convert,
 //! encoder, pacer or network. If none is named, it happened past our upload.
 //!
-//! The viewer's side, [`StreamStats`], is shown on request over the video.
+//! The viewer's side, [`StreamStats`], is shown on request over the video,
+//! and a second of it that went wrong is logged the same way (see `rough`),
+//! so a report can be matched up with the sender's log by time.
 
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
@@ -176,10 +178,13 @@ impl Second {
     /// A still screen is not behind: some capturers only deliver on change,
     /// so few frames alone means nothing. Each test is a stage doing less
     /// than it was given, or taking longer than a frame lasts.
-    fn behind(&self, fps: u32) -> Option<&'static str> {
+    /// `was`: frames captured the second before. A screen that was moving
+    /// and all but stopped is a stall's onset, logged once; a screen that
+    /// stays still isn't.
+    fn behind(&self, fps: u32, was: u32) -> Option<&'static str> {
         let frame_ms = 1000.0 / f64::from(fps.max(1));
-        let moving = self.captured >= fps / 4;
-        if moving && self.gap_ms >= 400 {
+        let moving = self.captured >= fps / 4 || was >= fps / 2;
+        if moving && f64::from(self.gap_ms) >= (4.0 * frame_ms).max(100.0) {
             // Frames were coming and then weren't: the capturer, or whatever
             // it waits on (the compositor, a busy GPU).
             Some("capture")
@@ -220,6 +225,7 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last: Option<Sample> = None;
         let mut samples = 0u32;
+        let mut was = 0;
         loop {
             tick.tick().await;
             let Some(capture) = capture.upgrade() else {
@@ -231,6 +237,7 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
                 capture.work_ms.swap(0, Relaxed),
             );
             drop(capture);
+            let was = std::mem::replace(&mut was, captured.0);
             let Ok(stats) = room.get_stats().await else {
                 continue;
             };
@@ -251,7 +258,7 @@ pub(crate) fn watch(room: Arc<Room>, capture: Weak<Capture>, track: String, fps:
             }
             if let Some(then) = &last {
                 let s = Second::between(then, &now, captured);
-                if let Some(stage) = s.behind(fps) {
+                if let Some(stage) = s.behind(fps, was) {
                     tracing::info!(
                         "screen share behind at {stage}: captured {} (gap {} ms, convert {} ms), \
                          encoder {} in {} out {} key at {:.1} ms, sent {} ({} huge) at {:.0} of \
@@ -436,6 +443,29 @@ impl Inbound {
     }
 }
 
+/// What went wrong in a second of watching, if anything: what a viewer saw
+/// as a stutter. `freezes` and `plis`: new this second. The sender's log,
+/// [`watch`], says whether it started there.
+fn rough(s: &StreamStats, freezes: u32, plis: u32) -> Option<&'static str> {
+    if freezes > 0 {
+        Some("freeze")
+    } else if plis > 0 {
+        // We lost a frame we couldn't repair and asked for a keyframe.
+        Some("pli")
+    } else if s.lost_pct > 2.0 {
+        Some("loss")
+    } else if s.dropped > 0 {
+        Some("dropped")
+    } else if s.fps > 0.0 && s.decode_ms > 2000.0 / s.fps {
+        Some("decode")
+    } else if s.buffer_ms > 150.0 {
+        // Frames waited this long for the ones before them: late packets.
+        Some("buffer")
+    } else {
+        None
+    }
+}
+
 /// Aborts the task when dropped, so the stats poller ends with its viewer.
 pub(crate) struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
 
@@ -445,16 +475,16 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// Once a second while the stats are shown, puts `track`'s receive stats in
-/// `shared.stream_stats`, if `target` is still what we watch.
+/// Once a second while `target` is what we watch: logs a second that went
+/// wrong (see [`rough`]), and while the stats are shown, puts `track`'s
+/// receive stats in `shared.stream_stats`.
 pub(crate) async fn inbound(track: RemoteVideoTrack, target: (String, bool), shared: Arc<Shared>) {
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last: Option<(Instant, Inbound)> = None;
     loop {
         tick.tick().await;
-        let watched = lock(&shared.watching).as_ref() == Some(&target);
-        if !watched || !shared.stats_wanted.load(Relaxed) {
+        if lock(&shared.watching).as_ref() != Some(&target) {
             last = None;
             continue;
         }
@@ -467,6 +497,39 @@ pub(crate) async fn inbound(track: RemoteVideoTrack, target: (String, bool), sha
         let at = Instant::now();
         if let Some((then_at, then)) = &last {
             let s = now.since(then, at.duration_since(*then_at).as_secs_f64());
+            let (freezes, plis) = (
+                now.freezes.saturating_sub(then.freezes),
+                now.plis.saturating_sub(then.plis),
+            );
+            if let Some(why) = rough(&s, freezes, plis) {
+                tracing::info!(
+                    "watched {} rough ({why}): {:?} {}x{} at {:.0} fps, {:.0} kbps, lost {:.1}%, \
+                     {} dropped, decode {:.1} ms, buffered {:.0} ms, jitter {:.0} ms, \
+                     {freezes} freeze {plis} pli, rtt {:.0} ms, decoder {:?} {}",
+                    if target.1 { "camera" } else { "stream" },
+                    s.codec,
+                    s.width,
+                    s.height,
+                    s.fps,
+                    s.kbps,
+                    s.lost_pct,
+                    s.dropped,
+                    s.decode_ms,
+                    s.buffer_ms,
+                    s.jitter_ms,
+                    s.rtt_ms.unwrap_or(0.0),
+                    s.decoder,
+                    if s.hardware {
+                        "(hardware)"
+                    } else {
+                        "(software)"
+                    },
+                );
+            }
+            if !shared.stats_wanted.load(Relaxed) {
+                last = Some((at, now));
+                continue;
+            }
             let mut slot = lock(&shared.stream_stats);
             // Checked again under the lock, like `room::watch` clears it.
             if lock(&shared.watching).as_ref() != Some(&target) {
@@ -539,8 +602,32 @@ mod tests {
     }
 
     #[test]
+    fn rough_seconds() {
+        let fine = StreamStats {
+            fps: 60.0,
+            decode_ms: 3.0,
+            buffer_ms: 40.0,
+            lost_pct: 0.5,
+            ..StreamStats::default()
+        };
+        assert_eq!(rough(&fine, 0, 0), None);
+        assert_eq!(rough(&fine, 1, 0), Some("freeze"));
+        assert_eq!(rough(&fine, 0, 1), Some("pli"));
+        let late = StreamStats {
+            buffer_ms: 400.0,
+            ..fine.clone()
+        };
+        assert_eq!(rough(&late, 0, 0), Some("buffer"));
+        let slow = StreamStats {
+            decode_ms: 40.0,
+            ..fine
+        };
+        assert_eq!(rough(&slow, 0, 0), Some("decode"));
+    }
+
+    #[test]
     fn places_the_stage() {
-        assert_eq!(smooth().behind(60), None);
+        assert_eq!(smooth().behind(60, 60), None);
         // A still screen, on a capturer that only delivers changes.
         let still = Second {
             captured: 1,
@@ -551,9 +638,26 @@ mod tests {
             kbps: 40.0,
             ..smooth()
         };
-        assert_eq!(still.behind(60), None);
+        assert_eq!(still.behind(60, 1), None);
+        // ...but a moving screen that stalls is.
+        assert_eq!(still.behind(60, 60), Some("capture"));
+        // Frames trickling in, from the log that prompted this check.
+        let trickle = Second {
+            captured: 16,
+            gap_ms: 300,
+            work_ms: 23,
+            ..smooth()
+        };
+        assert_eq!(trickle.behind(60, 13), Some("capture"));
+        // A frame or two missed, as a game's own pacing does.
+        let jitter = Second {
+            captured: 50,
+            gap_ms: 36,
+            ..smooth()
+        };
+        assert_eq!(jitter.behind(60, 50), None);
 
-        let stage = |s: Second| s.behind(60);
+        let stage = |s: Second| s.behind(60, 60);
         let s = smooth();
         assert_eq!(
             stage(Second {

@@ -425,21 +425,19 @@ void NvidiaH264EncoderImpl::SetRates(
     return;
   }
 
-  if (!std::isfinite(parameters.framerate_fps) ||
-      parameters.framerate_fps < 1.0) {
-    RTC_LOG(LS_WARNING) << "Invalid frame rate: " << parameters.framerate_fps;
-    return;
-  }
-
   const uint32_t target_bps = parameters.bitrate.get_sum_bps();
   if (target_bps == 0) {
     configuration_.SetStreamState(false);
     return;
   }
 
-  const uint32_t frame_rate = static_cast<uint32_t>(std::clamp(
-      std::round(parameters.framerate_fps), 1.0,
-      static_cast<double>(std::numeric_limits<uint32_t>::max())));
+  // irchad: NVENC's CBR gives each frame bitrate / frame rate, by frame count
+  // and not by time. libwebrtc's framerate_fps is the input rate over the last
+  // second, so after a capture stall it's low and the frames that follow get
+  // several times their share: the bitrate overshoots and the pacer queues
+  // for seconds. The configured rate errs the other way, to softer frames
+  // while capture really is slow. A new max rate comes through InitEncode.
+  const uint32_t frame_rate = std::max<uint32_t>(1, codec_.maxFramerate);
   try {
     if (!encoder_->SetRates(frame_rate, target_bps)) {
       RTC_LOG(LS_WARNING) << "Failed to reconfigure NVENC rates: encoder is "
@@ -453,10 +451,8 @@ void NvidiaH264EncoderImpl::SetRates(
     return;
   }
 
-  codec_.maxFramerate = frame_rate;
   codec_.maxBitrate = target_bps / 1000;
   configuration_.target_bps = target_bps;
-  configuration_.max_frame_rate = frame_rate;
   configuration_.SetStreamState(true);
 }
 

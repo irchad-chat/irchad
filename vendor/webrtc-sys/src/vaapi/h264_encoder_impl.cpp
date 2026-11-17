@@ -283,20 +283,15 @@ void VAAPIH264EncoderWrapper::SetRates(
     return;
   }
 
-  if (parameters.framerate_fps < 1.0) {
-    RTC_LOG(LS_WARNING) << "Invalid frame rate: " << parameters.framerate_fps;
-    return;
-  }
-
   if (parameters.bitrate.get_sum_bps() == 0) {
     configuration_.SetStreamState(false);
     return;
   }
 
-  codec_.maxFramerate = static_cast<uint32_t>(parameters.framerate_fps);
-
+  // irchad: rate control keeps the frame rate InitEncode set, not the
+  // measured input rate, which is low after a capture stall and makes the
+  // frames that follow overshoot the bitrate (see the NVENC encoders).
   configuration_.target_bps = parameters.bitrate.GetSpatialLayerSum(0);
-  configuration_.max_frame_rate = parameters.framerate_fps;
 
   if (configuration_.target_bps) {
     configuration_.SetStreamState(true);

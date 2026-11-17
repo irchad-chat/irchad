@@ -64,6 +64,13 @@ Our changes (each is marked `irchad:` in the source):
   VAAPI, and `amf_supported()` / `amf_av1_supported()` are new FFI calls.
 - `src/nvidia/NvCodec/include/Utils/Logger.h`: `winsock2.h` instead of
   `winsock.h`, which clashes with webrtc's.
+- `src/nvidia/{h264,h265,av1}_encoder_impl.cpp`, `src/amf/amf_encoder.cpp`,
+  `src/vaapi/h264_encoder_impl.cpp`: `SetRates` keeps the frame rate from
+  `InitEncode` instead of libwebrtc's measured input rate. Their CBR budgets
+  each frame as bitrate / frame rate, so after a capture stall (a low
+  measured rate) the frames that follow overshot the bitrate 2–3× and sat
+  in the pacer for up to 0.7 s. `DIP=1 encoder_check` reproduces it
+  (`docs/notes/stream-stutter.md`).
 
 To see the full diff, compare with the registry copy:
 `diff -r ~/.cargo/registry/src/index.crates.io-*/webrtc-sys-0.3.51 vendor/webrtc-sys`.

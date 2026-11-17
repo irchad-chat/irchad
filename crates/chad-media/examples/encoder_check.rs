@@ -10,6 +10,10 @@
 //! Env: CODEC (av1 | h264 | h265 | vp9, default av1), BACKEND (nvenc | vaapi |
 //! amf | software | auto, default nvenc), CHECK_SECS (5). On Windows, NVENC is only
 //! compiled in when the build saw cuda.h (`scripts/cuda-headers.ps1`).
+//!
+//! DIP=1: 4 s at 60 fps, 5 s at 12, then 60 again, with a line a second of
+//! what was sent against the target. A share whose capture stalls and comes
+//! back must not overshoot (see `docs/notes/stream-stutter.md`).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -53,10 +57,11 @@ async fn main() -> anyhow::Result<()> {
         Ok("auto") => VideoEncoderBackend::Auto,
         _ => VideoEncoderBackend::Nvenc,
     };
+    let dip = std::env::var("DIP").is_ok_and(|v| v == "1");
     let secs: u64 = std::env::var("CHECK_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(5);
+        .unwrap_or(if dip { 16 } else { 5 });
 
     let available: Vec<_> = VideoEncoderBackend::list_available().into_iter().collect();
     println!("available backends: {available:?}");
@@ -113,15 +118,44 @@ async fn main() -> anyhow::Result<()> {
     let start = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(1000 / 60));
     let mut n = 0u32;
+    let mut rng = 0x2545_F491_4F6C_DD1Du64;
+    let mut second = (Instant::now(), Sent::default());
     while start.elapsed() < Duration::from_secs(secs) {
         tick.tick().await;
+        if dip && second.0.elapsed() >= Duration::from_secs(1) {
+            let now = Sent::read(&tx).await;
+            println!(
+                "{:>4.1}s: {} frames at {:.0} of {:.0} kbps, queued {:.0} ms",
+                start.elapsed().as_secs_f64(),
+                now.frames - second.1.frames,
+                (now.bytes - second.1.bytes) as f64 * 8.0 / 1000.0,
+                now.target_bps / 1000.0,
+                (now.queue_s - second.1.queue_s) * 1000.0
+                    / (now.packets - second.1.packets).max(1) as f64,
+            );
+            second = (Instant::now(), now);
+        }
+        // The capture stalls: one frame in five.
+        let t = start.elapsed();
+        if dip && t >= Duration::from_secs(4) && t < Duration::from_secs(9) && !n.is_multiple_of(5) {
+            n += 1;
+            continue;
+        }
         let mut buf = I420Buffer::new(W, H);
         let (sy, _, _) = buf.strides();
         let (y, u, v) = buf.data_mut();
         for row in 0..H {
             let line = &mut y[(row * sy) as usize..][..W as usize];
             for (x, px) in line.iter_mut().enumerate() {
-                *px = (x as u32 + row + n * 8) as u8;
+                *px = if dip && (row + n * 4) % H < 40 {
+                    // A band of noise, so the encoder spends about all it's allowed.
+                    rng ^= rng << 13;
+                    rng ^= rng >> 7;
+                    rng ^= rng << 17;
+                    (rng >> 56) as u8
+                } else {
+                    (x as u32 + row + n * 8) as u8
+                };
             }
         }
         u.fill(128);
@@ -160,6 +194,35 @@ async fn main() -> anyhow::Result<()> {
     tx.close();
     rx.close();
     Ok(())
+}
+
+/// The sender's running totals, for DIP's line a second.
+#[derive(Default)]
+struct Sent {
+    frames: u32,
+    bytes: u64,
+    packets: u64,
+    queue_s: f64,
+    target_bps: f64,
+}
+
+impl Sent {
+    async fn read(tx: &PeerConnection) -> Self {
+        let stats = tx.get_stats().await.unwrap_or_default();
+        stats
+            .into_iter()
+            .find_map(|s| match s {
+                RtcStats::OutboundRtp(o) if o.stream.kind == "video" => Some(Self {
+                    frames: o.outbound.frames_encoded,
+                    bytes: o.sent.bytes_sent,
+                    packets: o.sent.packets_sent,
+                    queue_s: o.outbound.total_packet_send_delay,
+                    target_bps: o.outbound.target_bitrate,
+                }),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Hands `from`'s ICE candidates straight to `to`.
