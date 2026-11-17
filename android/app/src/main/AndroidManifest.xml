@@ -52,6 +52,15 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+        <!-- A conversation in a bubble, launched only by our notifications. -->
+        <activity
+            android:name=".BubbleActivity"
+            android:exported="false"
+            android:allowEmbedded="true"
+            android:resizeableActivity="true"
+            android:documentLaunchMode="always"
+            android:label="IrChad"
+            android:windowSoftInputMode="adjustResize" />
         <service
             android:name=".VoiceService"
             android:exported="false"

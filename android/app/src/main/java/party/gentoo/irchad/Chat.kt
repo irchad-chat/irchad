@@ -356,6 +356,12 @@ private fun ChatScreen(
                             Box {
                                 IconButton(onClick = { more = true }) { Icon(Icons.Default.MoreVert, "More") }
                                 DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                        DropdownMenuItem(text = { Text("Open in bubble") }, onClick = {
+                                            more = false
+                                            app.notifier.bubble(net.network, buf.target, !buf.dm)
+                                        })
+                                    }
                                     if (buf.dm && buf.encryption != Lock.NONE && buf.encryption != Lock.OFF) {
                                         DropdownMenuItem(text = { Text("Devices") }, onClick = {
                                             more = false
@@ -496,6 +502,46 @@ private fun ChatScreen(
         "devices" -> buf?.let { DevicesDialog(app, tick, net, it.target) { dialog = null } } ?: run { dialog = null }
         "report" -> buf?.let { ReportDialog(app, net, it.target, it.target, null) { dialog = null } } ?: run { dialog = null }
         "channel", "dm" -> AddDialog(app, net, dialog!!, onOpen = { selected[net.network] = it }) { dialog = null }
+    }
+}
+
+/** One conversation alone, for a bubble: no drawer, no voice. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BubbleChat(app: IrChad, focus: Focus, onOpenApp: () -> Unit) {
+    val tick by app.version.collectAsState()
+    val net = remember(tick) { app.client.networks().firstOrNull { it.network == focus.network } }
+    val buf = remember(tick) { app.client.buffers(focus.network).firstOrNull { it.target.equals(focus.target, true) } }
+    var replyTo by remember { mutableStateOf<Message?>(null) }
+    var editing by remember { mutableStateOf<Message?>(null) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(buf?.target ?: focus.target.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                actions = { TextButton(onClick = onOpenApp) { Text("Open") } },
+            )
+        },
+    ) { pad ->
+        Column(Modifier.padding(pad).fillMaxSize().imePadding()) {
+            if (net == null || buf == null) {
+                // A cold start: the core lists its networks a moment later.
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text("Connecting…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                StatusBanner(app, net)
+                if (buf.encryption == Lock.CHANGED) KeysChanged(app, net, buf)
+                Log(
+                    app, tick, net, buf, Modifier.weight(1f),
+                    onReply = { editing = null; replyTo = it },
+                    onEdit = { replyTo = null; editing = it },
+                )
+                Composer(app, tick, net, buf, replyTo, editing) {
+                    replyTo = null
+                    editing = null
+                }
+            }
+        }
     }
 }
 
@@ -786,6 +832,7 @@ private fun LeaveDialog(app: IrChad, net: Network, onDismiss: () -> Unit) {
             Button(
                 onClick = {
                     if (delete) app.client.deleteAccount(net.network) else app.client.remove(net.network)
+                    app.notifier.forget(net.network)
                     onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(

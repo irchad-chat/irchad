@@ -114,6 +114,50 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** One conversation in a bubble (API 30+): its own task, which the system embeds. */
+class BubbleActivity : ComponentActivity() {
+    private var focus: Focus? = null
+    private val app get() = application as IrChad
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val f = intent.focusOrNull()?.takeIf { it.target != null } ?: return finish()
+        focus = f
+        enableEdgeToEdge()
+        setContent {
+            IrChadTheme {
+                BubbleChat(app, f) {
+                    startActivity(
+                        Intent(this, MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            .putExtra(Notifier.EXTRA_NETWORK, f.network)
+                            .putExtra(Notifier.EXTRA_TARGET, f.target),
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val f = focus ?: return
+        app.notifier.foreground(true, inApp = false)
+        app.notifier.reading(f.network, f.target!!, true)
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        app.touched()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        val f = focus ?: return
+        app.notifier.reading(f.network, f.target!!, false)
+        app.notifier.foreground(false, inApp = false)
+    }
+}
+
 private fun Intent.focusOrNull(): Focus? {
     val network = getStringExtra(Notifier.EXTRA_NETWORK) ?: return null
     return Focus(network, getStringExtra(Notifier.EXTRA_TARGET))

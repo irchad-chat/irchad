@@ -2,6 +2,7 @@ package party.gentoo.irchad
 
 import android.Manifest
 import android.app.Activity
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -11,6 +12,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -45,6 +48,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
+import androidx.core.content.LocusIdCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import androidx.core.content.ContextCompat
 import org.unifiedpush.android.connector.FailedReason
 import org.unifiedpush.android.connector.UnifiedPush
@@ -66,10 +73,14 @@ class Notifier(private val app: IrChad) {
     /** Networks that can push, with their VAPID keys, since they connected. */
     private val vapids = ConcurrentHashMap<String, String>()
 
-    /** An activity is on screen: no notifications then. */
+    /** The main activity is on screen: no notifications then. */
     @Volatile var visible = false
         private set
-    private val pause = Runnable { if (!visible && mode != Background.SOCKET) app.client.background(true) }
+    /** Activities on screen, bubbles included: the connections stay up while any is. */
+    @Volatile private var started = 0
+    /** Conversations (by [tag]) an expanded bubble shows: no notifications for them. */
+    private val reading = ConcurrentHashMap.newKeySet<String>()
+    private val pause = Runnable { if (started == 0 && mode != Background.SOCKET) app.client.background(true) }
     /** Bumped when an activity resumes: a distributor may have been installed. */
     var resumes by mutableIntStateOf(0)
 
@@ -91,18 +102,21 @@ class Notifier(private val app: IrChad) {
 
     /** The core just started; maybe for a push, with nothing on screen. */
     fun started() {
-        if (!visible) main.postDelayed(pause, PAUSE_MS)
+        if (started == 0) main.postDelayed(pause, PAUSE_MS)
     }
 
     /**
      * The app came to the front, or left it. Leaving drops the connections
      * after a minute (D39), unless the user picked "Stay connected".
+     * [inApp] is false for a bubble: other conversations still notify then.
      */
-    fun foreground(on: Boolean) {
-        visible = on
+    fun foreground(on: Boolean, inApp: Boolean = true) {
+        // Stop and start interleave when switching between the app and a bubble.
+        started = (started + if (on) 1 else -1).coerceAtLeast(0)
+        if (inApp) visible = on
         main.removeCallbacks(pause)
         if (!on) {
-            main.postDelayed(pause, PAUSE_MS)
+            if (started == 0) main.postDelayed(pause, PAUSE_MS)
             return
         }
         app.client.background(false)
@@ -145,7 +159,7 @@ class Notifier(private val app: IrChad) {
             }
         }
         if (m == Background.SOCKET) keepConnected() else app.stopService(Intent(app, KeepService::class.java))
-        if (!visible && m != Background.SOCKET) main.postDelayed(pause, PAUSE_MS)
+        if (started == 0 && m != Background.SOCKET) main.postDelayed(pause, PAUSE_MS)
     }
 
     /** Starts [KeepService] if that's the mode; only works while the app is in front. */
@@ -187,34 +201,157 @@ class Notifier(private val app: IrChad) {
         if (mode == Background.SOCKET && app.settings.notify != NotifyLevel.NEVER) show(network, target, from, text, channel)
     }
 
-    fun dismiss(network: String, target: String) = nm.cancel(tag(network, target), ID)
+    /** A bubble showing [network]/[target] expanded ([on]) or collapsed. */
+    fun reading(network: String, target: String, on: Boolean) {
+        if (on) reading.add(tag(network, target)) else reading.remove(tag(network, target))
+    }
+
+    /** The conversation was read: out of the shade, but a bubble of it stays (cancelling would close it). */
+    fun dismiss(network: String, target: String) {
+        val tag = tag(network, target)
+        val old = nm.activeNotifications.firstOrNull { it.tag == tag && it.id == ID }?.notification ?: return
+        val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(old)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || old.flags and Notification.FLAG_BUBBLE == 0 || style == null) {
+            nm.cancel(tag, ID)
+            return
+        }
+        nm.notify(tag, ID, build(network, target, style, read = true))
+    }
+
+    /** Forgets [network]'s conversations: notifications, bubbles and shortcuts. */
+    fun forget(network: String) {
+        val prefix = "$network\n"
+        nm.activeNotifications.filter { it.tag?.startsWith(prefix) == true }.forEach { nm.cancel(it.tag, it.id) }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val ids = ShortcutManagerCompat.getShortcuts(
+            app, ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_CACHED,
+        ).map { it.id }.filter { it.startsWith(prefix) }
+        ShortcutManagerCompat.removeLongLivedShortcuts(app, ids)
+    }
 
     private fun show(network: String, target: String, from: String, text: String, channel: Boolean) {
-        if (visible || !nm.areNotificationsEnabled()) return
         val tag = tag(network, target)
-        // Add to what's already showing for this conversation.
+        if (visible || tag in reading || !nm.areNotificationsEnabled()) return
+        // Add to what's already showing for this conversation, unless that was read.
         val old = nm.activeNotifications.firstOrNull { it.tag == tag && it.id == ID }?.notification
+            ?.takeUnless { Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && it.bubbleMetadata?.isNotificationSuppressed == true }
         val style = old?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
             ?: NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
         if (channel) style.setConversationTitle(target).setGroupConversation(true)
-        style.addMessage(text, System.currentTimeMillis(), Person.Builder().setName(from).build())
+        style.addMessage(text, System.currentTimeMillis(), person(network, from))
         // Keep it short: a busy channel shouldn't grow one without end.
         while (style.messages.size > 8) style.messages.removeAt(0)
+        nm.notify(tag, ID, build(network, target, style, read = false))
+    }
+
+    /**
+     * Opens [network]/[target] in an expanded bubble, from the app. When bubbles
+     * are off for it, shows the setting instead: only the user can allow them.
+     */
+    fun bubble(network: String, target: String, channel: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val tag = tag(network, target)
+        // The conversation's own setting, once it has notified and the user picked it.
+        val picked = nm.getNotificationChannel(CHANNEL, tag)?.canBubble() == true
+        val allowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            nm.bubblePreference == NotificationManager.BUBBLE_PREFERENCE_ALL ||
+                nm.bubblePreference == NotificationManager.BUBBLE_PREFERENCE_SELECTED && picked
+        } else {
+            @Suppress("DEPRECATION")
+            nm.areBubblesAllowed() || picked
+        }
+        if (!allowed) {
+            app.notices.tryEmit("Let IrChad's conversations bubble, then try again.")
+            app.startActivity(
+                Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS)
+                    .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, app.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return
+        }
+        val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
+        if (channel) style.setConversationTitle(target).setGroupConversation(true)
+        app.client.messages(network, target).lastOrNull()?.let {
+            style.addMessage(it.text, it.time, if (it.own) null else person(network, it.nick))
+        }
+        nm.notify(tag, ID, build(network, target, style, read = true, expand = true))
+    }
+
+    private fun person(network: String, nick: String) =
+        Person.Builder().setName(nick).setIcon(avatar(network, nick)).build()
+
+    /** [nick]'s picture if it's loaded; otherwise it starts loading, for the next notification. */
+    private fun avatar(network: String, nick: String): IconCompat? {
+        val url = runCatching { app.client.profile(network, nick).avatar }.getOrNull() ?: return null
+        return picture(app.media.image(network, url, app.media.auto))
+    }
+
+    /** A loaded image as a square icon, cropped to fill like the app's avatars. */
+    private fun picture(img: Media.Img?): IconCompat? = (img as? Media.Img.Ready)?.let {
+        runCatching {
+            val d = it.forView(ICON_PX)
+            val scale = ICON_PX / minOf(d.intrinsicWidth, d.intrinsicHeight).coerceAtLeast(1).toFloat()
+            val w = (d.intrinsicWidth.coerceAtLeast(1) * scale).toInt()
+            val h = (d.intrinsicHeight.coerceAtLeast(1) * scale).toInt()
+            val bmp = Bitmap.createBitmap(ICON_PX, ICON_PX, Bitmap.Config.ARGB_8888)
+            d.setBounds((ICON_PX - w) / 2, (ICON_PX - h) / 2, (ICON_PX + w) / 2, (ICON_PX + h) / 2)
+            d.draw(Canvas(bmp))
+            IconCompat.createWithBitmap(bmp)
+        }.getOrNull()
+    }
+
+    /** A conversation notification; on API 30+ with a shortcut, so it can bubble. */
+    private fun build(
+        network: String, target: String, style: NotificationCompat.MessagingStyle, read: Boolean, expand: Boolean = false,
+    ): Notification {
+        val tag = tag(network, target)
+        fun focus(c: Class<*>) = Intent(app, c)
+            .setAction(Intent.ACTION_VIEW)
+            .setIdentifier(tag)
+            .putExtra(EXTRA_NETWORK, network)
+            .putExtra(EXTRA_TARGET, target)
         val open = PendingIntent.getActivity(
-            app, tag.hashCode(),
-            Intent(app, MainActivity::class.java)
-                .putExtra(EXTRA_NETWORK, network)
-                .putExtra(EXTRA_TARGET, target),
+            app, tag.hashCode(), focus(MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val n = NotificationCompat.Builder(app, CHANNEL)
+        val b = NotificationCompat.Builder(app, CHANNEL)
             .setSmallIcon(R.drawable.ic_chat)
             .setStyle(style)
             .setContentIntent(open)
             .setAutoCancel(true)
+            .setSilent(read)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .build()
-        nm.notify(tag, ID, n)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // The person for a DM, the network's icon for a channel.
+            val icon = (
+                if (!style.isGroupConversation) avatar(network, target)
+                else runCatching { app.client.networks().firstOrNull { it.network == network }?.icon }.getOrNull()
+                    ?.let { picture(app.media.icon(network, it)) }
+                ) ?: IconCompat.createWithResource(app, R.mipmap.ic_launcher)
+            // A long-lived shortcut makes it a conversation, which the user can bubble.
+            val shortcut = ShortcutInfoCompat.Builder(app, tag)
+                .setShortLabel(target)
+                .setIcon(icon)
+                .setIntent(focus(MainActivity::class.java))
+                .setLongLived(true)
+                .setLocusId(LocusIdCompat(tag))
+                .apply { if (!style.isGroupConversation) setPerson(Person.Builder().setName(target).setKey(tag).setIcon(icon).build()) }
+                .build()
+            ShortcutManagerCompat.pushDynamicShortcut(app, shortcut)
+            // The system fills in the bubble's intent, so it must be mutable.
+            val bubble = PendingIntent.getActivity(
+                app, tag.hashCode(), focus(BubbleActivity::class.java),
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            b.setShortcutInfo(shortcut).setBubbleMetadata(
+                NotificationCompat.BubbleMetadata.Builder(bubble, icon)
+                    .setDesiredHeight(600)
+                    .setSuppressNotification(read)
+                    .setAutoExpandBubble(expand)
+                    .build(),
+            )
+        }
+        return b.build()
     }
 
     private fun tag(network: String, target: String) = "$network\n${target.lowercase()}"
@@ -224,6 +361,8 @@ class Notifier(private val app: IrChad) {
         const val EXTRA_TARGET = "party.gentoo.irchad.TARGET"
         private const val CHANNEL = "messages"
         private const val ID = 3
+        /** Notification and shortcut pictures, in pixels. */
+        private const val ICON_PX = 192
         private const val TAG = "irchad"
         /** How long the app may be away before its connections drop. */
         private const val PAUSE_MS = 60_000L

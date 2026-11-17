@@ -60,6 +60,8 @@ Decisions: D38 (shared view model), D39 (push and backgrounding), D40 (distribut
 - [ ] Sign in with Discord (D96), found during Phase 6. chadd, chad-core, desktop, Android (browser + `irchad://oauth` intent) and iOS (`WebAuthenticationSession`) are done, through chad-ffi's `discord_*` calls and `Listener::open_url`/`discord_needs_name`/`password_set`.
   Not yet tried on a real phone. Web still needs it: it can't take an `irchad://` redirect, so chadd would have to send it back to an https page.
   Not done for any client: linking Discord to an existing password account, and a per-device sign-out.
+- [ ] Chat bubbles (D106), found during Phase 6. Message notifications carry a long-lived conversation shortcut and bubble metadata on API 30+, and `BubbleActivity` shows one conversation. Reading it keeps the bubble and takes the notification out of the shade. Leaving a network forgets its shortcuts. "Open in bubble" in the chat menu, and avatars as bubble and sender icons.
+  Not yet tried on a real phone.
 - [ ] Later: a shared Discord sign-in service, so servers don't each need a Discord app. Plan in [notes/oauth-broker.md](../notes/oauth-broker.md).
 
 ## Done when
