@@ -417,6 +417,8 @@ fn live() {
         .unwrap_or("https://chat.localhost:8443/?channel=%23general".into());
     let mut s = Shots::new(Some(&invite));
     s.harness.run();
+    s.click("Skip");
+    s.wait_for("Username");
     s.type_into("Username", "alice");
     s.type_into("Password", "alicepass");
     s.click("Log in");

@@ -145,6 +145,8 @@ impl App {
         let (mut close, mut focus, mut swap) = (None, None, None);
         let dragged = egui::DragAndDrop::payload::<PaneDrag>(ui.ctx()).map(|p| p.0);
         let panes = self.panes.clone();
+        // A gutter between tiles, for the active outline; a lone tile meets the sidebar.
+        let inset = if n > 1 { 2.0 } else { 0.0 };
         for i in 0..n {
             let (row, col) = (i / cols, i % cols);
             let w = area.width() / cols.min(n - row * cols) as f32;
@@ -167,7 +169,7 @@ impl App {
                 };
                 let mut pane = ui.new_child(
                     egui::UiBuilder::new()
-                        .max_rect(rect.shrink(2.0))
+                        .max_rect(rect.shrink(inset))
                         .id_salt(("pane", net, k)),
                 );
                 pane.set_clip_rect(rect);
@@ -203,7 +205,7 @@ impl App {
             } else {
                 let mut pane = ui.new_child(
                     egui::UiBuilder::new()
-                        .max_rect(rect.shrink(2.0))
+                        .max_rect(rect.shrink(inset))
                         .id_salt("screen-tile"),
                 );
                 pane.set_clip_rect(rect);

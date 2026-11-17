@@ -166,10 +166,14 @@ impl App {
 
     pub(super) fn channels(&mut self, ui: &mut egui::Ui, ni: usize) {
         // Outermost first: the user panel sits below the call panel.
-        egui::Panel::bottom("me-panel").show(ui, |ui| self.status_menu(ui, ni));
+        egui::Panel::bottom("me-panel")
+            .resizable(false)
+            .show(ui, |ui| self.status_menu(ui, ni));
         self.call_panel(ui);
-        self.network_header(ui, ni);
-        self.buffer_list(ui, ni);
+        egui::CentralPanel::default().show(ui, |ui| {
+            self.network_header(ui, ni);
+            self.buffer_list(ui, ni);
+        });
     }
 
     /// Our call, pinned to the bottom of the sidebar.
@@ -371,45 +375,47 @@ impl App {
             egui::AtomExt::atom_shrink(name, true),
         ));
         // Gear on the right; the name truncates into whatever's left.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add(egui::Button::new(RichText::new(icons::GEAR).size(18.0)).frame(false))
-                .tip("Settings")
-                .clicked()
-            {
-                self.show_settings = !self.show_settings;
-            }
-            if info.oper {
-                ui.label(RichText::new(icons::CROWN).small())
-                    .tip("IRC operator");
-            }
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-                ui.menu_button(status, |ui| {
-                    ui.radio_value(&mut self.settings.away, false, "Online");
-                    ui.radio_value(&mut self.settings.away, true, "Away");
-                    ui.separator();
-                    if ui
-                        .button(format!("{} Edit profile…", icons::USER_CIRCLE))
-                        .clicked()
-                    {
-                        let name = self.view.nets[ni]
-                            .profiles
-                            .get(&key(&own))
-                            .and_then(|p| p.display_name.clone())
-                            .unwrap_or_default();
-                        self.profile = Some(ProfileDialog {
-                            network: network.clone(),
-                            name,
-                            receipts: self.view.nets[ni].info.receipts,
-                        });
-                        self.send(&network, NetCommand::Devices { nick: own.clone() });
-                        ui.close();
-                    }
-                })
-                .response
-                .tip("Your status and profile");
-            });
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(egui::Button::new(RichText::new(icons::GEAR).size(18.0)).frame(false))
+                    .tip("Settings")
+                    .clicked()
+                {
+                    self.show_settings = !self.show_settings;
+                }
+                if info.oper {
+                    ui.label(RichText::new(icons::CROWN).small())
+                        .tip("IRC operator");
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                    ui.menu_button(status, |ui| {
+                        ui.radio_value(&mut self.settings.away, false, "Online");
+                        ui.radio_value(&mut self.settings.away, true, "Away");
+                        ui.separator();
+                        if ui
+                            .button(format!("{} Edit profile…", icons::USER_CIRCLE))
+                            .clicked()
+                        {
+                            let name = self.view.nets[ni]
+                                .profiles
+                                .get(&key(&own))
+                                .and_then(|p| p.display_name.clone())
+                                .unwrap_or_default();
+                            self.profile = Some(ProfileDialog {
+                                network: network.clone(),
+                                name,
+                                receipts: self.view.nets[ni].info.receipts,
+                            });
+                            self.send(&network, NetCommand::Devices { nick: own.clone() });
+                            ui.close();
+                        }
+                    })
+                    .response
+                    .tip("Your status and profile");
+                });
+            })
         });
         // What everyone sees as our activity (settings → General → Activity).
         if let Some(a) = self.activity_sent.0.as_deref().filter(|a| !a.is_empty()) {

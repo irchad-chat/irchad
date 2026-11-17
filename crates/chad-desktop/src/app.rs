@@ -1252,11 +1252,18 @@ impl eframe::App for App {
             egui::Panel::left("channels")
                 .default_size(240.0)
                 .size_range(LIST_MIN_W..=400.0)
+                // Unpadded so the nested panels' dividers reach the edges; they pad themselves.
+                .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
                 .show(ui, |ui| self.channels(ui, ni));
         }
         // Read again: the popped-out window may have just moved the share back.
         let layout = self.settings.stage;
-        egui::CentralPanel::default().show(ui, |ui| match ni {
+        let mut central = egui::CentralPanel::default();
+        if ni.is_some() {
+            // Same as the channel list: the chat's own panels pad themselves.
+            central = central.frame(egui::Frame::central_panel(ui.style()).inner_margin(0));
+        }
+        central.show(ui, |ui| match ni {
             _ if watching && layout == Layout::Fill => self.stage_ui(ui, &ctx, None),
             None => self.welcome(ui),
             Some(_) if self.panes.is_empty() && self.screen_cell().is_none() => {
