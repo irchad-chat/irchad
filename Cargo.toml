@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.1.52"
+version = "0.1.53"
 edition = "2024"
 rust-version = "1.92"
 license = "GPL-3.0-or-later"
