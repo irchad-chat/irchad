@@ -183,9 +183,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      # The runner's disk can't hold two builds' intermediates (libwebrtc is huge), and
+      # hdiutil then fails with "No space left on device": keep only each final binary.
       - run: |
-          cargo build --release --locked -p chad-desktop --target aarch64-apple-darwin
-          cargo build --release --locked -p chad-desktop --target x86_64-apple-darwin
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p chad-desktop --target $t
+            rm -rf target/$t/release/build target/$t/release/deps
+          done
+          df -h .
       - run: packaging/macos/dmg.sh
       - uses: actions/upload-artifact@v4
         with:
