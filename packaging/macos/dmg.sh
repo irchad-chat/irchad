@@ -37,4 +37,8 @@ EOF
 # Ad-hoc: an unsigned bundle downloaded from the web shows as "damaged" instead.
 codesign --force --deep -s - "$app"
 ln -s /Applications "$out/Applications"
-hdiutil create -volname IrChad -srcfolder "$out" -format UDZO -ov irchad-macos-universal.dmg
+# hdiutil's own -srcfolder size guess comes up short ("No space left on device"
+# with 90G free), so size the image ourselves with headroom.
+mb=$(du -sm "$out" | cut -f1)
+hdiutil create -volname IrChad -srcfolder "$out" -fs HFS+ -size "$((mb + mb / 4 + 16))m" \
+  -format UDZO -ov irchad-macos-universal.dmg
