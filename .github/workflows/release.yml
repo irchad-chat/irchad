@@ -174,9 +174,24 @@ jobs:
           name: android
           path: irchad-android-arm64.apk
 
+  # Best effort (macOS is unsupported): a failure here doesn't block publish.
+  macos:
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p chad-desktop
+      - run: packaging/macos/dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: irchad-macos-arm64.dmg
+
   # Created only once every asset is built, so a failed build leaves no release.
   publish:
-    needs: [version, linux, windows, android]
+    needs: [version, linux, windows, android, macos]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success' && needs.android.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

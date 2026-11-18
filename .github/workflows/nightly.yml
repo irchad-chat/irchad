@@ -146,9 +146,27 @@ jobs:
             irchad-windows-x86_64.zip
             irchad-windows-x86_64-setup.exe
 
+  # Best effort (macOS is unsupported): a failure here doesn't block publish.
+  macos:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p chad-desktop
+        env:
+          IRCHAD_NIGHTLY: ${{ github.sha }}
+      - run: packaging/macos/dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: irchad-macos-arm64.dmg
+
   # Replaced only once every asset is built, so a failed build keeps the last nightly.
   publish:
-    needs: [linux, windows]
+    needs: [linux, windows, macos]
+    if: ${{ !cancelled() && needs.linux.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
