@@ -16,6 +16,8 @@ Underneath it's plain IRCv3, so **your IRC client works too**: `ircs://irchad.ch
 
 ![Linux](https://img.shields.io/badge/Linux-Wayland%20%2B%20X11-a6e3a1?style=flat-square&labelColor=1e1e2e&logo=linux&logoColor=a6e3a1)
 ![Windows](https://img.shields.io/badge/Windows-supported-89dceb?style=flat-square&labelColor=1e1e2e)
+[![macOS](https://img.shields.io/badge/macOS-experimental-f5c2e7?style=flat-square&labelColor=1e1e2e&logo=apple&logoColor=f5c2e7)](https://github.com/irchad-chat/irchad/releases/latest)
+[![Universal](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-f2cdcd?style=flat-square&labelColor=1e1e2e)](https://github.com/irchad-chat/irchad/releases/latest)
 ![Android](https://img.shields.io/badge/Android-in%20progress-f9e2af?style=flat-square&labelColor=1e1e2e&logo=android&logoColor=f9e2af)
 ![iOS](https://img.shields.io/badge/iOS-not%20released-6c7086?style=flat-square&labelColor=1e1e2e&logo=apple&logoColor=6c7086)
 
