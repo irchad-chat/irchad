@@ -1,5 +1,6 @@
 #!/bin/sh
-# Wraps target/release/irchad in IrChad.app and that in irchad-macos-arm64.dmg
+# Merges the arm64 + x86_64 release builds into a universal IrChad.app and puts
+# that in irchad-macos-universal.dmg
 # (drag to Applications). Unsigned beyond ad-hoc: no notarization, so the first
 # launch needs right-click → Open. Usage: packaging/macos/dmg.sh
 set -eu
@@ -8,7 +9,8 @@ out=target/dmg
 app=$out/IrChad.app
 rm -rf "$out"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp target/release/irchad "$app/Contents/MacOS/"
+lipo -create -output "$app/Contents/MacOS/irchad" \
+  target/aarch64-apple-darwin/release/irchad target/x86_64-apple-darwin/release/irchad
 cp LICENSE "$app/Contents/Resources/"
 sips -s format icns crates/chad-desktop/assets/icon.png --out "$app/Contents/Resources/irchad.icns" >/dev/null
 cat > "$app/Contents/Info.plist" <<EOF
@@ -35,4 +37,4 @@ EOF
 # Ad-hoc: an unsigned bundle downloaded from the web shows as "damaged" instead.
 codesign --force --deep -s - "$app"
 ln -s /Applications "$out/Applications"
-hdiutil create -volname IrChad -srcfolder "$out" -format UDZO -ov irchad-macos-arm64.dmg
+hdiutil create -volname IrChad -srcfolder "$out" -format UDZO -ov irchad-macos-universal.dmg

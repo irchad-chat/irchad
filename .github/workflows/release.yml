@@ -181,12 +181,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked -p chad-desktop
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: |
+          cargo build --release --locked -p chad-desktop --target aarch64-apple-darwin
+          cargo build --release --locked -p chad-desktop --target x86_64-apple-darwin
       - run: packaging/macos/dmg.sh
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: irchad-macos-arm64.dmg
+          path: irchad-macos-universal.dmg
 
   # Created only once every asset is built, so a failed build leaves no release.
   publish:
