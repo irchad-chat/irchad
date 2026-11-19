@@ -8,8 +8,10 @@
 //! ```
 //!
 //! Env: CODEC (av1 | h264 | h265 | vp9, default av1), BACKEND (nvenc | vaapi |
-//! amf | software | auto, default nvenc), CHECK_SECS (5). On Windows, NVENC is only
-//! compiled in when the build saw cuda.h (`scripts/cuda-headers.ps1`).
+//! amf | software | auto, default nvenc), CHECK_SECS (5), LAYERS (a
+//! scalability mode such as L1T2, as screen share asks NVENC AV1 for; unset,
+//! the encoder's default). On Windows, NVENC is only compiled in when the
+//! build saw cuda.h (`scripts/cuda-headers.ps1`).
 //!
 //! DIP=1: 4 s at 60 fps, 5 s at 12, then 60 again, with a line a second of
 //! what was sent against the target. A share whose capture stalls and comes
@@ -23,6 +25,7 @@ use livekit::webrtc::media_stream_track::MediaStreamTrack;
 use livekit::webrtc::peer_connection::{AnswerOptions, OfferOptions, PeerConnection};
 use livekit::webrtc::peer_connection_factory::native::PeerConnectionFactoryExt;
 use livekit::webrtc::peer_connection_factory::{PeerConnectionFactory, RtcConfiguration};
+use livekit::webrtc::rtp_parameters::RtpEncodingParameters;
 use livekit::webrtc::rtp_sender::VideoEncoderBackend;
 use livekit::webrtc::rtp_transceiver::{RtpTransceiverDirection, RtpTransceiverInit};
 use livekit::webrtc::stats::RtcStats;
@@ -58,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
         _ => VideoEncoderBackend::Nvenc,
     };
     let dip = std::env::var("DIP").is_ok_and(|v| v == "1");
+    let layers = std::env::var("LAYERS").ok();
     let secs: u64 = std::env::var("CHECK_SECS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -85,7 +89,13 @@ async fn main() -> anyhow::Result<()> {
         RtpTransceiverInit {
             direction: RtpTransceiverDirection::SendOnly,
             stream_ids: vec!["check".into()],
-            send_encodings: vec![],
+            send_encodings: match &layers {
+                Some(mode) => vec![RtpEncodingParameters {
+                    scalability_mode: Some(mode.clone()),
+                    ..Default::default()
+                }],
+                None => vec![],
+            },
         },
     )?;
     let mut codecs: Vec<_> = factory
@@ -192,6 +202,22 @@ async fn main() -> anyhow::Result<()> {
         found,
         "no outbound video stats (did the connection come up?)"
     );
+    // The receiving end: every frame decoded, no freezes, one keyframe.
+    for s in rx.get_stats().await? {
+        if let RtcStats::InboundRtp(i) = s
+            && i.stream.kind == "video"
+        {
+            println!(
+                "decoder: {}, layers {}; {} frames decoded ({} key), {} dropped, {} freezes",
+                i.inbound.decoder_implementation,
+                layers.as_deref().unwrap_or("default"),
+                i.inbound.frames_decoded,
+                i.inbound.key_frames_decoded,
+                i.inbound.frames_dropped,
+                i.inbound.freeze_count,
+            );
+        }
+    }
     tx.close();
     rx.close();
     Ok(())

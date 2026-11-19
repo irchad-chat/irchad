@@ -390,6 +390,7 @@ pub(crate) async fn start(
                     ContentHint::Detail => DegradationPreference::MaintainResolution,
                     ContentHint::Motion => DegradationPreference::MaintainFramerate,
                 }),
+                scalability_mode: layers(codec, backend).map(Into::into),
                 ..Default::default()
             },
         )
@@ -882,6 +883,18 @@ fn codec(choice: Encoder) -> (VideoCodec, VideoEncoderBackend) {
         _ => backend,
     };
     (codec, backend)
+}
+
+/// Two temporal layers where our encoder makes them (NVENC AV1, D107): every
+/// other frame is one nothing references, so a viewer that loses a packet
+/// of one skips a frame instead of freezing until a keyframe, and the SFU
+/// can send a struggling viewer the base layer alone. The other encoders
+/// keep a single layer. `IRCHAD_SCREEN_LAYERS=L1T1` turns it off.
+fn layers(codec: VideoCodec, backend: VideoEncoderBackend) -> Option<&'static str> {
+    if std::env::var("IRCHAD_SCREEN_LAYERS").as_deref() == Ok("L1T1") {
+        return None;
+    }
+    (codec == VideoCodec::AV1 && backend == VideoEncoderBackend::Nvenc).then_some("L1T2")
 }
 
 #[cfg(test)]

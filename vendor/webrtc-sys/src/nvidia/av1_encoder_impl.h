@@ -15,7 +15,7 @@
 #include "api/video_codecs/scalability_mode.h"
 #include "api/video_codecs/sdp_video_format.h"
 #include "api/video_codecs/video_encoder.h"
-#include "modules/video_coding/svc/scalable_video_controller_no_layering.h"
+#include "modules/video_coding/svc/scalable_video_controller.h"
 
 namespace webrtc {
 
@@ -61,9 +61,11 @@ class NvidiaAV1EncoderImpl : public VideoEncoder {
   EncoderInfo GetEncoderInfo() const override;
 
  private:
-  int32_t ProcessEncodedFrame(const std::vector<uint8_t>& packet,
-                              const ::webrtc::VideoFrame& input_frame,
-                              bool is_keyframe);
+  int32_t ProcessEncodedFrame(
+      const std::vector<uint8_t>& packet,
+      const ::webrtc::VideoFrame& input_frame,
+      bool is_keyframe,
+      const ScalableVideoController::LayerFrameConfig& layer_frame);
 
   const webrtc::Environment& env_;
   EncodedImageCallback* encoded_image_callback_ = nullptr;
@@ -85,7 +87,12 @@ class NvidiaAV1EncoderImpl : public VideoEncoder {
   bool has_reported_error_ = false;
   bool sent_decodable_keyframe_ = false;
   std::vector<uint8_t> cached_sequence_header_obu_;
-  ScalableVideoControllerNoLayering svc_controller_;
+  // irchad: L1T1, or L1T2 (D107): see InitEncode.
+  std::unique_ptr<ScalableVideoController> svc_controller_;
+  // Layered: we decide each frame's type and whether it is a reference, so
+  // NVENC's own picture type decision is off and frames are numbered here.
+  bool layered_ = false;
+  uint32_t frames_since_key_ = 0;
   const SdpVideoFormat format_;
 };
 

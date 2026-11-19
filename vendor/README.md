@@ -98,3 +98,13 @@ Nvidia box (Windows needs the CUDA headers at build time) it should print
 `AMD AMF H264 Decoder` or, for AV1 on a card that decodes it,
 `AMD AMF AV1 Decoder`. In the app, the stream stats overlay names the decoder
 a watched share actually runs.
+- `src/nvidia/av1_encoder_impl.{h,cpp}`, `src/nvidia/nvidia_encoder_factory.cpp`:
+  NVENC AV1 offers `L1T2` besides `L1T1` (D107). In `L1T2`, picture type
+  decision moves to the client (`enablePTD = 0`) and every other frame is
+  encoded with `refPicFlag = 0`, so nothing references it; libwebrtc's
+  `ScalabilityStructureL1T2` describes that in the dependency descriptor.
+  `temporalId` stays 0, so the bitstream has no layer markers and any AV1
+  decoder takes it. The layer is decided before each frame is encoded
+  (it used to be after), and a frame the controller handed out that never
+  reaches the callback forces a key frame, as the descriptor's frame diffs
+  would no longer match.

@@ -11,6 +11,7 @@
 #include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "modules/video_coding/include/video_codec_interface.h"
 #include "modules/video_coding/include/video_error_codes.h"
+#include "modules/video_coding/svc/create_scalability_structure.h"
 #include "modules/video_coding/utility/simulcast_rate_allocator.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
@@ -94,7 +95,8 @@ int32_t NvidiaAV1EncoderImpl::InitEncode(
   }
   const auto scalability_mode = inst->GetScalabilityMode();
   if (scalability_mode.has_value() &&
-      *scalability_mode != ScalabilityMode::kL1T1) {
+      *scalability_mode != ScalabilityMode::kL1T1 &&
+      *scalability_mode != ScalabilityMode::kL1T2) {
     ReportError();
     return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
   }
@@ -108,10 +110,23 @@ int32_t NvidiaAV1EncoderImpl::InitEncode(
   codec_ = *inst;
   sent_decodable_keyframe_ = false;
   cached_sequence_header_obu_.clear();
-  svc_controller_ = ScalableVideoControllerNoLayering();
   if (!codec_.GetScalabilityMode().has_value()) {
     codec_.SetScalabilityMode(ScalabilityMode::kL1T1);
   }
+  // irchad: L1T2 makes every other frame one nothing references. A viewer
+  // that loses a packet of one skips that frame instead of freezing until a
+  // keyframe, and the SFU can forward the base layer alone (half the frame
+  // rate) to a viewer it can't keep up with. The layers live only in the
+  // dependency descriptor: the bitstream is plain single-layer AV1 with some
+  // non-reference frames (no temporal ids, one operating point), so every
+  // decoder takes it as is.
+  svc_controller_ = CreateScalabilityStructure(*codec_.GetScalabilityMode());
+  if (!svc_controller_) {
+    ReportError();
+    return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+  }
+  layered_ = *codec_.GetScalabilityMode() != ScalabilityMode::kL1T1;
+  frames_since_key_ = 0;
 
   if (codec_.numberOfSimulcastStreams == 0) {
     codec_.simulcastStream[0].width = codec_.width;
@@ -171,6 +186,11 @@ int32_t NvidiaAV1EncoderImpl::InitEncode(
       1, static_cast<uint32_t>(std::round(configuration_.max_frame_rate)));
   nv_initialize_params_.frameRateDen = 1;
   nv_initialize_params_.bufferFormat = nv_format_;
+  // irchad: refPicFlag, which makes a frame non-reference, only applies when
+  // the client decides picture types.
+  if (layered_) {
+    nv_initialize_params_.enablePTD = 0;
+  }
 
   nv_encode_config_.profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
   nv_encode_config_.gopLength = NVENC_INFINITE_GOPLENGTH;
@@ -288,6 +308,26 @@ int32_t NvidiaAV1EncoderImpl::Encode(
     is_keyframe_needed = true;
   }
 
+  // irchad: the layer this frame belongs to, decided before it's encoded, as
+  // it says whether NVENC may keep the frame as a reference.
+  std::vector<ScalableVideoController::LayerFrameConfig> layer_frames =
+      svc_controller_->NextFrameConfig(/*restart=*/is_keyframe_needed);
+  if (layer_frames.empty()) {
+    return WEBRTC_VIDEO_CODEC_NO_OUTPUT;
+  }
+  const ScalableVideoController::LayerFrameConfig layer_frame =
+      layer_frames.front();
+  if (layer_frame.IsKeyframe()) {
+    is_keyframe_needed = true;
+  }
+  const bool is_reference =
+      std::any_of(layer_frame.Buffers().begin(), layer_frame.Buffers().end(),
+                  [](const CodecBufferUsage& b) { return b.updated; });
+  // Each frame the controller hands out must reach the callback, or the
+  // dependency descriptor's frame diffs no longer match what was sent: on
+  // any miss, start over from a keyframe.
+  bool delivered = false;
+
   try {
     const NvEncInputFrame* nv_enc_input_frame = encoder_->GetNextInputFrame();
 
@@ -304,11 +344,31 @@ int32_t NvidiaAV1EncoderImpl::Encode(
                                   NV_ENC_PIC_FLAG_FORCEIDR |
                                   NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
     }
+    if (layered_) {
+      if (is_keyframe_needed) {
+        frames_since_key_ = 0;
+      }
+      pic_params.pictureType =
+          is_keyframe_needed ? NV_ENC_PIC_TYPE_IDR : NV_ENC_PIC_TYPE_P;
+      NV_ENC_PIC_PARAMS_AV1& av1 = pic_params.codecPicParams.av1PicParams;
+      av1.displayPOCSyntax = frames_since_key_++;
+      av1.refPicFlag = (is_keyframe_needed || is_reference) ? 1 : 0;
+      // Left at 0 on purpose: a temporal id would put layer markers in the
+      // bitstream, which the decoders would then have to handle.
+      av1.temporalId = 0;
+    }
 
     std::vector<std::vector<uint8_t>> bit_stream;
     encoder_->EncodeFrame(bit_stream, &pic_params);
 
     for (std::vector<uint8_t>& packet : bit_stream) {
+      if (delivered) {
+        RTC_LOG(LS_WARNING)
+            << "NVIDIA AV1 NVENC returned a second packet for one frame; "
+               "dropping it and restarting from a keyframe.";
+        configuration_.key_frame_request = true;
+        break;
+      }
       if (packet.empty()) {
         RTC_LOG(LS_WARNING)
             << "NVIDIA AV1 NVENC returned empty packet; skipping output.";
@@ -356,24 +416,32 @@ int32_t NvidiaAV1EncoderImpl::Encode(
         configuration_.key_frame_request = false;
       }
 
-      int32_t result =
-          ProcessEncodedFrame(packet, input_frame, treat_as_keyframe);
+      int32_t result = ProcessEncodedFrame(packet, input_frame,
+                                           treat_as_keyframe, layer_frame);
       if (result != WEBRTC_VIDEO_CODEC_OK) {
+        configuration_.key_frame_request = true;
         return result;
       }
+      delivered = true;
     }
   } catch (const NVENCException& e) {
     RTC_LOG(LS_ERROR) << "Failed EncodeFrame NvEncoder " << e.what();
+    configuration_.key_frame_request = true;
     return WEBRTC_VIDEO_CODEC_ENCODER_FAILURE;
   }
 
+  if (!delivered) {
+    configuration_.key_frame_request = true;
+    return WEBRTC_VIDEO_CODEC_NO_OUTPUT;
+  }
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
 int32_t NvidiaAV1EncoderImpl::ProcessEncodedFrame(
     const std::vector<uint8_t>& packet,
     const ::webrtc::VideoFrame& input_frame,
-    bool is_keyframe) {
+    bool is_keyframe,
+    const ScalableVideoController::LayerFrameConfig& layer_frame) {
   encoded_image_._encodedWidth = encoder_->GetEncodeWidth();
   encoded_image_._encodedHeight = encoder_->GetEncodeHeight();
   encoded_image_.SetRtpTimestamp(input_frame.rtp_timestamp());
@@ -397,17 +465,11 @@ int32_t NvidiaAV1EncoderImpl::ProcessEncodedFrame(
   CodecSpecificInfo codecInfo;
   codecInfo.codecType = kVideoCodecAV1;
   codecInfo.end_of_picture = true;
-  codecInfo.scalability_mode = ScalabilityMode::kL1T1;
+  codecInfo.scalability_mode = codec_.GetScalabilityMode();
 
-  std::vector<ScalableVideoController::LayerFrameConfig> layer_frames =
-      svc_controller_.NextFrameConfig(/*restart=*/is_keyframe);
-  if (!layer_frames.empty()) {
-    const ScalableVideoController::LayerFrameConfig& layer_frame =
-        layer_frames.front();
-    codecInfo.generic_frame_info = svc_controller_.OnEncodeDone(layer_frame);
-    if (layer_frame.IsKeyframe()) {
-      codecInfo.template_structure = svc_controller_.DependencyStructure();
-    }
+  codecInfo.generic_frame_info = svc_controller_->OnEncodeDone(layer_frame);
+  if (layer_frame.IsKeyframe()) {
+    codecInfo.template_structure = svc_controller_->DependencyStructure();
   }
 
   const auto result =

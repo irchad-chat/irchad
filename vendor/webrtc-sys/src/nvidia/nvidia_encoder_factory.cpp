@@ -269,6 +269,8 @@ NvidiaVideoEncoderFactory::NvidiaVideoEncoderFactory() {
     absl::InlinedVector<ScalabilityMode, kScalabilityModeCount>
         scalability_modes;
     scalability_modes.push_back(ScalabilityMode::kL1T1);
+    // irchad: two temporal layers, see av1_encoder_impl.cpp.
+    scalability_modes.push_back(ScalabilityMode::kL1T2);
     supported_formats_.push_back(
         SdpVideoFormat(SdpVideoFormat::AV1Profile0(), scalability_modes));
     RTC_LOG(LS_INFO) << "NVIDIA AV1 NVENC encoder is available.";
