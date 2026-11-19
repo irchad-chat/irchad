@@ -13,27 +13,43 @@ const content = ref<HTMLElement>()
 // At the bottom, as of the reader's last scroll: images, previews and avatars
 // that load later grow the log, and must not push the newest message out of view.
 let stuck = true
-// The log's height as of the last scroll or resize we saw.
-let height = 0
 const atBottom = (e: HTMLElement) => e.scrollHeight - e.scrollTop - e.clientHeight < 40
+// Only the reader un-sticks the log: browsers also fire scroll events for layout
+// (scroll anchoring, clamping, late content), and reading those as intent left it unstuck.
+// shortcut: find-in-page while stuck gets pulled back down; track it if anyone minds.
+let reading = 0
+let dragging = false
+const touched = () => (reading = performance.now())
 function onScroll() {
   const e = el.value
   if (!e) return
-  // The height changed too, so layout moved it (a channel switch clamping it,
-  // or content loading), not the reader: stay put.
-  if (stuck && e.scrollHeight !== height) e.scrollTop = e.scrollHeight
-  else stuck = atBottom(e)
-  height = e.scrollHeight
+  if (atBottom(e)) stuck = true
+  else if (dragging || performance.now() - reading < 1000) stuck = false
+  else if (stuck) e.scrollTop = e.scrollHeight
   maybeOlder()
 }
+// Scrollbar drags start on the log and can run as long as the button is held.
+function grab() {
+  dragging = true
+  window.addEventListener('pointerup', () => ((dragging = false), touched()), { once: true })
+}
 const grown = new ResizeObserver(() => {
-  const e = el.value
-  if (!e) return
-  if (stuck) e.scrollTop = e.scrollHeight
-  height = e.scrollHeight
+  if (stuck && el.value) el.value.scrollTop = el.value.scrollHeight
 })
-onMounted(() => content.value && grown.observe(content.value))
-onUnmounted(() => grown.disconnect())
+// Coming back to the tab: catch up on growth we didn't get to see.
+function shown() {
+  if (!document.hidden && stuck && el.value) el.value.scrollTop = el.value.scrollHeight
+}
+onMounted(() => {
+  if (content.value) grown.observe(content.value)
+  // The log itself shrinking (composer growing, reply bar, banner) hides the bottom too.
+  if (el.value) grown.observe(el.value)
+  document.addEventListener('visibilitychange', shown)
+})
+onUnmounted(() => {
+  grown.disconnect()
+  document.removeEventListener('visibilitychange', shown)
+})
 // Messages from the same person this close together read as one.
 const GROUP_MS = 5 * 60_000
 
@@ -80,6 +96,7 @@ function jump(msgid: string) {
   const row = el.value?.querySelector<HTMLElement>(`[data-msgid="${CSS.escape(msgid)}"]`)
   if (row) {
     jumping = undefined
+    stuck = false
     row.scrollIntoView({ block: 'center', behavior: 'smooth' })
     row.classList.add('flash')
     setTimeout(() => row.classList.remove('flash'), 1500)
@@ -97,7 +114,9 @@ watch(
     const e = el.value
     if (!e) return
     before = {
-      bottom: atBottom(e),
+      // The reader's intent, not the layout: in a background tab the
+      // ResizeObserver doesn't run, so grown content leaves us short of the bottom.
+      bottom: stuck,
       height: e.scrollHeight,
       top: e.scrollTop,
       first: before.first,
@@ -134,7 +153,12 @@ watch(
 </script>
 
 <template>
-  <div ref="el" class="log" role="log" aria-live="polite" @scroll.passive="onScroll">
+  <div ref="el" class="log" role="log" aria-live="polite" @scroll.passive="onScroll"
+    @wheel.passive="touched"
+    @touchmove.passive="touched"
+    @keydown="touched"
+    @pointerdown="grab"
+  >
     <div ref="content">
     <p v-if="client.buffer?.historyStart" class="start dim">This is the start of {{ client.selected }}.</p>
     <template v-for="(m, i) in client.messages" :key="m.key">

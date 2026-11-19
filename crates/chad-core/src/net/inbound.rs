@@ -120,9 +120,11 @@ impl Net {
                 // cached: a live message may be cached past the gap.
                 let last = inner
                     .iter()
-                    .filter_map(|i| self.chat(i))
-                    .map(|(_, m)| m.time)
+                    .filter_map(|i| head(i).tag("time").and_then(time::parse))
                     .max();
+                // With event-playback, reactions, receipts and JOINs fill the page
+                // too: count them, or a full page looks short and paging stops.
+                let full = inner.len() >= PAGE as usize;
                 let n = self.store_history(&target, inner);
                 if matches!(kind, Hist::After { .. } | Hist::Latest) {
                     tracing::info!("{}: catch-up {target}: {n} messages", self.info.network);
@@ -130,14 +132,14 @@ impl Net {
                 let name = self.buffers.get(&target).map(|b| b.name.clone());
                 match (kind, name) {
                     // Short of a page from the newest down: that's all there is (a fresh DM).
-                    (Hist::Before | Hist::Latest, Some(name)) if n < PAGE as usize => {
+                    (Hist::Before | Hist::Latest, Some(name)) if !full => {
                         let network = self.id();
                         self.events.push(Event::HistoryStart {
                             network,
                             target: name,
                         });
                     }
-                    (Hist::After { pages }, _) if n >= PAGE as usize && pages < MAX_GAP_PAGES => {
+                    (Hist::After { pages }, _) if full && pages < MAX_GAP_PAGES => {
                         if let Some(t) = last {
                             self.fetch_after(&target, t, pages + 1);
                         }

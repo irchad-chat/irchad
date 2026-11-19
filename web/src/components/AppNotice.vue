@@ -26,10 +26,9 @@ onMounted(() => {
       <h2>Get the IrChad app</h2>
       <p>You're on the web version. The app does a lot more:</p>
       <ul>
-        <li>Share your screen and camera</li>
-        <li>Push-to-talk, the soundboard and per-person volume</li>
         <li>Encrypted DMs</li>
-        <li>Notifications and staying logged in</li>
+        <li>Push-to-talk, the soundboard and per-person volume</li>
+        <li>Staying logged in</li>
       </ul>
       <p class="dim small">For Windows, Linux and Android.</p>
       <div class="row">

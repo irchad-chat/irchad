@@ -24,6 +24,10 @@ export type Server = { name: string; signUp: boolean; guests: boolean; discord: 
 export type NetState = {
   state: "connecting" | "verifying" | "connected" | "disconnected" | "failed";
   error: string | null; nick: string; name: string; guest: boolean;
+  /** Signs in with Discord (D96), so `setPassword` is for other IRC clients. */
+  discord: boolean;
+  /** Ours, as others see them. */
+  displayName: string | null; avatar: string | null;
   /** Largest upload in bytes, if the network takes them. */
   uploads: number | null;
   /** Who GIF search comes from, if the network has it. */
@@ -47,6 +51,8 @@ export type Buffer = {
   /** Channels: nicks in its voice room, per `chad/voice`. */
   inVoice: string[];
 };
+/** A mention or DM to notify about (`takeAlerts`). */
+export type Alert = { target: string; title: string; body: string };
 export type VoiceJoin = { url: string; token: string };
 export type Reaction = { emoji: string; image: string | null; nicks: string[]; own: boolean };
 export type Link = { url: string; kind: "image" | "video" | "file" | "page" };
@@ -85,12 +91,16 @@ export type GifPage = { gifs: Gif[]; next: string | null };
 "#;
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct State<'a> {
     state: &'static str,
     error: Option<&'a str>,
     nick: &'a str,
     name: &'a str,
     guest: bool,
+    discord: bool,
+    display_name: Option<&'a str>,
+    avatar: Option<String>,
     uploads: Option<u64>,
     gifs: Option<&'a str>,
     meetings: bool,
@@ -252,12 +262,20 @@ impl Client {
             ConnState::Disconnected { error } => ("disconnected", Some(error.as_str())),
             ConnState::Failed { error } => ("failed", Some(error.as_str())),
         };
+        let own = i.view.net(&info.network).and_then(|n| {
+            i.view.nets[n]
+                .profiles
+                .get(&chad_core::view::key(&info.nick))
+        });
         to_js(&State {
             state,
             error: error.filter(|e| !e.is_empty()),
             nick: &info.nick,
             name: &info.name,
             guest: info.guest,
+            discord: info.discord,
+            display_name: own.and_then(|p| p.display_name.as_deref()),
+            avatar: own.and_then(|p| p.avatar.as_ref()).map(ToString::to_string),
             uploads: info.uploads,
             gifs: info.gifs.as_deref(),
             meetings: info.meetings,

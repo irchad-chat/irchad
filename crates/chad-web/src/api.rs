@@ -20,19 +20,7 @@ impl Client {
     pub fn upload(&self, target: String, name: String, bytes: Vec<u8>) -> js_sys::Promise {
         let max = self.inner.borrow().net.info.uploads;
         self.chadd(move |client, w| async move {
-            let max = max.ok_or("This server doesn't take uploads.")?;
-            if bytes.len() as u64 > max {
-                return Err(format!(
-                    "That file is too big. The limit here is {} MB.",
-                    max >> 20
-                ));
-            }
-            let url = client
-                .call(|api, t| {
-                    let (name, bytes) = (name.clone(), bytes.clone());
-                    async move { chadd::upload(&api, &t, &name, bytes).await }
-                })
-                .await?;
+            let url = put(&client, max, name, bytes).await?;
             // Posted as a plain link, like the other apps: every client can open it.
             if let Some(rc) = w.upgrade() {
                 run(&rc, |i, _| {
@@ -43,6 +31,83 @@ impl Client {
                         mentions: Vec::new(),
                     });
                 });
+            }
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+
+    /// Upload a picture through chadd and make it ours.
+    #[wasm_bindgen(js_name = uploadAvatar, unchecked_return_type = "Promise<void>")]
+    pub fn upload_avatar(&self, name: String, bytes: Vec<u8>) -> js_sys::Promise {
+        let max = self.inner.borrow().net.info.uploads;
+        self.chadd(move |client, w| async move {
+            let url = put(&client, max, name, bytes).await?;
+            if let Some(rc) = w.upgrade() {
+                run(&rc, |i, _| {
+                    i.command(NetCommand::SetAvatar { url: url.into() })
+                });
+            }
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+
+    /// A Discord account's password for other IRC clients (D96).
+    #[wasm_bindgen(js_name = setPassword, unchecked_return_type = "Promise<void>")]
+    pub fn set_password(&self, password: String) -> js_sys::Promise {
+        self.chadd(move |client, _| async move {
+            client
+                .call(|api, t| {
+                    let password = password.clone();
+                    async move { chadd::set_password(&api, &t, &password).await }
+                })
+                .await?;
+            Ok(JsValue::UNDEFINED)
+        })
+    }
+
+    /// Deletes our account, its messages and uploads (D69), then signs out
+    /// for good. The page goes back to logging in once it resolves.
+    #[wasm_bindgen(js_name = deleteAccount, unchecked_return_type = "Promise<void>")]
+    pub fn delete_account(&self) -> js_sys::Promise {
+        let (account, password, discord, guest, chadd_deletes) = {
+            let i = self.inner.borrow();
+            (
+                i.acct.name.clone(),
+                i.acct.password.clone(),
+                i.discord,
+                i.net.info.guest,
+                i.discovery.as_ref().is_some_and(|d| d.chadd.delete),
+            )
+        };
+        if guest {
+            return js_sys::Promise::reject(
+                &JsError::new("Guests have no account to delete.").into(),
+            );
+        }
+        // shortcut: no NickServ UNREGISTER fallback as conn.rs has; add it if
+        // a network without chadd's delete ever serves the web app.
+        if !chadd_deletes {
+            return js_sys::Promise::reject(
+                &JsError::new("This network doesn't delete accounts from here. Ask NickServ.")
+                    .into(),
+            );
+        }
+        self.chadd(move |client, w| async move {
+            if discord {
+                // No password to ask for again (D96): the session vouches.
+                client
+                    .call(|api, t| {
+                        let account = account.clone();
+                        async move { chadd::delete_account(&api, &account, "", Some(&t)).await }
+                    })
+                    .await?;
+            } else {
+                chadd::delete_account(&client.api, &account, &password, None)
+                    .await
+                    .map_err(chadd::Error::message)?;
+            }
+            if let Some(rc) = w.upgrade() {
+                run(&rc, |i, _| i.sign_out("account deleted"));
             }
             Ok(JsValue::UNDEFINED)
         })
@@ -142,6 +207,28 @@ impl Client {
         let fut = f(client, Rc::downgrade(&self.inner));
         future_to_promise(async move { fut.await.map_err(|e| JsError::new(&e).into()) })
     }
+}
+
+/// Uploads `bytes` if they fit under the network's limit.
+async fn put(
+    client: &chadd::Client,
+    max: Option<u64>,
+    name: String,
+    bytes: Vec<u8>,
+) -> Result<url::Url, String> {
+    let max = max.ok_or("This server doesn't take uploads.")?;
+    if bytes.len() as u64 > max {
+        return Err(format!(
+            "That file is too big. The limit here is {} MB.",
+            max >> 20
+        ));
+    }
+    client
+        .call(|api, t| {
+            let (name, bytes) = (name.clone(), bytes.clone());
+            async move { chadd::upload(&api, &t, &name, bytes).await }
+        })
+        .await
 }
 
 /// What every connect fetches from chadd: custom emoji, and messages chadd

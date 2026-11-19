@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import {
   Client,
+  type Alert,
   type Buffer,
   type CustomEmoji,
   type LinkPreview,
@@ -37,6 +38,9 @@ export const useClient = defineStore('client', () => {
   // The composer's mode: replying to or editing a message in the selected buffer.
   const replying = shallowRef<Msg | null>(null)
   const editing = shallowRef<Msg | null>(null)
+  // The open user card: who, whether they're a member here (so their status
+  // is known), what opened it, and where it sits.
+  const card = shallowRef<{ m: Member; present: boolean; anchor: HTMLElement; pos: Record<string, string> } | null>(null)
   const client = new Client(NETWORK, refresh)
   // A meeting link's code (`?meet=`, from chadd's /meet page): this tab is that meeting (D86).
   // In here, not at module level: the wasm isn't loaded until main.ts's `await init()`.
@@ -78,12 +82,15 @@ export const useClient = defineStore('client', () => {
     callMembers.value = call ? membersOf(call) : null
 
     const key = `${b?.target}:${b?.unread}`
-    if (b?.unread && document.hasFocus() && key !== marked) {
+    // Confirmed read: forget the guard, or the next message's unread count of 1 would match it.
+    if (!b?.unread) marked = ''
+    else if (document.hasFocus() && key !== marked) {
       marked = key
       client.markRead(b.target)
     }
 
     for (const text of client.takeNotices()) notify(text)
+    for (const a of client.takeAlerts()) systemNotify(a)
     for (const inv of client.takeInvites())
       invites.value = [...invites.value.filter((i) => i.channel !== inv.channel), inv].slice(-3)
 
@@ -106,6 +113,44 @@ export const useClient = defineStore('client', () => {
     const id = ++noticeId
     notices.value = [...notices.value.slice(-4), { id, text }]
     setTimeout(() => (notices.value = notices.value.filter((n) => n.id !== id)), 6000)
+  }
+
+  // System notifications for mentions and DMs, as the desktop app's. The
+  // browser's permission is the switch: `null` where there are none.
+  const notifications = ref<NotificationPermission | null>('Notification' in window ? Notification.permission : null)
+  async function allowNotifications() {
+    notifications.value = await Notification.requestPermission()
+  }
+  function systemNotify(a: Alert) {
+    // On screen counts as seen, even when focus is elsewhere.
+    if (notifications.value !== 'granted' || (!document.hidden && a.target === selected.value)) return
+    try {
+      const n = new Notification(a.title, { body: a.body, tag: a.target })
+      n.onclick = () => {
+        window.focus()
+        select(a.target)
+        n.close()
+      }
+    } catch {
+      // Android's Chrome only notifies from a service worker.
+    }
+  }
+
+  // Your profile and account.
+  const setDisplayName = (name: string) => client.setDisplayName(name.trim())
+  const removeAvatar = () => client.removeAvatar()
+  async function uploadAvatar(file: File) {
+    try {
+      await client.uploadAvatar(file.name, new Uint8Array(await file.arrayBuffer()))
+    } catch (err) {
+      notify(`Couldn't change your picture: ${message(err)}`)
+    }
+  }
+  const setPassword = (password: string) => client.setPassword(password)
+  // Rejects with why; once gone, back to the sign-in screen with nothing kept.
+  async function deleteAccount() {
+    await client.deleteAccount()
+    location.reload()
   }
 
   // Each wraps a call that throws on bad input; the message shows in the UI.
@@ -184,7 +229,28 @@ export const useClient = defineStore('client', () => {
       client.open(want)
       refresh()
     })
-  watch(selected, () => (replying.value = editing.value = null))
+  watch(selected, () => {
+    replying.value = editing.value = null
+    card.value = null
+  })
+  // Toggles `nick`'s card beside `anchor`: left of it from the member list,
+  // right of it from a message. Someone not in the member list is shown as
+  // the message knows them.
+  function showCard(anchor: HTMLElement, side: 'left' | 'right', m: Member | Msg) {
+    if (card.value?.anchor === anchor) {
+      card.value = null
+      return
+    }
+    const member = 'prefix' in m ? m : members.value?.find((x) => x.nick.toLowerCase() === m.nick.toLowerCase())
+    const r = anchor.getBoundingClientRect()
+    const pos = { top: `${Math.max(8, Math.min(r.top, innerHeight - 300))}px` }
+    card.value = {
+      m: member ?? { nick: m.nick, shown: m.shown, account: m.account, avatar: m.avatar, prefix: '', away: false, oper: false, activity: null, music: null },
+      present: !!member,
+      anchor,
+      pos: side === 'left' ? { ...pos, right: `${innerWidth - r.left + 8}px` } : { ...pos, left: `${r.right + 8}px` },
+    }
+  }
   function select(target: string) {
     selected.value = target
     refresh()
@@ -312,6 +378,8 @@ export const useClient = defineStore('client', () => {
     answerInvite,
     replying,
     editing,
+    card,
+    showCard,
     connected,
     ready,
     away,
@@ -349,6 +417,13 @@ export const useClient = defineStore('client', () => {
     mediaUrl,
     preview,
     notify,
+    notifications,
+    allowNotifications,
+    setDisplayName,
+    removeAvatar,
+    uploadAvatar,
+    setPassword,
+    deleteAccount,
   }
 })
 

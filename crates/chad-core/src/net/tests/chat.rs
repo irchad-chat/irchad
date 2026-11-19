@@ -792,3 +792,40 @@ fn replies_to_us_highlight() {
         .collect();
     assert_eq!(hl, [true, false, false]);
 }
+
+#[test]
+fn a_page_full_of_events_keeps_paging() {
+    let mut n = net();
+    n.store.put_buffer("#c", "#c", BufferKind::Channel);
+    n.store.insert("#c", &msg("m0", 1000, "alice", "old"));
+    n.store.set_meta("autojoined", "1");
+    n.load_cache();
+    let sent = attach(&mut n, &["#c"]);
+    let after = sent.iter().find(|l| l.contains("AFTER #c")).unwrap();
+    // 100 items, only half of them messages: still a full page.
+    let mut lines = vec![format!(
+        "@label={} :s BATCH +h chathistory #c",
+        label_of(after)
+    )];
+    for i in 1..=100 {
+        let t = ts(1000 + i * 1000);
+        lines.push(if i % 2 == 0 {
+            format!("@batch=h;msgid=m{i};time={t} :alice!u@h PRIVMSG #c :msg {i}")
+        } else {
+            format!(
+                "@batch=h;msgid=r{i};time={t};+draft/react=👍;+draft/reply=m0 :bob!u@h TAGMSG #c"
+            )
+        });
+    }
+    lines.push(":s BATCH -h".into());
+    for l in lines {
+        feed(&mut n, &l);
+    }
+    let next = format!("CHATHISTORY AFTER #c timestamp={} 100", ts(101_000 - 1));
+    assert!(out(&mut n).iter().any(|l| l.ends_with(&next)));
+    assert!(
+        !events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::HistoryStart { .. }))
+    );
+}

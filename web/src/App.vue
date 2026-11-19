@@ -8,6 +8,7 @@ import MessageList from './components/MessageList.vue'
 import Composer from './components/Composer.vue'
 import MemberList from './components/MemberList.vue'
 import Toasts from './components/Toasts.vue'
+import UserCard from './components/UserCard.vue'
 import Stage from './components/Stage.vue'
 import AppNotice from './components/AppNotice.vue'
 import MeetingView from './components/MeetingView.vue'
@@ -32,6 +33,7 @@ const showMembers = ref(true)
     </main>
     <MemberList v-if="showMembers && client.buffer?.kind === 'channel'" />
     <AppNotice />
+    <UserCard />
   </div>
   <Toasts />
 </template>

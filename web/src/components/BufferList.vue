@@ -3,6 +3,7 @@
 import { computed, ref } from 'vue'
 import { useClient } from '../stores/client'
 import SignUpDialog from './SignUpDialog.vue'
+import ProfileDialog from './ProfileDialog.vue'
 import VoiceMembers from './VoiceMembers.vue'
 import VoiceBar from './VoiceBar.vue'
 import { useVoice } from '../stores/voice'
@@ -12,6 +13,7 @@ const client = useClient()
 const voice = useVoice()
 const opening = ref('')
 const signingUp = ref(false)
+const profile = ref(false)
 const channels = computed(() => client.buffers.filter((b) => b.kind !== 'dm'))
 const dms = computed(() => client.buffers.filter((b) => b.kind === 'dm'))
 
@@ -107,18 +109,22 @@ const status = computed(() => {
     <a class="get-app" :href="`${client.network}/invite`" target="_blank" rel="noopener">
       <i class="ph ph-download-simple" /> Get the desktop app
     </a>
+    <button v-if="client.notifications === 'default'" class="allow" @click="client.allowNotifications()">
+      <i class="ph ph-bell" /> Notify me about mentions and DMs
+    </button>
     <VoiceBar />
     <footer>
-      <div class="me">
-        <b class="ellipsis">{{ client.state?.nick }}</b>
+      <button class="me" title="Edit profile" @click="profile = true">
+        <b class="ellipsis">{{ client.state?.displayName || client.state?.nick }}</b>
         <span class="dim small">{{ status || (client.state?.guest ? 'Guest' : client.away ? 'Away' : 'Online') }}</span>
-      </div>
+      </button>
       <button v-if="client.state?.guest" :disabled="!client.connected" @click="signingUp = true">Sign up</button>
       <button v-else :disabled="!client.connected" :title="client.away ? 'Come back' : 'Go away'" @click="toggleAway">
         {{ client.away ? 'Back' : 'Away' }}
       </button>
     </footer>
     <SignUpDialog v-if="signingUp" @close="signingUp = false" />
+    <ProfileDialog v-if="profile" @close="profile = false" />
   </nav>
 </template>
 
@@ -240,6 +246,24 @@ footer {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.me:hover {
+  background: var(--surface);
+}
+.me b {
+  max-width: 100%;
+}
+.allow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 8px;
 }
 .err {
   padding: 0 12px;

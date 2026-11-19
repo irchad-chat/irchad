@@ -62,15 +62,22 @@ function remove() {
     <div class="row">
       <div class="gutter">
         <template v-if="!continued">
-          <Avatar :nick="m.nick" :shown="m.shown" :url="m.avatar" :size="40" />
+          <button class="who" :aria-label="m.shown" @click="client.showCard($event.currentTarget as HTMLElement, 'right', m)">
+            <Avatar :nick="m.nick" :shown="m.shown" :url="m.avatar" :size="40" />
+          </button>
         </template>
         <span v-else class="hover-time dim">{{ time(m.time) }}</span>
       </div>
       <div class="body">
         <div v-if="!continued" class="head">
-          <b :style="{ color: nickColor(m.nick) }" :title="m.account ? `${m.nick} (${m.account})` : m.nick">{{
-            m.shown
-          }}</b>
+          <button
+            class="who name"
+            :style="{ color: nickColor(m.nick) }"
+            :title="m.account ? `${m.nick} (${m.account})` : m.nick"
+            @click="client.showCard($event.currentTarget as HTMLElement, 'right', m)"
+          >
+            {{ m.shown }}
+          </button>
           <span class="dim small">{{ time(m.time) }}</span>
         </div>
         <div class="text">
@@ -115,6 +122,18 @@ function remove() {
 </template>
 
 <style scoped>
+.who {
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.who.name {
+  font-weight: bold;
+}
+.who.name:hover {
+  text-decoration: underline;
+}
 .msg {
   position: relative;
   padding: 2px 16px;

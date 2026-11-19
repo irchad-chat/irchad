@@ -33,11 +33,15 @@ const placeholder = computed(() => {
 
 watch(
   () => client.selected,
-  (now, was) => {
+  async (now, was) => {
     if (was) drafts.set(was, draft.value)
     draft.value = (now && drafts.get(now)) || ''
     mentions = []
     suggestions.value = []
+    // Not on touch screens: focusing would pop the keyboard over the messages.
+    if (!matchMedia('(pointer: fine)').matches) return
+    await nextTick()
+    box.value?.focus()
   },
 )
 watch(

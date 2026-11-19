@@ -12,8 +12,10 @@ use std::sync::Arc;
 
 use chad_core::chadd;
 use chad_core::login::{self, Account, Login, Step};
-use chad_core::view::View;
-use chad_core::{ConnState, Event, Net, NetCommand, NetworkInfo, Store, Typing, format};
+use chad_core::view::{self, View};
+use chad_core::{
+    BufferKind, ChatMessage, ConnState, Event, Net, NetCommand, NetworkInfo, Store, Typing, format,
+};
 use chad_irc::Message;
 use chad_irc::keepalive::{Backoff, Keepalive};
 use chad_proto::chadd::RefreshResponse;
@@ -29,6 +31,8 @@ const DEVICE_KEY: &str = "irchad.device";
 /// Notices the page hasn't taken yet; more are dropped (D14: a server can
 /// make `Net` say a lot).
 const MAX_NOTICES: usize = 20;
+/// A notification's text, in characters.
+const MAX_ALERT: usize = 200;
 
 pub(crate) type Shared = Rc<RefCell<Inner>>;
 pub(crate) type W = Weak<RefCell<Inner>>;
@@ -55,13 +59,21 @@ enum End {
     Ready,
 }
 
+/// A message worth a system notification, as the desktop app's.
+#[derive(serde::Serialize)]
+struct Alert {
+    target: String,
+    title: String,
+    body: String,
+}
+
 pub(crate) struct Inner {
     pub(crate) net: Net,
     pub(crate) view: View,
-    acct: Account,
+    pub(crate) acct: Account,
     /// `acct.password` is chadd's refresh token (D96): each connect trades it
     /// for a JWT and a new one.
-    discord: bool,
+    pub(crate) discord: bool,
     /// A first Discord sign-in waiting on a name: chadd's API and its ticket.
     pub(crate) ticket: Option<(url::Url, String)>,
     /// A guest signing up: who to go back to if it doesn't work.
@@ -82,6 +94,8 @@ pub(crate) struct Inner {
     notices: Vec<String>,
     /// Invites for the page to offer (`takeInvites`): (from, channel).
     invites: Vec<(String, String)>,
+    /// Mentions and DMs for the page to notify about (`takeAlerts`).
+    alerts: Vec<Alert>,
     /// The view changed without an event from `net` (chadd's emoji, say).
     pub(crate) dirty: bool,
     on_change: js_sys::Function,
@@ -146,6 +160,7 @@ impl Client {
                 retry: None,
                 notices: Vec::new(),
                 invites: Vec::new(),
+                alerts: Vec::new(),
                 dirty: false,
                 on_change,
             })),
@@ -240,6 +255,25 @@ impl Client {
     #[wasm_bindgen(js_name = takeNotices)]
     pub fn take_notices(&self) -> Vec<String> {
         std::mem::take(&mut self.inner.borrow_mut().notices)
+    }
+
+    /// Mentions and DMs since the last call, to show as notifications when
+    /// they're not already on screen.
+    #[wasm_bindgen(js_name = takeAlerts, unchecked_return_type = "Alert[]")]
+    pub fn take_alerts(&self) -> JsValue {
+        crate::snapshot::to_js(&std::mem::take(&mut self.inner.borrow_mut().alerts))
+    }
+
+    /// `name` empty to show the account name again.
+    #[wasm_bindgen(js_name = setDisplayName)]
+    pub fn set_display_name(&self, name: String) {
+        self.cmd(NetCommand::SetDisplayName { name });
+    }
+
+    /// Our picture goes; `uploadAvatar` sets a new one.
+    #[wasm_bindgen(js_name = removeAvatar)]
+    pub fn remove_avatar(&self) {
+        self.cmd(NetCommand::SetAvatar { url: String::new() });
     }
 
     /// A message to a channel or DM: markdown, as the other apps. `mentions`
@@ -683,6 +717,16 @@ impl Inner {
         }
     }
 
+    /// Says goodbye and drops the connection for good: the account is gone.
+    pub(crate) fn sign_out(&mut self, reason: &str) {
+        if let Some(c) = &mut self.conn
+            && c.open
+        {
+            c.sock.send(&Message::new("QUIT", [reason]));
+        }
+        self.end_conn();
+    }
+
     pub(crate) fn push_notice(&mut self, text: String) {
         if self.notices.len() < MAX_NOTICES {
             self.notices.push(text);
@@ -704,8 +748,22 @@ impl Inner {
             }
         }
         let mut changed = std::mem::take(&mut self.dirty) || !self.notices.is_empty();
+        let network = self.net.info.network.clone();
         for ev in self.net.drain_events() {
-            self.view.apply(&ev);
+            let applied = self.view.apply(&ev);
+            if let Event::Messages {
+                target, messages, ..
+            } = &ev
+            {
+                alert(
+                    &self.view,
+                    &network,
+                    &mut self.alerts,
+                    target,
+                    messages,
+                    &applied.fresh,
+                );
+            }
             match &ev {
                 Event::Invite { from, channel, .. } if self.invites.len() < MAX_NOTICES => {
                     self.invites.push((from.clone(), channel.clone()));
@@ -723,6 +781,47 @@ impl Inner {
             changed = true;
         }
         changed.then(|| self.on_change.clone())
+    }
+}
+
+/// Queues the fresh mentions and DMs in `target` for `takeAlerts`.
+fn alert(
+    view: &View,
+    network: &str,
+    alerts: &mut Vec<Alert>,
+    target: &str,
+    messages: &[ChatMessage],
+    fresh: &[usize],
+) {
+    let Some(n) = view.net(network).map(|n| &view.nets[n]) else {
+        return;
+    };
+    let channel = n
+        .buffer(&view::key(target))
+        .is_some_and(|b| n.buffers[b].info.kind == BufferKind::Channel);
+    for m in fresh.iter().filter_map(|&i| messages.get(i)) {
+        if !m.mention || !view::notifiable(m) || alerts.len() >= MAX_NOTICES {
+            continue;
+        }
+        let who = n.shown(&m.nick);
+        let text = format::strip(&m.text);
+        let mut body: String = text
+            .chars()
+            .take(MAX_ALERT)
+            .map(|c| if c == '\n' { ' ' } else { c })
+            .collect();
+        if text.chars().nth(MAX_ALERT).is_some() {
+            body.push('…');
+        }
+        alerts.push(Alert {
+            target: target.to_owned(),
+            title: if channel {
+                format!("{who} in {target}")
+            } else {
+                who.to_owned()
+            },
+            body,
+        });
     }
 }
 
