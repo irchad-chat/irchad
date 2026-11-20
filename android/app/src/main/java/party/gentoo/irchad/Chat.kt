@@ -47,6 +47,7 @@ import androidx.core.content.ContextCompat
 import io.livekit.android.renderer.TextureViewRenderer
 import livekit.org.webrtc.RendererCommon
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
@@ -281,12 +282,16 @@ private fun ChatScreen(
     var replyTo by remember(net.network, buf?.target) { mutableStateOf<Message?>(null) }
     var editing by remember(net.network, buf?.target) { mutableStateOf<Message?>(null) }
 
-    BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
+    // Back from the messages opens the buffer list; back from the list leaves, like Discord.
+    BackHandler(!drawer.isOpen) { scope.launch { drawer.open() } }
+    val activity = LocalActivity.current
 
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
             ModalDrawerSheet {
+                // Composed after the drawer's own back handler, so it wins over closing it.
+                BackHandler(drawer.isOpen) { activity?.moveTaskToBack(true) }
                 Drawer(
                     app, tick, nets, net, buffers, buf?.target,
                     onNet = { current = it },
@@ -412,6 +417,7 @@ private fun ChatScreen(
                         app, tick, net, buf, Modifier.weight(1f),
                         onReply = { editing = null; replyTo = it },
                         onEdit = { replyTo = null; editing = it },
+                        onDrawer = { scope.launch { drawer.open() } },
                     )
                 }
                 call?.let { VoicePanel(app, nets, it) }
@@ -1052,7 +1058,7 @@ private fun StatusBanner(app: IrChad, net: Network) {
 @Composable
 private fun Log(
     app: IrChad, tick: Long, net: Network, buf: Buffer, modifier: Modifier,
-    onReply: (Message) -> Unit, onEdit: (Message) -> Unit,
+    onReply: (Message) -> Unit, onEdit: (Message) -> Unit, onDrawer: (() -> Unit)? = null,
 ) {
     val c = app.client
     val msgs = remember(tick, net.network, buf.target) { c.messages(net.network, buf.target) }
@@ -1132,6 +1138,7 @@ private fun Log(
                             else c.react(net.network, buf.target, id, r.emoji)
                         },
                         onReply = if (m.msgid != null && !m.redacted) ({ onReply(m) }) else null,
+                        onDrawer = onDrawer,
                     )
                     if (phone) {
                         if (menu?.key == m.key) {
@@ -1296,11 +1303,12 @@ private fun MessageSheet(
 private fun MessageRow(
     app: IrChad, network: String, own: String, m: Message, head: Boolean, dm: Boolean, parent: Message?,
     seenAt: Long?, onLong: () -> Unit, onParent: () -> Unit, onReact: (Reaction) -> Unit,
-    onReply: (() -> Unit)?,
+    onReply: (() -> Unit)?, onDrawer: (() -> Unit)?,
 ) {
     val time = remember(m.time) { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(m.time)) }
     val bar = if (m.mention && !dm) MaterialTheme.colorScheme.primary else Color.Transparent
     // Swipe right to left to reply: the row follows the finger up to `reach`, and letting go past it replies.
+    // Left to right past `reach` opens the buffer list.
     val swipe = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
@@ -1322,17 +1330,21 @@ private fun MessageRow(
                 .fillMaxWidth()
                 .offset { IntOffset(swipe.value.roundToInt(), 0) }
                 .then(
-                    if (onReply == null) Modifier
+                    if (onReply == null && onDrawer == null) Modifier
                     else Modifier.pointerInput(m.key) {
+                        var pulled = 0f
                         detectHorizontalDragGestures(
+                            onDragStart = { pulled = 0f },
                             onDragEnd = {
-                                if (swipe.value <= -reach) onReply()
+                                if (swipe.value <= -reach) onReply?.invoke()
+                                if (pulled >= reach) onDrawer?.invoke()
                                 scope.launch { swipe.animateTo(0f) }
                             },
                             onDragCancel = { scope.launch { swipe.animateTo(0f) } },
                         ) { change, dx ->
                             change.consume()
-                            val next = (swipe.value + dx).coerceIn(-reach, 0f)
+                            pulled += dx
+                            val next = (swipe.value + dx).coerceIn(if (onReply == null) 0f else -reach, 0f)
                             if (next <= -reach && swipe.value > -reach) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             scope.launch { swipe.snapTo(next) }
                         }
@@ -1624,6 +1636,7 @@ private fun Composer(
                     replace(a, selection.max, e)
                     selection = TextRange(a + e.length)
                 }
+                picker = false
             },
             // Posted as a plain link: every client can open it, and IrChad shows it inline.
             onGif = {
