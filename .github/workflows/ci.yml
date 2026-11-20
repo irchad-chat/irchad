@@ -1,0 +1,51 @@
+name: CI
+
+# GitHub mirror's twin of .gitea/workflows/ci.yaml's `web` job: the web
+# client builds (chad-web to wasm, typecheck, bundle). The Rust jobs stay on Gitea.
+on:
+  push:
+    branches: [main]
+    paths:
+      - web/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/ci.yml
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      # Also caches ~/.cargo/bin, so wasm-bindgen installs once per version.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-web
+      # The CLI must match the wasm-bindgen crate in Cargo.lock exactly.
+      - name: wasm-bindgen
+        run: |
+          v=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          wasm-bindgen --version 2>/dev/null | grep -qF "$v" || cargo install wasm-bindgen-cli --version "$v" --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: web
+      - run: pnpm build
+        working-directory: web
