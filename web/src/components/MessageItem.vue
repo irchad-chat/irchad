@@ -15,6 +15,20 @@ const props = defineProps<{ msg: Msg; continued: boolean; parent?: Msg; seen: bo
 const emit = defineEmits<{ reply: []; edit: []; jump: [msgid: string] }>()
 const client = useClient()
 const picking = ref(false)
+// Over the whole page, as a menu: inside the log it was clipped by it, or scrolled
+// it when its search took focus. Below the button if it fits, else above, else
+// as low as the window allows.
+const at = ref<Record<string, string>>({})
+const PICKER_HEIGHT = 380
+function pick(e: MouseEvent) {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const top =
+    r.bottom + 4 + PICKER_HEIGHT <= innerHeight
+      ? r.bottom + 4
+      : Math.max(8, Math.min(r.top - 4, innerHeight - 8) - PICKER_HEIGHT)
+  at.value = { top: `${top}px`, right: `${Math.max(8, innerWidth - r.right)}px` }
+  picking.value = !picking.value
+}
 
 const m = computed(() => props.msg)
 const canAct = computed(() => !!m.value.msgid && !m.value.redacted && client.connected)
@@ -112,11 +126,13 @@ function remove() {
       </div>
     </div>
     <div v-if="canAct" class="actions" :class="{ open: picking }">
-      <button title="React" aria-label="React" @click="picking = !picking"><i class="ph ph-smiley" /></button>
+      <button title="React" aria-label="React" @click="pick"><i class="ph ph-smiley" /></button>
       <button title="Reply" aria-label="Reply" @click="emit('reply')"><i class="ph ph-arrow-bend-up-left" /></button>
       <button v-if="m.own" title="Edit" aria-label="Edit" @click="emit('edit')"><i class="ph ph-pencil-simple" /></button>
       <button v-if="m.own" title="Delete" aria-label="Delete" @click="remove"><i class="ph ph-trash" /></button>
-      <EmojiPicker v-if="picking" below @pick="react" @close="picking = false" />
+      <Teleport to="#app">
+        <EmojiPicker v-if="picking" :at="at" @pick="react" @close="picking = false" />
+      </Teleport>
     </div>
   </div>
 </template>

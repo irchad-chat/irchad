@@ -7,7 +7,8 @@ import { emojis } from '../wasm/chad_web'
 import { useClient } from '../stores/client'
 import MediaImg from './MediaImg.vue'
 
-const props = defineProps<{ below?: boolean; stickers?: boolean }>()
+// `at`: fixed on the page there instead of beside the parent, to overlay scrolling content.
+const props = defineProps<{ below?: boolean; stickers?: boolean; at?: Record<string, string> }>()
 const emit = defineEmits<{ pick: [emoji: string]; sticker: [code: string]; close: [] }>()
 const client = useClient()
 const query = ref('')
@@ -63,7 +64,7 @@ onMounted(() => {
 
 <template>
   <div class="backdrop" @click="emit('close')" />
-  <div class="picker" :class="{ below }" role="dialog" aria-label="Emoji" @keydown.esc="emit('close')">
+  <div class="picker" :class="{ below, fixed: at }" :style="at" role="dialog" aria-label="Emoji" @keydown.esc="emit('close')">
     <div v-if="stickerSet.length" class="tabs" role="tablist">
       <button role="tab" :aria-selected="tab === 'emoji'" :class="{ on: tab === 'emoji' }" @click="tab = 'emoji'">Emoji</button>
       <button role="tab" :aria-selected="tab === 'stickers'" :class="{ on: tab === 'stickers' }" @click="tab = 'stickers'">
@@ -125,6 +126,10 @@ onMounted(() => {
 .picker.below {
   bottom: auto;
   top: 100%;
+}
+.picker.fixed {
+  position: fixed;
+  bottom: auto;
 }
 .scroll {
   flex: 1;
