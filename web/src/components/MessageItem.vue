@@ -43,7 +43,7 @@ function remove() {
 <template>
   <div
     class="msg"
-    :class="{ continued, mention: m.mention, pending: m.pending, notice: m.notice }"
+    :class="{ continued, mention: m.mention && client.buffer?.kind !== 'dm', pending: m.pending, notice: m.notice }"
     :data-msgid="m.msgid ?? undefined"
   >
     <button
