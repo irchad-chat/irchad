@@ -72,6 +72,7 @@ fn main() -> eframe::Result {
         init_logs(&data_dir);
         Some(instance)
     };
+    tracing::info!("irchad {}", update::version());
     #[cfg(target_os = "linux")]
     tracing::info!("{sandbox}");
     let tray = rt.block_on(platform::Tray::spawn(os_tx));

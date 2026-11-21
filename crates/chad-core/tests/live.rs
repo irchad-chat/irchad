@@ -4,6 +4,7 @@
 //! an origin glibc resolves: `IRCHAD_HOST=localhost` for the stack, and
 //! `IRCHAD_ORIGIN` here if it's not `localhost:8443`.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,11 +12,19 @@ use chad_core::secrets::MemorySecrets;
 use chad_core::{Auth, Command, Config, ConnState, Event, NetCommand, SendStatus};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-async fn until<T>(rx: &mut UnboundedReceiver<Event>, mut f: impl FnMut(&Event) -> Option<T>) -> T {
+async fn until<T>(rx: &mut UnboundedReceiver<Event>, f: impl FnMut(&Event) -> Option<T>) -> T {
+    within(30, rx, f).await
+}
+
+async fn within<T>(
+    secs: u64,
+    rx: &mut UnboundedReceiver<Event>,
+    mut f: impl FnMut(&Event) -> Option<T>,
+) -> T {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
-    tokio::time::timeout(Duration::from_secs(30), async {
+    tokio::time::timeout(Duration::from_secs(secs), async {
         loop {
             let e = rx.recv().await.expect("core stopped");
             if let Event::JoinFailed { error, .. }
@@ -815,6 +824,158 @@ async fn background_pauses_and_catches_up() {
             target, messages, ..
         } if target == "#dev" => messages.iter().any(|m| m.text == text).then_some(()),
         _ => None,
+    })
+    .await;
+}
+
+/// Offline while more than a page of history piles up, with reactions and
+/// edits in between: the reconnect catch-up must page through all of it.
+/// Takes over a minute: ergo's fakelag holds alice to 2 lines a second.
+#[tokio::test]
+#[ignore]
+async fn catch_up_pages_through_events() {
+    const CHUNKS: usize = 13;
+    const PER_CHUNK: usize = 10;
+    let origin = std::env::var("IRCHAD_ORIGIN").unwrap_or("localhost:8443".into());
+    let network = format!("https://{origin}");
+    let dir = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(MemorySecrets::default());
+    let config = || Config {
+        data_dir: dir.path().to_owned(),
+        secrets: secrets.clone(),
+        notify: Arc::new(|| {}),
+        media: None,
+        version: "test".into(),
+    };
+    let account = format!("gap{}", std::time::UNIX_EPOCH.elapsed().unwrap().as_secs());
+    let send = |text: String| Command::Net {
+        network: network.clone(),
+        cmd: NetCommand::Send {
+            target: "#dev".into(),
+            text,
+            reply_to: None,
+            mentions: Vec::new(),
+        },
+    };
+    // The msgids of our own sends with these texts, as their echoes come back.
+    async fn echoes(rx: &mut UnboundedReceiver<Event>, texts: &[String]) -> Vec<String> {
+        let mut ids: HashMap<String, String> = HashMap::new();
+        within(60, rx, |e| {
+            if let Event::Messages { messages, .. } = e {
+                for m in messages {
+                    if m.local_id.is_some()
+                        && m.status == SendStatus::Sent
+                        && let Some(id) = &m.msgid
+                        && texts.contains(&m.text)
+                    {
+                        ids.insert(m.text.clone(), id.clone());
+                    }
+                }
+            }
+            (ids.len() == texts.len()).then_some(())
+        })
+        .await;
+        texts.iter().map(|t| ids[t].clone()).collect()
+    }
+
+    // The offline client: one message of its own cached in #dev, then gone.
+    let (core, mut rx) = chad_core::start(config());
+    core.send(Command::Join {
+        invite: format!("https://{origin}/invite?channel=%23dev"),
+        auth: Auth::Register {
+            account: account.clone(),
+            password: "livecorepass".into(),
+            email: None,
+        },
+    });
+    assert_eq!(until(&mut rx, connected).await, account);
+    until(&mut rx, |e| {
+        matches!(e, Event::Buffer { buffer, .. } if buffer.target == "#dev").then_some(())
+    })
+    .await;
+    let hello = format!("{account} going offline");
+    core.send(send(hello.clone()));
+    echoes(&mut rx, &[hello]).await;
+    drop(core);
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // alice talks, reacting and editing as she goes, so every page holds events.
+    let alice_dir = tempfile::tempdir().unwrap();
+    let (alice, mut arx) = chad_core::start(Config {
+        data_dir: alice_dir.path().to_owned(),
+        secrets: Arc::new(MemorySecrets::default()),
+        notify: Arc::new(|| {}),
+        media: None,
+        version: "test".into(),
+    });
+    alice.send(Command::Join {
+        invite: origin.clone(),
+        auth: Auth::Login {
+            account: "alice".into(),
+            password: "alicepass".into(),
+        },
+    });
+    until(&mut arx, connected).await;
+    until(&mut arx, |e| {
+        matches!(e, Event::Buffer { buffer, .. } if buffer.target == "#dev").then_some(())
+    })
+    .await;
+    let (mut sent, mut reacted, mut edited) = (Vec::new(), HashSet::new(), HashMap::new());
+    for c in 0..CHUNKS {
+        let texts: Vec<String> = (0..PER_CHUNK)
+            .map(|i| format!("{account} gap {}", c * PER_CHUNK + i))
+            .collect();
+        for t in &texts {
+            alice.send(send(t.clone()));
+        }
+        let ids = echoes(&mut arx, &texts).await;
+        alice.send(Command::Net {
+            network: network.clone(),
+            cmd: NetCommand::React {
+                target: "#dev".into(),
+                msgid: ids[3].clone(),
+                emoji: "👍".into(),
+            },
+        });
+        let text = format!("{account} edited {c}");
+        alice.send(Command::Net {
+            network: network.clone(),
+            cmd: NetCommand::Edit {
+                target: "#dev".into(),
+                msgid: ids[7].clone(),
+                text: text.clone(),
+                mentions: Vec::new(),
+            },
+        });
+        reacted.insert(ids[3].clone());
+        edited.insert(ids[7].clone(), text);
+        sent.extend(ids);
+    }
+    // Last, so its echo means the reactions and edits before it are stored.
+    let last = format!("{account} gap end");
+    alice.send(send(last.clone()));
+    sent.extend(echoes(&mut arx, &[last]).await);
+    drop(alice);
+
+    // Back online: every message, reaction and edit, through more than one page.
+    let (_core, mut rx) = chad_core::start(config());
+    let mut seen: HashMap<String, chad_core::ChatMessage> = HashMap::new();
+    within(60, &mut rx, |e| {
+        if let Event::Messages {
+            target, messages, ..
+        } = e
+            && target == "#dev"
+        {
+            for m in messages {
+                if let Some(id) = &m.msgid {
+                    seen.insert(id.clone(), m.clone());
+                }
+            }
+        }
+        let done = sent.iter().all(|id| seen.contains_key(id))
+            && reacted.iter().all(|id| !seen[id].reactions.is_empty())
+            && edited.iter().all(|(id, text)| &seen[id].text == text);
+        done.then_some(())
     })
     .await;
 }
