@@ -162,7 +162,21 @@ fn history_pages_dedupe_and_stop() {
         feed(&mut n, &l);
     }
     let ev = events(&mut n);
-    assert!(ev.iter().any(|e| matches!(e, Event::HistoryStart { .. })));
+    // Short, but only a page that gets no further is the start.
+    assert!(!ev.iter().any(|e| matches!(e, Event::HistoryStart { .. })));
+    n.command(NetCommand::LoadOlder {
+        target: "#c".into(),
+    });
+    let before = out(&mut n);
+    assert!(before[0].ends_with("CHATHISTORY BEFORE #c msgid=m10 100"));
+    for l in page(label_of(&before[0]), 0, 0) {
+        feed(&mut n, &l);
+    }
+    assert!(
+        events(&mut n)
+            .iter()
+            .any(|e| matches!(e, Event::HistoryStart { .. }))
+    );
     assert_eq!(n.store.recent("#c", 1000).len(), 140);
     assert_eq!(buffer(&ev, "#c").unwrap().unread, 140);
 
@@ -828,4 +842,38 @@ fn a_page_full_of_events_keeps_paging() {
             .iter()
             .any(|e| matches!(e, Event::HistoryStart { .. }))
     );
+}
+
+#[test]
+fn a_short_after_page_keeps_paging() {
+    let mut n = net();
+    n.store.put_buffer("#c", "#c", BufferKind::Channel);
+    n.store.insert("#c", &msg("m0", 1000, "alice", "old"));
+    n.store.set_meta("autojoined", "1");
+    n.load_cache();
+    let sent = attach(&mut n, &["#c"]);
+    let after = sent.iter().find(|l| l.contains("AFTER #c")).unwrap();
+    let page = |label: &str, times: &[i64]| {
+        let mut lines = vec![format!("@label={label} :s BATCH +h chathistory #c")];
+        for &t in times {
+            lines.push(format!(
+                "@batch=h;msgid=m{t};time={} :alice!u@h PRIVMSG #c :msg",
+                ts(t)
+            ));
+        }
+        lines.push(":s BATCH -h".into());
+        lines
+    };
+    // Short, yet the next page is still asked for: only an empty one ends it.
+    for l in page(label_of(after), &[1000, 2000, 3000]) {
+        feed(&mut n, &l);
+    }
+    let next = out(&mut n);
+    let want = format!("CHATHISTORY AFTER #c timestamp={} 100", ts(3000 - 1));
+    assert!(next[0].ends_with(&want));
+    // Only the repeat at the reference: the gap is closed.
+    for l in page(label_of(&next[0]), &[3000]) {
+        feed(&mut n, &l);
+    }
+    assert!(out(&mut n).iter().all(|l| !l.contains("CHATHISTORY")));
 }

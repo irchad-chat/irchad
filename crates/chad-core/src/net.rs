@@ -128,7 +128,11 @@ enum Pending {
 enum Hist {
     Latest,
     Before,
-    After { pages: u8 },
+    /// `from`: the time paged after, to tell whether the page got anywhere.
+    After {
+        pages: u8,
+        from: i64,
+    },
     Around,
 }
 
@@ -609,7 +613,7 @@ impl Net {
             "{}: catch-up {key} after {r} (page {pages})",
             self.info.network
         );
-        self.history(key, Hist::After { pages }, &r);
+        self.history(key, Hist::After { pages, from: t }, &r);
     }
 
     fn join_all(&mut self, channels: &[String]) {

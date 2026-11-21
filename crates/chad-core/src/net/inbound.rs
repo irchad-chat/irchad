@@ -122,25 +122,29 @@ impl Net {
                     .iter()
                     .filter_map(|i| head(i).tag("time").and_then(time::parse))
                     .max();
-                // With event-playback, reactions, receipts and JOINs fill the page
-                // too: count them, or a full page looks short and paging stops.
-                let full = inner.len() >= PAGE as usize;
+                let oldest = self.store.oldest(&target);
                 let n = self.store_history(&target, inner);
                 if matches!(kind, Hist::After { .. } | Hist::Latest) {
                     tracing::info!("{}: catch-up {target}: {n} messages", self.info.network);
                 }
                 let name = self.buffers.get(&target).map(|b| b.name.clone());
                 match (kind, name) {
-                    // Short of a page from the newest down: that's all there is (a fresh DM).
-                    (Hist::Before | Hist::Latest, Some(name)) if !full => {
+                    // Not by page size, which depends on counting what the page holds
+                    // right (0.1.47 counted only messages and stopped early). Nothing
+                    // older cached means asking again would get the same page.
+                    (Hist::Before | Hist::Latest, Some(name))
+                        if self.store.oldest(&target) == oldest =>
+                    {
                         let network = self.id();
                         self.events.push(Event::HistoryStart {
                             network,
                             target: name,
                         });
                     }
-                    (Hist::After { pages }, _) if full && pages < MAX_GAP_PAGES => {
-                        if let Some(t) = last {
+                    // Page on until one gets no further (the one at `from` is a repeat),
+                    // not by page size: see `HistoryStart` above.
+                    (Hist::After { pages, from }, _) if pages < MAX_GAP_PAGES => {
+                        if let Some(t) = last.filter(|&t| t > from) {
                             self.fetch_after(&target, t, pages + 1);
                         }
                     }
