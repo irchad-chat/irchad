@@ -146,7 +146,10 @@ struct Parsed {
 
 impl Parsed {
     fn new(m: &ChatMessage, network: &str) -> Self {
-        let lines: Vec<Vec<format::Span>> = m.text.split('\n').map(format::parse).collect();
+        let lines: Vec<Vec<format::Span>> = format::code(&m.text)
+            .split('\n')
+            .map(format::parse)
+            .collect();
         let links = lines
             .iter()
             .flatten()

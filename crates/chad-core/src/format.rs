@@ -88,16 +88,33 @@ pub fn strip(text: &str) -> String {
 }
 
 /// The composer's markdown as IRC codes, so plain clients see the same styles:
-/// `**bold**`, `*italic*`, `` `code` `` and ```` ``` ```` fenced blocks
-/// (each line monospace on its own, since every line is its own PRIVMSG to them).
+/// `**bold**` and `*italic*`. Code stays as markdown on the wire, since many
+/// clients show `\x11` as a stray glyph (D50, superseded); [`code`] draws it.
 pub fn markdown(text: &str) -> String {
+    convert(text, false)
+}
+
+/// Code in received text as `\x11` spans, before [`parse`]: `` `code` `` and
+/// ```` ``` ```` fenced blocks, one monospace line per line so [`code_line`]
+/// draws them as a block. Old messages that already carry `\x11` pass through.
+pub fn code(text: &str) -> String {
+    convert(text, true)
+}
+
+fn convert(text: &str, code: bool) -> String {
     let mut out = String::new();
     let mut rest = text;
     while let Some(i) = rest.find("```") {
         let Some(j) = rest[i + 3..].find("```") else {
             break;
         };
-        inline(&rest[..i], &mut out);
+        inline(&rest[..i], &mut out, code);
+        let end = i + 3 + j + 3;
+        if !code {
+            out.push_str(&rest[i..end]);
+            rest = &rest[end..];
+            continue;
+        }
         let mut body = &rest[i + 3..i + 3 + j];
         // A first line after the fence is the language, as in markdown.
         if let Some((_, b)) = body.split_once('\n') {
@@ -114,30 +131,42 @@ pub fn markdown(text: &str) -> String {
             out.push_str(line);
             out.push('\x11');
         }
-        rest = &rest[i + 3 + j + 3..];
+        rest = &rest[end..];
     }
-    inline(rest, &mut out);
+    inline(rest, &mut out, code);
     out
 }
 
-fn inline(text: &str, out: &mut String) {
+fn inline(text: &str, out: &mut String, code: bool) {
     for (n, line) in text.split('\n').enumerate() {
         if n > 0 {
             out.push('\n');
         }
-        inline_line(line, out);
+        inline_line(line, out, code);
     }
 }
 
-fn inline_line(mut rest: &str, out: &mut String) {
-    while let Some(i) = rest.find(['`', '*']) {
+/// `code`: only `` `x` `` → `\x11`. Otherwise bold and italic, with code
+/// spans copied as they are so `*` inside them stays literal.
+fn inline_line(mut rest: &str, out: &mut String, code: bool) {
+    let marks: &[char] = if code { &['`'] } else { &['`', '*'] };
+    while let Some(i) = rest.find(marks) {
         out.push_str(&rest[..i]);
         let tail = &rest[i..];
-        let (code, inner, len) = if let Some((c, n)) = delimited(tail, "`") {
+        let (mark, inner, len) = if let Some((c, n)) = delimited(tail, "`") {
+            if !code {
+                out.push_str(&tail[..n]);
+                rest = &tail[n..];
+                continue;
+            }
             ('\x11', c, n)
+        } else if code {
+            out.push('`');
+            rest = &tail[1..];
+            continue;
         } else if let Some((c, n)) = delimited(tail, "***") {
             out.push_str("\x02\x1d");
-            inline_line(c, out);
+            inline_line(c, out, code);
             out.push_str("\x1d\x02");
             rest = &tail[n..];
             continue;
@@ -150,13 +179,13 @@ fn inline_line(mut rest: &str, out: &mut String) {
             rest = &tail[1..];
             continue;
         };
-        out.push(code);
-        if code == '\x11' {
+        out.push(mark);
+        if mark == '\x11' {
             out.push_str(inner);
         } else {
-            inline_line(inner, out);
+            inline_line(inner, out, code);
         }
-        out.push(code);
+        out.push(mark);
         rest = &tail[len..];
     }
     out.push_str(rest);
@@ -397,20 +426,29 @@ mod tests {
 
     #[test]
     fn markdown_to_codes() {
-        assert_eq!(
-            markdown("**b** *i* `c*x*`"),
-            "\x02b\x02 \x1di\x1d \x11c*x*\x11"
-        );
+        assert_eq!(markdown("**b** *i* `c*x*`"), "\x02b\x02 \x1di\x1d `c*x*`");
+        assert_eq!(markdown("`p.*` or `*p` *i*"), "`p.*` or `*p` \x1di\x1d");
         assert_eq!(markdown("**b *i* b**"), "\x02b \x1di\x1d b\x02");
         assert_eq!(markdown("***bi***"), "\x02\x1dbi\x1d\x02");
         assert_eq!(markdown("2 * 3 * 4; ** x; *x *"), "2 * 3 * 4; ** x; *x *");
         assert_eq!(markdown("*a\nb*"), "*a\nb*");
+        let fenced = "see:\n```rust\nfn a() {\n\n  *x*\n}\n```\n*done*";
         assert_eq!(
-            markdown("see:\n```rust\nfn a() {\n\n  *x*\n}\n```\ndone"),
+            markdown(fenced),
+            "see:\n```rust\nfn a() {\n\n  *x*\n}\n```\n\x1ddone\x1d"
+        );
+        assert_eq!(markdown("``` unclosed"), "``` unclosed");
+    }
+
+    #[test]
+    fn code_to_mono() {
+        assert_eq!(code("`p.*` or `*p` *i*"), "\x11p.*\x11 or \x11*p\x11 *i*");
+        assert_eq!(
+            code(&markdown("see:\n```rust\nfn a() {\n\n  *x*\n}\n```\ndone")),
             "see:\n\x11fn a() {\x11\n\x11 \x11\n\x11  *x*\x11\n\x11}\x11\ndone"
         );
-        assert_eq!(markdown("```one```"), "\x11one\x11");
-        assert_eq!(markdown("``` unclosed"), "``` unclosed");
+        assert_eq!(code("```one```"), "\x11one\x11");
+        assert_eq!(code("a ` b `` c \x11old\x11"), "a ` b `` c \x11old\x11");
         assert!(code_line(&parse("\x11  x\x11")));
         assert!(!code_line(&parse("a \x11x\x11")));
     }

@@ -353,7 +353,7 @@ fn spans(
     name: impl Fn(&chad_core::Mention) -> String,
 ) -> Vec<Span> {
     let mut out = Vec::new();
-    for s in format::parse(text) {
+    for s in format::parse(&format::code(text)) {
         if s.link || s.mono || (mentions.is_empty() && emoji.is_empty()) {
             out.push(Span::from(s));
             continue;
