@@ -32,6 +32,17 @@ use crate::{AudioSettings, CallState, FRAME, InputMode, RATE};
 /// Most audio a remote source may queue before we skip ahead (latency cap).
 const MAX_QUEUE: usize = RATE as usize / 10;
 const RING: usize = RATE as usize / 5;
+/// Audio a source queues before it plays, and again after it runs dry:
+/// absorbs the jitter between LiveKit's 10 ms frames and the device's clock.
+/// Without it a source plays from its first sample and every late frame
+/// becomes a gap of silence mid-callback, heard as crackling.
+#[cfg(not(test))]
+const CUSHION: usize = RATE as usize / 50;
+#[cfg(test)]
+const CUSHION: usize = 0;
+/// An underrun fades out (and the resume fades in) over this many samples
+/// instead of stepping to silence.
+const FADE: usize = RATE as usize / 1000;
 /// Voice activity stays open this long after the level drops.
 pub(crate) const VAD_HANG: Duration = Duration::from_millis(300);
 /// shortcut: a fixed guess at playback + capture latency for the AEC. AEC3
@@ -68,6 +79,14 @@ pub struct Source {
     /// Goes into a public stream's call audio (D87): not whispers, not
     /// others' screen shares.
     public: bool,
+    /// Queued audio to wait for before playing ([`CUSHION`]).
+    cushion: usize,
+    /// Past the cushion; false again once the ring runs dry.
+    playing: bool,
+    /// Samples of fade-in left after an underrun.
+    fade_in: usize,
+    /// The last sample played (before our gain), to fade an underrun from.
+    last: f32,
 }
 
 impl Source {
@@ -77,15 +96,41 @@ impl Source {
         for _ in 0..excess {
             let _ = self.rx.pop();
         }
+        if !self.playing {
+            if self.rx.slots() < out.len() + self.cushion {
+                return;
+            }
+            self.playing = true;
+        }
         let mut stream = stream.filter(|_| self.public);
-        for (i, o) in out.iter_mut().enumerate() {
-            let Ok(x) = self.rx.pop() else { break };
-            if !deaf {
-                *o = o.saturating_add((f32::from(x) * self.gain) as i16);
-            }
+        let gain = if deaf { 0.0 } else { self.gain };
+        let len = out.len();
+        let mut put = |i: usize, v: f32| {
+            out[i] = out[i].saturating_add((v * gain) as i16);
             if let Some(s) = stream.as_deref_mut().and_then(|s| s.get_mut(i)) {
-                *s = s.saturating_add(x);
+                *s = s.saturating_add(v as i16);
             }
+        };
+        let mut i = 0;
+        while i < len {
+            let Ok(x) = self.rx.pop() else { break };
+            let mut v = f32::from(x);
+            if self.fade_in > 0 {
+                v *= 1.0 - self.fade_in as f32 / FADE as f32;
+                self.fade_in -= 1;
+            }
+            self.last = v;
+            put(i, v);
+            i += 1;
+        }
+        if i < len {
+            // Ran dry: fade out from where we were, then wait for a fresh cushion.
+            for (k, j) in (i..len).take(FADE).enumerate() {
+                put(j, self.last * (1.0 - (k + 1) as f32 / FADE as f32));
+            }
+            self.last = 0.0;
+            self.playing = false;
+            self.fade_in = FADE;
         }
     }
 }
@@ -98,7 +143,6 @@ const OWN_BOARD: &str = "board";
 #[derive(Default)]
 pub struct Rt {
     sources: Vec<Source>,
-    near: Option<Producer<i16>>,
     far: Option<Producer<i16>>,
     /// The chime playing now, and how far into it we are.
     cue: Option<(Vec<i16>, usize)>,
@@ -179,6 +223,10 @@ pub struct Shared {
     pub notify: Arc<dyn Fn() + Send + Sync>,
     settings: Mutex<AudioSettings>,
     rt: Mutex<Rt>,
+    /// The mic's ring to the DSP thread. Not in [`Rt`]: the capture callback
+    /// losing a `try_lock` to playback or the UI drops mic audio, which
+    /// everyone else hears as a click.
+    near: Mutex<Option<Producer<i16>>>,
     level: AtomicU32,
     transmitting: AtomicBool,
     ptt: AtomicBool,
@@ -240,6 +288,7 @@ impl Shared {
             notify,
             settings: Mutex::default(),
             rt: Mutex::default(),
+            near: Mutex::default(),
             level: AtomicU32::new(SILENT_DB.to_bits()),
             transmitting: AtomicBool::new(false),
             ptt: AtomicBool::new(false),
@@ -456,6 +505,10 @@ impl Shared {
             gain,
             max_queue: MAX_QUEUE + delay,
             public,
+            cushion: CUSHION,
+            playing: false,
+            fade_in: 0,
+            last: 0.0,
         });
         Some(tx)
     }
@@ -568,10 +621,10 @@ impl Shared {
 
     /// Capture callback.
     pub fn capture(&self, input: &[i16]) {
-        let Ok(mut rt) = self.rt.try_lock() else {
+        let Ok(mut near) = self.near.try_lock() else {
             return;
         };
-        if let Some(near) = &mut rt.near {
+        if let Some(near) = &mut *near {
             for &x in input {
                 if near.push(x).is_err() {
                     break;
@@ -584,11 +637,8 @@ impl Shared {
 pub fn start_dsp(shared: Arc<Shared>) {
     let (near_tx, near) = RingBuffer::new(RING);
     let (far_tx, far) = RingBuffer::new(RING);
-    {
-        let mut rt = lock(&shared.rt);
-        rt.near = Some(near_tx);
-        rt.far = Some(far_tx);
-    }
+    *lock(&shared.near) = Some(near_tx);
+    lock(&shared.rt).far = Some(far_tx);
     let stop = Arc::new(AtomicBool::new(false));
     let s = shared.clone();
     let st = stop.clone();
@@ -606,10 +656,8 @@ pub fn stop_dsp(shared: &Shared) {
         stop.store(true, Relaxed);
         let _ = handle.join();
     }
-    let mut rt = lock(&shared.rt);
-    rt.near = None;
-    rt.far = None;
-    drop(rt);
+    *lock(&shared.near) = None;
+    lock(&shared.rt).far = None;
     shared.level.store(SILENT_DB.to_bits(), Relaxed);
     shared.transmitting.store(false, Relaxed);
 }
@@ -1006,6 +1054,39 @@ mod tests {
             out[delay], 1000,
             "the voice comes after the silence, not instead"
         );
+    }
+
+    #[test]
+    fn rides_out_jitter_and_fades_underruns() {
+        let shared = Shared::new(Arc::new(|| {}));
+        let mut tx = shared.add_source("a", "alice", Kind::Mic).unwrap();
+        lock(&shared.rt).sources[0].cushion = 4;
+        let mut out = [0i16; 4];
+        // Not until the cushion is there too.
+        for _ in 0..7 {
+            tx.push(1000).unwrap();
+        }
+        shared.render(&mut out);
+        assert_eq!(out, [0; 4]);
+        tx.push(1000).unwrap();
+        shared.render(&mut out);
+        assert_eq!(out, [1000; 4]);
+        // Two short: what's there, then a fade instead of a step to zero.
+        tx.push(1000).unwrap();
+        tx.push(1000).unwrap();
+        let mut out = vec![0i16; 6 + FADE];
+        shared.render(&mut out);
+        assert_eq!(&out[..6], &[1000; 6]);
+        assert!(out[6] > 900 && out[6] < 1000, "{}", out[6]);
+        assert!(out[6..].windows(2).all(|w| w[1] <= w[0]));
+        assert_eq!(out[5 + FADE], 0);
+        // Dry: waits for a new cushion, then fades back in.
+        for _ in 0..6 + FADE + 4 {
+            tx.push(1000).unwrap();
+        }
+        shared.render(&mut out);
+        assert!(out[0] < 100, "{}", out[0]);
+        assert_eq!(out[FADE..], [1000; 6]);
     }
 
     #[test]

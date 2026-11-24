@@ -148,6 +148,48 @@ impl Backend for Cpal {
     }
 }
 
+/// Catches a device whose clock disagrees with the format it reports: a
+/// Scarlett switched to 44.1 kHz behind Windows' back still says 48 kHz, so
+/// everyone hears us pitched up and full of gaps. Counts what the callback
+/// delivers against the wall clock.
+#[derive(Default)]
+struct RateCheck {
+    since: Option<Instant>,
+    samples: usize,
+    warned: bool,
+}
+
+impl RateCheck {
+    const WINDOW: Duration = Duration::from_secs(5);
+
+    fn tick(&mut self, samples: usize, now: Instant) {
+        let Some(since) = self.since else {
+            // The first packets come in a burst; measure from after them.
+            self.since = Some(now);
+            return;
+        };
+        self.samples += samples;
+        let elapsed = now.duration_since(since);
+        if elapsed < Self::WINDOW {
+            return;
+        }
+        let rate = self.samples as f64 / elapsed.as_secs_f64();
+        let off = (rate / f64::from(RATE) - 1.0).abs();
+        if off > 0.03 && !self.warned {
+            tracing::warn!(
+                "microphone delivers ~{rate:.0} samples/s but says {RATE} Hz: its clock \
+                 changed under Windows (check the interface's sample rate); others will \
+                 hear us sped up or slowed down, with gaps"
+            );
+            self.warned = true;
+        } else if off < 0.01 && self.warned {
+            tracing::info!("microphone clock back to ~{rate:.0} samples/s");
+            self.warned = false;
+        }
+        (self.since, self.samples) = (Some(now), 0);
+    }
+}
+
 fn direction(input: bool) -> &'static str {
     if input { "input" } else { "output" }
 }
@@ -216,11 +258,13 @@ where
         let _ = restart.send(Cmd::Restart);
     };
     if input {
+        let mut clock = RateCheck::default();
         device.build_input_stream(
             config,
             move |data: &[T], _: &cpal::InputCallbackInfo| {
                 scratch.clear();
                 scratch.extend(data.chunks(channels).map(|f| f[0].to_sample::<i16>()));
+                clock.tick(scratch.len(), Instant::now());
                 shared.capture(&scratch);
             },
             on_error,
@@ -239,5 +283,25 @@ where
             on_error,
             None,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_check_spots_a_44k_device_posing_as_48k() {
+        let t0 = Instant::now();
+        let mut c = RateCheck::default();
+        c.tick(441, t0);
+        for i in 1..=600 {
+            c.tick(441, t0 + Duration::from_millis(10 * i));
+        }
+        assert!(c.warned);
+        for i in 601..=1600 {
+            c.tick(480, t0 + Duration::from_millis(10 * i));
+        }
+        assert!(!c.warned);
     }
 }
